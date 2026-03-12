@@ -259,6 +259,106 @@ const parseValue = (val: string) => {
   return isNaN(parsed) ? 0 : parsed;
 };
 
+const mapDbToBillData = (dbBill: any): BillData => ({
+  id: dbBill.id,
+  fileName: dbBill.file_name,
+  uc: dbBill.uc || '',
+  demandaPontaKW: dbBill.demanda_ponta_kw || '',
+  demandaForaPontaKW: dbBill.demanda_fora_ponta_kw || '',
+  demandaPotenciaMedidaPonta: dbBill.demanda_potencia_medida_ponta || '',
+  demandaPotenciaMedidaForaPonta: dbBill.demanda_potencia_medida_fora_ponta || '',
+  anoLeitura: dbBill.ano_leitura || '',
+  mesReferencia: dbBill.mes_referencia || '',
+  consumoKwhPonta: dbBill.consumo_kwh_ponta || '',
+  consumoKwhForaPonta: dbBill.consumo_kwh_fora_ponta || '',
+  valorConsumoKwhPonta: dbBill.valor_consumo_kwh_ponta || '',
+  valorConsumoKwhForaPonta: dbBill.valor_consumo_kwh_fora_ponta || '',
+  valorTotal: dbBill.valor_total || '',
+  cidade: dbBill.cidade || '',
+  demandaPotenciaNaoConsumidaPonta: dbBill.demanda_potencia_nao_consumida_ponta || '',
+  demandaPotenciaNaoConsumidaFPonta: dbBill.demanda_potencia_nao_consumida_f_ponta || '',
+  demandaPotenciaAtivaUltrapPonta: dbBill.demanda_potencia_ativa_ultrap_ponta || '',
+  demandaPotenciaAtivaUltrapFPonta: dbBill.demanda_potencia_ativa_ultrap_f_ponta || '',
+  energiaReativaExcedPonta: dbBill.energia_reativa_exced_ponta || '',
+  energiaReativaExcedFPonta: dbBill.energia_reativa_exced_f_ponta || '',
+  energiaInjetadaKwh: dbBill.energia_injetada_kwh || '',
+  energiaCompensadaKwh: dbBill.energia_compensada_kwh || '',
+  valorDemandaPotenciaMedidaPonta: dbBill.valor_demanda_potencia_medida_ponta || '',
+  valorDemandaPotenciaMedidaForaPonta: dbBill.valor_demanda_potencia_medida_fora_ponta || '',
+  valorDemandaPotenciaNaoConsumidaPonta: dbBill.valor_demanda_potencia_nao_consumida_ponta || '',
+  valorDemandaPotenciaNaoConsumidaFPonta: dbBill.valor_demanda_potencia_nao_consumida_f_ponta || '',
+  valorDemandaPotenciaAtivaUltrapPonta: dbBill.valor_demanda_potencia_ativa_ultrap_ponta || '',
+  valorDemandaPotenciaAtivaUltrapFPonta: dbBill.valor_demanda_potencia_ativa_ultrap_f_ponta || '',
+  valorEnergiaReativaExcedPonta: dbBill.valor_energia_reativa_exced_ponta || '',
+  valorEnergiaReativaExcedFPonta: dbBill.valor_energia_reativa_exced_f_ponta || '',
+  energiaAtvInjetadaGDIOUC: dbBill.energia_atv_injetada_gdi_ouc || '',
+  valorEnergiaAtvInjetadaGDIOUC: dbBill.valor_energia_atv_injetada_gdi_ouc || '',
+  energiaAtvInjetadaGDIMUC: dbBill.energia_atv_injetada_gdi_muc || '',
+  valorEnergiaAtvInjetadaGDIMUC: dbBill.valor_energia_atv_injetada_gdi_muc || '',
+  cip: dbBill.cip || '',
+  outrosEncargos: dbBill.outros_encargos || '',
+  pis: dbBill.pis || '',
+  cofins: dbBill.cofins || '',
+  icms: dbBill.icms || '',
+  concessionaria: dbBill.concessionaria || '',
+  numeroNotaFiscal: dbBill.numero_nota_fiscal || '',
+  modalidadeTarifaria: dbBill.modalidade_tarifaria || '',
+  subgrupo: dbBill.subgrupo || '',
+  tipo: dbBill.tipo || '',
+  status: dbBill.status as any,
+  error: dbBill.error || undefined
+});
+
+const mapBillDataToDb = (bill: BillData, userId: string) => ({
+  file_name: bill.fileName,
+  uc: bill.uc,
+  demanda_ponta_kw: bill.demandaPontaKW,
+  demanda_fora_ponta_kw: bill.demandaForaPontaKW,
+  demanda_potencia_medida_ponta: bill.demandaPotenciaMedidaPonta,
+  demanda_potencia_medida_fora_ponta: bill.demandaPotenciaMedidaForaPonta,
+  ano_leitura: bill.anoLeitura,
+  mes_referencia: bill.mesReferencia,
+  consumo_kwh_ponta: bill.consumoKwhPonta,
+  consumo_kwh_fora_ponta: bill.consumoKwhForaPonta,
+  valor_consumo_kwh_ponta: bill.valorConsumoKwhPonta,
+  valor_consumo_kwh_fora_ponta: bill.valorConsumoKwhForaPonta,
+  valor_total: bill.valorTotal,
+  cidade: bill.cidade,
+  demanda_potencia_nao_consumida_ponta: bill.demandaPotenciaNaoConsumidaPonta,
+  demanda_potencia_nao_consumida_f_ponta: bill.demandaPotenciaNaoConsumidaFPonta,
+  demanda_potencia_ativa_ultrap_ponta: bill.demandaPotenciaAtivaUltrapPonta,
+  demanda_potencia_ativa_ultrap_f_ponta: bill.demandaPotenciaAtivaUltrapFPonta,
+  energia_reativa_exced_ponta: bill.energiaReativaExcedPonta,
+  energia_reativa_exced_f_ponta: bill.energiaReativaExcedFPonta,
+  energia_injetada_kwh: bill.energiaInjetadaKwh,
+  energia_compensada_kwh: bill.energiaCompensadaKwh,
+  valor_demanda_potencia_medida_ponta: bill.valorDemandaPotenciaMedidaPonta,
+  valor_demanda_potencia_medida_fora_ponta: bill.valorDemandaPotenciaMedidaForaPonta,
+  valor_demanda_potencia_nao_consumida_ponta: bill.valorDemandaPotenciaNaoConsumidaPonta,
+  valor_demanda_potencia_nao_consumida_f_ponta: bill.valorDemandaPotenciaNaoConsumidaFPonta,
+  valor_demanda_potencia_ativa_ultrap_ponta: bill.valorDemandaPotenciaAtivaUltrapPonta,
+  valor_demanda_potencia_ativa_ultrap_f_ponta: bill.valorDemandaPotenciaAtivaUltrapFPonta,
+  valor_energia_reativa_exced_ponta: bill.valorEnergiaReativaExcedPonta,
+  valor_energia_reativa_exced_f_ponta: bill.valorEnergiaReativaExcedFPonta,
+  energia_atv_injetada_gdi_ouc: bill.energiaAtvInjetadaGDIOUC,
+  valor_energia_atv_injetada_gdi_ouc: bill.valorEnergiaAtvInjetadaGDIOUC,
+  energia_atv_injetada_gdi_muc: bill.energiaAtvInjetadaGDIMUC,
+  valor_energia_atv_injetada_gdi_muc: bill.valorEnergiaAtvInjetadaGDIMUC,
+  cip: bill.cip,
+  outros_encargos: bill.outrosEncargos,
+  pis: bill.pis || '',
+  cofins: bill.cofins || '',
+  icms: bill.icms || '',
+  concessionaria: bill.concessionaria || '',
+  numero_nota_fiscal: bill.numeroNotaFiscal || '',
+  modalidade_tarifaria: bill.modalidadeTarifaria || '',
+  subgrupo: bill.subgrupo || '',
+  tipo: bill.tipo || '',
+  status: bill.status,
+  error: bill.error || null,
+  user_id: userId
+});
+
 // --- Components ---
 
 export default function App() {
@@ -352,6 +452,36 @@ export default function App() {
     }
     return [];
   });
+
+  React.useEffect(() => {
+    const fetchBills = async () => {
+      if (!isSupabaseConfigured || !isAuthenticated) return;
+      
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from('bills')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (error) {
+          console.error('Erro ao buscar faturas do Supabase:', error);
+          return;
+        }
+
+        if (data && data.length > 0) {
+          const mappedBills = data.map(mapDbToBillData);
+          setBills(mappedBills);
+        }
+      } catch (err) {
+        console.error('Erro inesperado ao buscar faturas:', err);
+      }
+    };
+
+    fetchBills();
+  }, [isAuthenticated]);
 
   React.useEffect(() => {
     const billsToSave = bills.map(b => {
@@ -1241,52 +1371,38 @@ export default function App() {
         result.uc = result.uc.split('-')[0].trim();
       }
 
-      if (isSupabaseConfigured && user) {
-        await supabase
+      const isDuplicate = bills.some(b => {
+        if (b.id === bill.id || b.status !== 'completed') return false;
+        
+        const normalize = (str: string) => (str || '').toString().trim().toLowerCase();
+        
+        return normalize(b.uc) === normalize(result.uc) && 
+               normalize(b.mesReferencia) === normalize(result.mesReferencia) &&
+               normalize(b.anoLeitura) === normalize(result.anoLeitura);
+      });
+
+      const finalStatus = isDuplicate ? 'error' : 'completed';
+      const finalError = isDuplicate ? 'Fatura duplicada (mesma UC e Mês/Ano)' : undefined;
+
+      const updatedBill: BillData = {
+        ...bill,
+        ...result,
+        status: finalStatus,
+        error: finalError
+      };
+
+      if (isSupabaseConfigured && user && !isDuplicate) {
+        const dbData = mapBillDataToDb(updatedBill, user.id);
+        const { error: insertError } = await supabase
           .from('bills')
-          .insert({
-            file_name: bill.fileName,
-            uc: result.uc,
-            ano_leitura: result.anoLeitura,
-            mes_referencia: result.mesReferencia,
-            valor_total: parseValue(result.valorTotal),
-            cidade: result.cidade,
-            status: 'completed',
-            user_id: user.id
-          });
+          .insert(dbData);
+          
+        if (insertError) {
+          console.error('Erro ao salvar fatura no Supabase:', insertError);
+        }
       }
       
-      setBills(prev => {
-        const isDuplicate = prev.some(b => {
-          if (b.id === bill.id || b.status !== 'completed') return false;
-          
-          const normalize = (str: string) => (str || '').toString().trim().toLowerCase();
-          
-          const isDup = normalize(b.uc) === normalize(result.uc) && 
-                        normalize(b.mesReferencia) === normalize(result.mesReferencia) &&
-                        normalize(b.anoLeitura) === normalize(result.anoLeitura);
-          
-          if (isDup) {
-            console.log(`Duplicata detectada: UC ${b.uc}, Mês ${b.mesReferencia}/${b.anoLeitura}`);
-          }
-          return isDup;
-        });
-
-        if (isDuplicate) {
-          return prev.map(b => b.id === bill.id ? {
-            ...b,
-            ...result,
-            status: 'error',
-            error: 'Fatura duplicada (mesma UC e Mês/Ano)'
-          } : b);
-        }
-
-        return prev.map(b => b.id === bill.id ? {
-          ...b,
-          ...result,
-          status: 'completed'
-        } : b);
-      });
+      setBills(prev => prev.map(b => b.id === bill.id ? updatedBill : b));
 
     } catch (error: any) {
       console.error("Erro na extração:", error);
@@ -1408,12 +1524,28 @@ export default function App() {
     );
   };
 
-  const removeBill = (id: string) => {
+  const removeBill = async (id: string) => {
+    if (isSupabaseConfigured && isAuthenticated) {
+      try {
+        const { error } = await supabase.from('bills').delete().eq('id', id);
+        if (error) console.error('Erro ao deletar fatura do Supabase:', error);
+      } catch (err) {
+        console.error('Erro inesperado ao deletar fatura:', err);
+      }
+    }
     setBills(prev => prev.filter(b => b.id !== id));
     setSelectedBills(prev => prev.filter(s => s !== id));
   };
 
-  const removeSelectedBills = () => {
+  const removeSelectedBills = async () => {
+    if (isSupabaseConfigured && isAuthenticated && selectedBills.length > 0) {
+      try {
+        const { error } = await supabase.from('bills').delete().in('id', selectedBills);
+        if (error) console.error('Erro ao deletar faturas do Supabase:', error);
+      } catch (err) {
+        console.error('Erro inesperado ao deletar faturas:', err);
+      }
+    }
     setBills(prev => prev.filter(b => !selectedBills.includes(b.id)));
     setSelectedBills([]);
   };
@@ -4207,11 +4339,32 @@ export default function App() {
                 Cancelar
               </button>
               <button
-                onClick={() => {
-                  if (bills.some(b => b.id === editingBill.id)) {
-                    setBills(bills.map(b => b.id === editingBill.id ? (editingBill as BillData) : b));
+                onClick={async () => {
+                  const billToSave = editingBill as BillData;
+                  const isExisting = bills.some(b => b.id === billToSave.id);
+                  
+                  if (isSupabaseConfigured && isAuthenticated) {
+                    try {
+                      const { data: { user } } = await supabase.auth.getUser();
+                      if (user) {
+                        const dbData = mapBillDataToDb(billToSave, user.id);
+                        if (isExisting) {
+                          const { error } = await supabase.from('bills').update(dbData).eq('id', billToSave.id);
+                          if (error) console.error('Erro ao atualizar fatura no Supabase:', error);
+                        } else {
+                          const { error } = await supabase.from('bills').insert(dbData);
+                          if (error) console.error('Erro ao inserir fatura no Supabase:', error);
+                        }
+                      }
+                    } catch (err) {
+                      console.error('Erro inesperado ao salvar fatura:', err);
+                    }
+                  }
+
+                  if (isExisting) {
+                    setBills(bills.map(b => b.id === billToSave.id ? billToSave : b));
                   } else {
-                    setBills([...bills, editingBill as BillData]);
+                    setBills([...bills, billToSave]);
                   }
                   setIsBillModalOpen(false);
                 }}
