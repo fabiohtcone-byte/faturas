@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-sanesul-primary: #0054A6;
+  --color-sanesul-secondary: #00AEEF;
+  --color-sanesul-bg: #F8FAFC;
+  --color-sanesul-card: #FFFFFF;
+  --color-sanesul-text: #1E293B;
+  --color-sanesul-muted: #64748B;
+}
+
+@layer base {
+  body {
+    @apply bg-sanesul-bg text-sanesul-text font-sans antialiased;
+  }
+}
+
+.glass-card {
+  @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-xl;
+}
+
+.modern-shadow {
+  box-shadow: 0 10px 25px -5px rgba(0, 84, 166, 0.1), 0 8px 10px -6px rgba(0, 84, 166, 0.1);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100 rounded-full;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-sanesul-primary/20 rounded-full hover:bg-sanesul-primary/40 transition-colors;
+}
+

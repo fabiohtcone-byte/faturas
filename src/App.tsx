@@ -1,0 +1,4253 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useCallback, useRef } from 'react';
+import domtoimage from 'dom-to-image-more';
+import { jsPDF } from 'jspdf';
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, ShadingType, ImageRun, VerticalAlign } from 'docx';
+import { saveAs } from 'file-saver';
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { 
+  Upload, 
+  FileText, 
+  Download, 
+  Trash2, 
+  CheckCircle2, 
+  AlertCircle, 
+  Loader2,
+  Clock,
+  Table as TableIcon,
+  Plus,
+  LayoutDashboard,
+  BarChart3,
+  TrendingUp,
+  TrendingDown,
+  FileSpreadsheet,
+  DollarSign,
+  Zap,
+  CheckSquare,
+  ChevronRight,
+  Calendar,
+  X,
+  Printer,
+  LogOut,
+  Pencil,
+  Save
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer, 
+  LineChart, 
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  LabelList
+} from 'recharts';
+
+// --- Types ---
+
+interface BillData {
+  id: string;
+  fileName: string;
+  uc: string;
+  demandaPontaKW: string;
+  demandaForaPontaKW: string;
+  demandaPotenciaMedidaPonta: string;
+  demandaPotenciaMedidaForaPonta: string;
+  anoLeitura: string;
+  mesReferencia: string;
+  consumoKwhPonta: string;
+  consumoKwhForaPonta: string;
+  valorConsumoKwhPonta: string;
+  valorConsumoKwhForaPonta: string;
+  valorTotal: string;
+  cidade: string;
+  demandaPotenciaNaoConsumidaPonta: string;
+  demandaPotenciaNaoConsumidaFPonta: string;
+  demandaPotenciaAtivaUltrapPonta: string;
+  demandaPotenciaAtivaUltrapFPonta: string;
+  energiaReativaExcedPonta: string;
+  energiaReativaExcedFPonta: string;
+  energiaInjetadaKwh: string;
+  energiaCompensadaKwh: string;
+  valorDemandaPotenciaMedidaPonta: string;
+  valorDemandaPotenciaMedidaForaPonta: string;
+  valorDemandaPotenciaNaoConsumidaPonta: string;
+  valorDemandaPotenciaNaoConsumidaFPonta: string;
+  valorDemandaPotenciaAtivaUltrapPonta: string;
+  valorDemandaPotenciaAtivaUltrapFPonta: string;
+  valorEnergiaReativaExcedPonta: string;
+  valorEnergiaReativaExcedFPonta: string;
+  energiaAtvInjetadaGDIOUC: string;
+  valorEnergiaAtvInjetadaGDIOUC: string;
+  energiaAtvInjetadaGDIMUC: string;
+  valorEnergiaAtvInjetadaGDIMUC: string;
+  cip: string;
+  outrosEncargos: string;
+  pis?: string;
+  cofins?: string;
+  icms?: string;
+  concessionaria?: string;
+  numeroNotaFiscal?: string;
+  modalidadeTarifaria?: string;
+  subgrupo?: string;
+  tipo?: string;
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  error?: string;
+  file?: File;
+}
+
+// --- Constants ---
+
+const EXTRACTION_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    uc: { type: Type.STRING, description: "Código da Unidade Consumidora (UC). Extraia apenas o número central do 'Código do Cliente' (ex: em 10/9000076-1, a UC é 9000076). Não use o Código da Instalação (W...)." },
+    demandaPontaKW: { type: Type.STRING, description: "Demanda ponta - kW (Grandezas Contratadas)" },
+    demandaForaPontaKW: { type: Type.STRING, description: "Demanda fora ponta - kW (Grandezas Contratadas)" },
+    demandaPotenciaMedidaPonta: { type: Type.STRING, description: "Demanda de Potência Medida - Ponta (Itens da Fatura)" },
+    demandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Demanda de Potência Medida - Fora Ponta (Itens da Fatura)" },
+    anoLeitura: { type: Type.STRING, description: "Ano de referência da leitura" },
+    mesReferencia: { type: Type.STRING, description: "Mês de referência da leitura" },
+    consumoKwhPonta: { type: Type.STRING, description: "Consumo em kWh - Ponta" },
+    valorConsumoKwhPonta: { type: Type.STRING, description: "Valor (R$) - Consumo em kWh - Ponta" },
+    consumoKwhForaPonta: { type: Type.STRING, description: "Consumo em kWh - Fora Ponta" },
+    valorConsumoKwhForaPonta: { type: Type.STRING, description: "Valor (R$) - Consumo em kWh - Fora Ponta" },
+    valorTotal: { type: Type.STRING, description: "Valor total a pagar (R$)" },
+    cidade: { type: Type.STRING, description: "Cidade da unidade consumidora" },
+    demandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Demanda Potência Não Consumida - Ponta" },
+    demandaPotenciaNaoConsumidaFPonta: { type: Type.STRING, description: "Demanda Potência Não Consumida - F Ponta" },
+    demandaPotenciaAtivaUltrapPonta: { type: Type.STRING, description: "Demanda Potência Ativa - Ultrap - Ponta" },
+    demandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Demanda Potência Ativa - Ultrap - F Ponta" },
+    energiaReativaExcedPonta: { type: Type.STRING, description: "Energia Reativa Exced em KWh - Ponta" },
+    energiaReativaExcedFPonta: { type: Type.STRING, description: "Energia Reativa Exced em KWh - Fponta" },
+    energiaInjetadaKwh: { type: Type.STRING, description: "Energia Injetada em kWh (Geração Distribuída / Solar)" },
+    energiaCompensadaKwh: { type: Type.STRING, description: "Energia Compensada em kWh (Geração Distribuída / Solar)" },
+    valorDemandaPotenciaMedidaPonta: { type: Type.STRING, description: "Valor (R$) - Demanda de Potência Medida - Ponta" },
+    valorDemandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Valor (R$) - Demanda de Potência Medida - Fora Ponta" },
+    valorDemandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Não Consumida - Ponta" },
+    valorDemandaPotenciaNaoConsumidaFPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Não Consumida - F Ponta" },
+    valorDemandaPotenciaAtivaUltrapPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Ativa - Ultrap - Ponta" },
+    valorDemandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Ativa - Ultrap - F Ponta" },
+    valorEnergiaReativaExcedPonta: { type: Type.STRING, description: "Valor (R$) - Energia Reativa Exced em KWh - Ponta" },
+    valorEnergiaReativaExcedFPonta: { type: Type.STRING, description: "Valor (R$) - Energia Reativa Exced em KWh - Fponta" },
+    energiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Energia Atv Injetada GDI oUC em kWh" },
+    valorEnergiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Valor (R$) - Energia Atv Injetada GDI oUC" },
+    energiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Energia Atv Injetada GDI mUC em kWh" },
+    valorEnergiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Valor (R$) - Energia Atv Injetada GDI mUC" },
+    cip: { type: Type.STRING, description: "Valor (R$) da Contribuição de Iluminação Pública (CIP/COSIP)" },
+    outrosEncargos: { type: Type.STRING, description: "Valor (R$) de outros encargos ou adicionais (ex: Adicional Bandeira Amarela/Vermelha)" },
+    pis: { type: Type.STRING, description: "Valor (R$) do PIS" },
+    cofins: { type: Type.STRING, description: "Valor (R$) do COFINS" },
+    icms: { type: Type.STRING, description: "Valor (R$) do ICMS" },
+    concessionaria: { type: Type.STRING, description: "Nome da concessionária (ex: ENERGISA, ELEKTRO)" },
+    numeroNotaFiscal: { type: Type.STRING, description: "Número da Nota Fiscal (NF)" },
+    modalidadeTarifaria: { type: Type.STRING, description: "Modalidade Tarifária (ex: AZUL, VERDE, BRANCA, CONVENCIONAL)" },
+    subgrupo: { type: Type.STRING, description: "Subgrupo tarifário (ex: A4, B1, B3)" }
+  },
+  required: ["uc", "anoLeitura", "mesReferencia"],
+};
+
+const AGRUPADORA_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    concessionaria: { type: Type.STRING, description: "Nome da concessionária (ex: ELEKTRO, ENERGISA)" },
+    valorTotal: { type: Type.STRING, description: "Valor total da fatura (R$)" },
+    mesReferencia: { type: Type.STRING, description: "Mês/Ano de referência (ex: 02/2026)" },
+    vencimento: { type: Type.STRING, description: "Data de vencimento" },
+    numeroNotaFiscal: { type: Type.STRING, description: "Número da Nota Fiscal ou Fatura (ex: AGP-01...)" },
+    pis: { type: Type.STRING, description: "Valor do PIS (R$)" },
+    cofins: { type: Type.STRING, description: "Valor do COFINS (R$)" },
+    icms: { type: Type.STRING, description: "Valor do ICMS (R$)" },
+    cip: { type: Type.STRING, description: "Valor da CIP (R$)" },
+  },
+  required: ["valorTotal", "mesReferencia"],
+};
+
+interface AgrupadoraData {
+  concessionaria: string;
+  valorTotal: number;
+  mesReferencia: string;
+  vencimento: string;
+  numeroNotaFiscal: string;
+  pis: number;
+  cofins: number;
+  icms: number;
+  cip: number;
+  fileName: string;
+}
+
+// --- Helper Functions ---
+
+const ensureApiKey = async () => {
+  if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+    try {
+      const hasKey = await window.aistudio.hasSelectedApiKey();
+      if (!hasKey) {
+        await window.aistudio.openSelectKey();
+      }
+    } catch (e) {
+      console.warn("Erro ao verificar/abrir diálogo de chave de API:", e);
+    }
+  }
+};
+
+const generateContentWithRetry = async (
+  ai: GoogleGenAI,
+  params: any,
+  retries = 3,
+  delay = 2000
+): Promise<GenerateContentResponse> => {
+  try {
+    return await ai.models.generateContent(params);
+  } catch (error: any) {
+    // Extract error details
+    let errorStr = '';
+    let errorCode = 0;
+    let errorStatus = '';
+    
+    if (typeof error === 'string') {
+      errorStr = error;
+    } else if (error && typeof error === 'object') {
+      // Handle the specific format provided by the user
+      const nestedError = error.error || error;
+      errorCode = nestedError.code || error.status || 0;
+      errorStatus = nestedError.status || '';
+      errorStr = nestedError.message || error.message || JSON.stringify(error);
+    }
+
+    const isRateLimit = 
+      errorCode === 429 || 
+      errorStatus === 'RESOURCE_EXHAUSTED' ||
+      errorStr.includes('429') || 
+      errorStr.includes('RESOURCE_EXHAUSTED') ||
+      errorStr.includes('quota');
+
+    if (retries > 0 && isRateLimit) {
+      console.warn(`Rate limit hit, retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return generateContentWithRetry(ai, params, retries - 1, delay * 2);
+    }
+    
+    // If it's a quota error and we're out of retries, throw a descriptive error
+    if (isRateLimit) {
+      const quotaError = new Error("Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio. " + errorStr);
+      (quotaError as any).isQuotaError = true;
+      throw quotaError;
+    }
+    
+    throw error;
+  }
+};
+
+const parseValue = (val: string) => {
+  if (!val) return 0;
+  // Handle Brazilian currency format: 71.398,07 -> 71398.07
+  const normalized = val.replace(/\./g, '').replace(',', '.');
+  const parsed = parseFloat(normalized);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+// --- Components ---
+
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('sanesul_auth') === 'true';
+  });
+
+  React.useEffect(() => {
+    if (!isSupabaseConfigured) {
+      console.warn('Supabase não configurado. Ignorando verificação de sessão.');
+      return;
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsAuthenticated(!!session);
+      if (session) {
+        localStorage.setItem('sanesul_auth', 'true');
+      } else {
+        localStorage.removeItem('sanesul_auth');
+      }
+    }).catch(err => {
+      console.error('Erro ao buscar sessão do Supabase:', err);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session);
+      if (session) {
+        localStorage.setItem('sanesul_auth', 'true');
+      } else {
+        localStorage.removeItem('sanesul_auth');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    
+    console.log('Tentando login com:', loginUsername);
+    
+    try {
+      if (!isSupabaseConfigured) {
+        setLoginError('O Supabase não está configurado. Por favor, adicione as chaves VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nas configurações do AI Studio.');
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginUsername,
+        password: loginPassword,
+      });
+
+      if (error) {
+        console.error('Erro no Supabase Auth:', error);
+        setLoginError(`Erro de autenticação: ${error.message}`);
+      } else if (data.user) {
+        console.log('Login bem-sucedido:', data.user);
+        setIsAuthenticated(true);
+        localStorage.setItem('sanesul_auth', 'true');
+      }
+    } catch (err: any) {
+      console.error('Erro inesperado no handleLogin:', err);
+      if (err.message === 'Failed to fetch') {
+        setLoginError('Erro de conexão com o Supabase. Verifique se a URL está correta nas configurações.');
+      } else {
+        setLoginError('Erro inesperado ao tentar logar. Verifique a conexão.');
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut();
+    }
+    setIsAuthenticated(false);
+    localStorage.removeItem('sanesul_auth');
+  };
+
+  const [bills, setBills] = useState<BillData[]>(() => {
+    const saved = localStorage.getItem('sanesul_bills');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
+
+  React.useEffect(() => {
+    const billsToSave = bills.map(b => {
+      // We cannot serialize File objects, so we remove it before saving
+      const { file, ...rest } = b as any;
+      return rest;
+    });
+    localStorage.setItem('sanesul_bills', JSON.stringify(billsToSave));
+  }, [bills]);
+
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'relatorio'>('faturas');
+  const [sortConfig, setSortConfig] = useState<{ key: keyof BillData | 'referencia', direction: 'asc' | 'desc' } | null>(null);
+  const [analysisData, setAnalysisData] = useState<any[]>([]);
+  const [memoNumber, setMemoNumber] = useState(`001447/${new Date().getFullYear()}/GEDEO/DCO`);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  const handleDownloadPDF = async () => {
+    const element = document.getElementById('memo-content');
+    if (!element) return;
+    
+    setIsGeneratingPDF(true);
+    try {
+      // Create a clone of the element to modify it for PDF generation
+      const clone = element.cloneNode(true) as HTMLElement;
+      
+      // Update the memo number in the clone immediately
+      const memoNumEl = clone.querySelector('.memo-number-text');
+      if (memoNumEl) {
+        memoNumEl.textContent = `MEMO Nº ${memoNumber}`;
+      }
+
+      // Create a temporary container off-screen to render the clone
+      const container = document.createElement('div');
+      container.style.position = 'absolute';
+      container.style.left = '-9999px';
+      container.style.top = '0';
+      container.style.width = '210mm'; // A4 width
+      container.appendChild(clone);
+      document.body.appendChild(container);
+
+      // Convert to image using dom-to-image-more (handles modern CSS like oklch better)
+      const dataUrl = await domtoimage.toJpeg(clone, {
+        quality: 0.98,
+        bgcolor: '#ffffff',
+        width: clone.offsetWidth,
+        height: clone.offsetHeight,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left'
+        }
+      });
+
+      // Calculate dimensions for A4
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (clone.offsetHeight * pdfWidth) / clone.offsetWidth;
+
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`memorando_faturamento_${new Date().getTime()}.pdf`);
+
+      // Cleanup
+      document.body.removeChild(container);
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      alert('Erro ao gerar o PDF. Tente novamente.');
+      setIsGeneratingPDF(false);
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
+  const handleDownloadDocx = async () => {
+    let sanesulLogoBuffer = null;
+    let msLogoBuffer = null;
+
+    try {
+      const sanesulRes = await fetch("https://www.sanesul.ms.gov.br/images/logo_sanesul.png");
+      if (sanesulRes.ok) sanesulLogoBuffer = await sanesulRes.arrayBuffer();
+    } catch (e) { console.error("Não foi possível buscar o logo da Sanesul", e); }
+
+    try {
+      const msRes = await fetch("https://www.ms.gov.br/wp-content/uploads/2023/01/logo-governo-ms.png");
+      if (msRes.ok) msLogoBuffer = await msRes.arrayBuffer();
+    } catch (e) { console.error("Não foi possível buscar o logo do MS", e); }
+
+    const headerParagraphs = [];
+    
+    if (sanesulLogoBuffer && msLogoBuffer) {
+      headerParagraphs.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              data: sanesulLogoBuffer,
+              transformation: { width: 150, height: 50 },
+              type: "png"
+            }),
+            new TextRun({ text: "        " }), // Spacing
+            new ImageRun({
+              data: msLogoBuffer,
+              transformation: { width: 150, height: 50 },
+              type: "png"
+            }),
+          ],
+        })
+      );
+    }
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          ...headerParagraphs,
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({ text: "Empresa de Saneamento de Mato Grosso do Sul S.A.", bold: true, size: 20 }),
+            ],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({ text: "Diretoria da Presidência", size: 16 }),
+            ],
+          }),
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: `MEMO Nº ${memoNumber}`, bold: true, size: 28 })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [new TextRun({ text: `Campo Grande, ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(new Date())}.` })],
+          }),
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Paragraph({ children: [new TextRun({ text: "DE: GEDEO - Gerência de Desenvolvimento Operacional", bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: "PARA: GEFI - Gerência Financeira e Gestão de Recursos", bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: `ASSUNTO: Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — ${selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}.`, bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Paragraph({ children: [new TextRun({ text: "Prezado(a)," })] }),
+          new Paragraph({ children: [new TextRun({ text: `Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da Elektro — todas referentes ao mês de ${selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth} e correspondentes às unidades operacionais da SANESUL.` })] }),
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Tabela 1 - Faturas Anexas", bold: true, size: 20 })] }),
+          new Paragraph({ children: [new TextRun({ text: "" })] }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            borders: {
+              top: { style: BorderStyle.SINGLE, size: 1 },
+              bottom: { style: BorderStyle.SINGLE, size: 1 },
+              left: { style: BorderStyle.SINGLE, size: 1 },
+              right: { style: BorderStyle.SINGLE, size: 1 },
+              insideHorizontal: { style: BorderStyle.SINGLE, size: 1 },
+              insideVertical: { style: BorderStyle.SINGLE, size: 1 },
+            },
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "LOCALIDADE", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "VALOR (R$)", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "NOTA FISCAL", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "REF: MÊS / ANO", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                ],
+              }),
+              // Energisa Main Row
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Agrupadora Energisa Operacional", bold: true })] })], shading: { fill: "E0F2FE", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `R$ ${memoData.energisa.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, bold: true })] })], shading: { fill: "E0F2FE", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.energisa.nf })] })] }),
+                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.energisa.mesRef, bold: true })] })] }),
+                ],
+              }),
+              // Energisa Details
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    PIS" })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.pis > 0 ? `R$ ${memoData.energisa.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    COFINS" })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.cofins > 0 ? `R$ ${memoData.energisa.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    ICMS" })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.icms > 0 ? `R$ ${memoData.energisa.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    Tarifa de Iluminação Pública", italics: true })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.cip > 0 ? `R$ ${memoData.energisa.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              // Elektro Main Row
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Agrupadora Elektro", bold: true })] })], shading: { fill: "FEF3C7", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `R$ ${memoData.elektro.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, bold: true })] })], shading: { fill: "FEF3C7", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.elektro.nf })] })] }),
+                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.elektro.mesRef, bold: true })] })] }),
+                ],
+              }),
+              // Elektro Details
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    PIS" })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.pis > 0 ? `R$ ${memoData.elektro.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    COFINS" })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.cofins > 0 ? `R$ ${memoData.elektro.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    ICMS" })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.icms > 0 ? `R$ ${memoData.elektro.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    Tarifa de Iluminação Pública", italics: true })] })] }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.cip > 0 ? `R$ ${memoData.elektro.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                ],
+              }),
+              // Total Row
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TOTAL GERAL", bold: true, size: 24 })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `R$ ${(memoData.energisa.total + memoData.elektro.total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, bold: true, size: 24 })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                  new TableCell({ columnSpan: 2, children: [new Paragraph({ text: "" })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, `memorando_faturamento_${new Date().getTime()}.docx`);
+  };
+
+  const requestSort = (key: keyof BillData | 'referencia') => {
+    if (sortConfig && sortConfig.key === key) {
+      if (sortConfig.direction === 'asc') {
+        setSortConfig({ key, direction: 'desc' });
+      } else {
+        setSortConfig(null);
+      }
+    } else {
+      setSortConfig({ key, direction: 'asc' });
+    }
+  };
+
+  const sortedBills = React.useMemo(() => {
+    let sortableBills = [...bills];
+    
+    sortableBills.sort((a, b) => {
+      // Priority mapping for statuses
+      const getStatusPriority = (status: string) => {
+        if (status === 'processing') return 0;
+        if (status === 'error') return 1;
+        return 2;
+      };
+
+      const aPriority = getStatusPriority(a.status);
+      const bPriority = getStatusPriority(b.status);
+
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+
+      if (sortConfig !== null) {
+        const monthOrder: Record<string, number> = {
+          'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
+          'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
+          'outubro': 10, 'novembro': 11, 'dezembro': 12
+        };
+
+        const extractNumericValue = (str: string | number) => {
+          const s = String(str);
+          const matches = s.match(/\d+/g);
+          return matches ? parseInt(matches.join(''), 10) : 0;
+        };
+
+        let aValue: any;
+        let bValue: any;
+
+        if (sortConfig.key === 'referencia') {
+          const monthA = monthOrder[a.mesReferencia?.toLowerCase()] || 0;
+          const monthB = monthOrder[b.mesReferencia?.toLowerCase()] || 0;
+          aValue = parseInt(a.anoLeitura || '0', 10) * 100 + monthA;
+          bValue = parseInt(b.anoLeitura || '0', 10) * 100 + monthB;
+        } else if (sortConfig.key === 'uc') {
+          aValue = extractNumericValue(a.uc || '');
+          bValue = extractNumericValue(b.uc || '');
+        } else if (sortConfig.key === 'fileName') {
+          aValue = extractNumericValue(a.fileName || '');
+          bValue = extractNumericValue(b.fileName || '');
+        } else if (sortConfig.key === 'concessionaria') {
+          aValue = (a.concessionaria || '').toLowerCase();
+          bValue = (b.concessionaria || '').toLowerCase();
+        } else {
+          aValue = a[sortConfig.key as keyof BillData];
+          bValue = b[sortConfig.key as keyof BillData];
+        }
+
+        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+
+    return sortableBills;
+  }, [bills, sortConfig]);
+
+  const [analysisResults, setAnalysisResults] = useState<any>(null);
+  const [dashboardSubTab, setDashboardSubTab] = useState<'operacionais' | 'financeiro'>('operacionais');
+  const [operationalSubTab, setOperationalSubTab] = useState<'consumo' | 'ultrapassagem' | 'subutilizacao' | 'reativa' | 'solar'>('consumo');
+  const [financialSubTab, setFinancialSubTab] = useState<'despesas' | 'multa_ultrapassagem' | 'multa_reativa' | 'tarifa_media' | 'energia_solar'>('despesas');
+  const [selectedUC, setSelectedUC] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedRelatorioMonth, setSelectedRelatorioMonth] = useState<string>('all');
+  const [showMemo, setShowMemo] = useState(false);
+  const [showMemoNumberPrompt, setShowMemoNumberPrompt] = useState(false);
+  const [tempMemoNumber, setTempMemoNumber] = useState('');
+  const [uploadProgress, setUploadProgress] = useState<{ status: string, percent: number } | null>(null);
+  const [isBillModalOpen, setIsBillModalOpen] = useState(false);
+  const [editingBill, setEditingBill] = useState<Partial<BillData> | null>(null);
+  const fileInputEnergisaRef = useRef<HTMLInputElement>(null);
+  const fileInputElektroRef = useRef<HTMLInputElement>(null);
+  const [agrupadoraFiles, setAgrupadoraFiles] = useState<Record<string, AgrupadoraData>>(() => {
+    const saved = localStorage.getItem('sanesul_agrupadora_files');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('sanesul_agrupadora_files', JSON.stringify(agrupadoraFiles));
+  }, [agrupadoraFiles]);
+  const agrupadoraInputRef = useRef<HTMLInputElement>(null);
+  const energisaInputRef = useRef<HTMLInputElement>(null);
+  const detailedElektroInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAgrupadoraUpload = async (event: React.ChangeEvent<HTMLInputElement>, reportType: 'summary' | 'detailed' = 'summary') => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const statusPrefix = reportType === 'detailed' ? 'Relatório Detalhado' : 'Fatura Agrupadora';
+
+    setIsProcessing(true);
+    setUploadProgress({ status: `Lendo ${statusPrefix}...`, percent: 0 });
+    
+    // Ensure API key is selected if needed
+    await ensureApiKey();
+    
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+
+    try {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onprogress = (data) => {
+          if (data.lengthComputable) {
+            const progress = Math.round((data.loaded / data.total) * 30);
+            setUploadProgress({ status: `Lendo ${statusPrefix}...`, percent: progress });
+          }
+        };
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          setUploadProgress({ status: 'Processando com IA...', percent: 30 });
+          resolve(base64);
+        };
+        reader.readAsDataURL(file);
+      });
+
+      const base64Data = await base64Promise;
+
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (!prev || prev.percent >= 95) return prev;
+          return { ...prev, percent: prev.percent + 5 };
+        });
+      }, 500);
+
+      let prompt = "Extraia os dados desta Fatura Agrupadora. Identifique a concessionária (ELEKTRO ou ENERGISA), valor total, mês de referência, vencimento, número da nota fiscal (AGP... ou número do documento), e valores de impostos (PIS, COFINS, ICMS, CIP). Para Energisa, atente-se aos campos 'Imp. Fed.' (PIS/COFINS) e 'ICMS' no resumo. Se algum valor não for encontrado, retorne 0 ou string vazia.";
+      let selectedModel = "gemini-3-flash-preview";
+
+      if (reportType === 'detailed') {
+        selectedModel = "gemini-3.1-pro-preview";
+        prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado. O objetivo é CALCULAR O TOTAL DA 'COBRANCA ILUM PUBLICA'. \n\nINSTRUÇÕES:\n1. Percorra TODAS as páginas do documento.\n2. Em cada página, procure na tabela de itens faturados pela descrição exata: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n3. Extraia o valor monetário associado a essa linha em cada ocorrência.\n4. SOMA: Some todos os valores encontrados em todas as páginas.\n5. RETORNO: Retorne o JSON preenchendo APENAS o campo 'cip' com o resultado dessa soma. Os campos 'valorTotal', 'pis', 'cofins', 'icms' DEVEM ser 0.\n6. Identifique também a 'concessionaria' (ELEKTRO) e o 'mesReferencia'.";
+      }
+
+      const response = await generateContentWithRetry(ai, {
+        model: selectedModel,
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: file.type || 'application/pdf',
+                  data: base64Data
+                }
+              }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: AGRUPADORA_SCHEMA,
+        }
+      });
+
+      clearInterval(progressInterval);
+      setUploadProgress({ status: 'Concluído!', percent: 100 });
+      setTimeout(() => setUploadProgress(null), 2000);
+
+      const result = JSON.parse(response.text || '{}');
+      const concessionariaRaw = (result.concessionaria || 'DESCONHECIDA').toUpperCase();
+      const key = concessionariaRaw.includes('ENERGISA') ? 'ENERGISA' : 'ELEKTRO';
+      
+      if (reportType === 'detailed') {
+        const detailedKey = `${key}_DETALHADO`;
+        setAgrupadoraFiles(prev => ({
+          ...prev,
+          [detailedKey]: {
+            cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
+            concessionaria: `${concessionariaRaw} (DETALHADO)`,
+            mesReferencia: result.mesReferencia || '',
+            valorTotal: 0,
+            vencimento: '',
+            numeroNotaFiscal: '',
+            pis: 0,
+            cofins: 0,
+            icms: 0,
+            fileName: file.name
+          }
+        }));
+      } else {
+        const newData: AgrupadoraData = {
+          concessionaria: concessionariaRaw,
+          valorTotal: typeof result.valorTotal === 'string' ? parseValue(result.valorTotal) : result.valorTotal,
+          mesReferencia: result.mesReferencia || '',
+          vencimento: result.vencimento || '',
+          numeroNotaFiscal: result.numeroNotaFiscal || '',
+          pis: typeof result.pis === 'string' ? parseValue(result.pis) : result.pis,
+          cofins: typeof result.cofins === 'string' ? parseValue(result.cofins) : result.cofins,
+          icms: typeof result.icms === 'string' ? parseValue(result.icms) : result.icms,
+          cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
+          fileName: file.name
+        };
+
+        setAgrupadoraFiles(prev => ({
+          ...prev,
+          [key]: newData
+        }));
+      }
+
+    } catch (error: any) {
+      console.error("Agrupadora extraction error:", error);
+      const errorStr = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
+      
+      if (error?.isQuotaError || errorStr.includes('quota') || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED')) {
+        alert("Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio. Se você já tem um plano pago, aguarde alguns minutos.");
+      } else {
+        alert("Erro ao processar fatura agrupadora: " + errorStr);
+      }
+      setUploadProgress(null);
+    } finally {
+      setIsProcessing(false);
+      if (agrupadoraInputRef.current) agrupadoraInputRef.current.value = '';
+      if (energisaInputRef.current) energisaInputRef.current.value = '';
+      if (detailedElektroInputRef.current) detailedElektroInputRef.current.value = '';
+    }
+  };
+
+  const addFiles = (files: FileList | File[], concessionaria?: string) => {
+    const newBills: BillData[] = (Array.from(files) as File[]).map(file => ({
+      id: Math.random().toString(36).substring(7),
+      fileName: file.name,
+      concessionaria: concessionaria || '',
+      uc: '',
+      demandaPontaKW: '',
+      demandaForaPontaKW: '',
+      demandaPotenciaMedidaPonta: '',
+      demandaPotenciaMedidaForaPonta: '',
+      anoLeitura: '',
+      mesReferencia: '',
+      consumoKwhPonta: '',
+      valorConsumoKwhPonta: '',
+      consumoKwhForaPonta: '',
+      valorConsumoKwhForaPonta: '',
+      valorTotal: '',
+      cidade: '',
+      demandaPotenciaNaoConsumidaPonta: '',
+      demandaPotenciaNaoConsumidaFPonta: '',
+      demandaPotenciaAtivaUltrapPonta: '',
+      demandaPotenciaAtivaUltrapFPonta: '',
+      energiaReativaExcedPonta: '',
+      energiaReativaExcedFPonta: '',
+      energiaInjetadaKwh: '',
+      energiaCompensadaKwh: '',
+      valorDemandaPotenciaMedidaPonta: '',
+      valorDemandaPotenciaMedidaForaPonta: '',
+      valorDemandaPotenciaNaoConsumidaPonta: '',
+      valorDemandaPotenciaNaoConsumidaFPonta: '',
+      valorDemandaPotenciaAtivaUltrapPonta: '',
+      valorDemandaPotenciaAtivaUltrapFPonta: '',
+      valorEnergiaReativaExcedPonta: '',
+      valorEnergiaReativaExcedFPonta: '',
+      energiaAtvInjetadaGDIOUC: '',
+      valorEnergiaAtvInjetadaGDIOUC: '',
+      energiaAtvInjetadaGDIMUC: '',
+      valorEnergiaAtvInjetadaGDIMUC: '',
+      cip: '',
+      outrosEncargos: '',
+      status: 'pending',
+      file: file
+    } as any));
+
+    setBills(prev => [...prev, ...newBills]);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>, concessionaria?: string) => {
+    const files = event.target.files;
+    if (!files) return;
+    addFiles(files, concessionaria);
+    event.target.value = '';
+  };
+
+  const runAnalysis = () => {
+    const completedBills = bills.filter(b => b.status === 'completed');
+    if (completedBills.length === 0) return;
+
+    const parsedData = completedBills.map(b => ({
+      mes: b.mesReferencia || 'N/A',
+      ano: b.anoLeitura || '',
+      uc: b.uc || 'N/A',
+      dcp: parseValue(b.demandaPontaKW),
+      dmp: parseValue(b.demandaPotenciaMedidaPonta),
+      dcfp: parseValue(b.demandaForaPontaKW),
+      dmfp: parseValue(b.demandaPotenciaMedidaForaPonta)
+    })).filter(d => d.dcp > 0 || d.dcfp > 0);
+
+    // 2. Calculate Optimal Fixed Demand (Resolução 1000)
+    // The optimal fixed demand is the one that minimizes the total cost over the period.
+    // Group by UC to find the optimal demand per UC
+    const ucs = Array.from(new Set(parsedData.map(d => d.uc)));
+    const optimalDemands: Record<string, { ponta: number, foraPonta: number }> = {};
+
+    ucs.forEach(uc => {
+      const ucData = parsedData.filter(d => d.uc === uc);
+      const maxDmp = Math.max(...ucData.map(d => d.dmp));
+      const maxDmfp = Math.max(...ucData.map(d => d.dmfp));
+      
+      const roundDemand = (val: number) => {
+        const minRequired = val / 1.05;
+        return Math.ceil(minRequired * 2) / 2;
+      };
+
+      optimalDemands[String(uc)] = {
+        ponta: roundDemand(maxDmp),
+        foraPonta: Math.max(30, roundDemand(maxDmfp))
+      };
+    });
+
+    // 3. Second Pass: Calculate costs and savings based on the fixed optimal demand
+    const tp = 15.00; 
+    const tfp = 10.00;
+
+    const results = parsedData.flatMap(row => {
+      const { mes, ano, uc, dcp, dmp, dcfp, dmfp } = row;
+      const opt = optimalDemands[String(uc)];
+      
+      if (!opt) return [];
+
+      // Current Cost
+      const costPonta = dmp > dcp * 1.05 ? (dcp * tp) + ((dmp - dcp) * tp * 2) : (Math.max(dmp, dcp) * tp);
+      const costForaPonta = dmfp > dcfp * 1.05 ? (dcfp * tfp) + ((dmfp - dcfp) * tfp * 2) : (Math.max(dmfp, dcfp) * tfp);
+      const currentTotal = costPonta + costForaPonta;
+
+      // Optimized Cost (using the FIXED optimal demand)
+      const optCostPonta = dmp > opt.ponta * 1.05 ? (opt.ponta * tp) + ((dmp - opt.ponta) * tp * 2) : (Math.max(dmp, opt.ponta) * tp);
+      const optCostForaPonta = dmfp > opt.foraPonta * 1.05 ? (opt.foraPonta * tfp) + ((dmfp - opt.foraPonta) * tfp * 2) : (Math.max(dmfp, opt.foraPonta) * tfp);
+      const optimizedTotal = optCostPonta + optCostForaPonta;
+      
+      const economy = currentTotal - optimizedTotal;
+
+      // Ultrapassagem
+      const overrunPonta = dmp > dcp * 1.05 ? dmp - dcp : 0;
+      const overrunForaPonta = dmfp > dcfp * 1.05 ? dmfp - dcfp : 0;
+
+      // Subutilização
+      const subPonta = dmp < dcp ? dcp - dmp : 0;
+      const subForaPonta = dmfp < dcfp ? dcfp - dmfp : 0;
+
+      return [{
+        mes,
+        ano,
+        uc,
+        dcp,
+        dmp,
+        dcfp,
+        dmfp,
+        optimizedPonta: opt.ponta,
+        optimizedForaPonta: opt.foraPonta,
+        economy,
+        overrunPonta,
+        overrunForaPonta,
+        subPonta,
+        subForaPonta,
+        isOverrun: overrunPonta > 0 || overrunForaPonta > 0,
+        isSub: subPonta > 0 || subForaPonta > 0
+      }];
+    });
+
+    // Sort results by month (newest to oldest)
+    const monthOrder: Record<string, number> = {
+      'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
+      'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
+      'outubro': 10, 'novembro': 11, 'dezembro': 12
+    };
+
+    results.sort((a, b) => {
+      const monthA = monthOrder[a.mes.toLowerCase()] || 0;
+      const monthB = monthOrder[b.mes.toLowerCase()] || 0;
+      return monthB - monthA;
+    });
+
+    setAnalysisResults(results);
+  };
+
+  const runMonitoringAnalysis = () => {
+    const completedBills = bills.filter(b => b.status === 'completed');
+    if (completedBills.length === 0) return;
+
+    const tp = 15.00; 
+    const tfp = 10.00;
+
+    const monthOrder: Record<string, number> = {
+      'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
+      'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
+      'outubro': 10, 'novembro': 11, 'dezembro': 12
+    };
+
+    const getMonthNumber = (month: string) => monthOrder[month.toLowerCase()] || 0;
+    const getYear = (year: string) => parseInt(year || '0', 10);
+
+    // Get all unique UCs
+    const ucs = Array.from(new Set(completedBills.map(b => b.uc))).filter(uc => {
+      const ucBills = completedBills.filter(b => b.uc === uc);
+      return ucBills.some(b => parseValue(b.demandaPontaKW) > 0 || parseValue(b.demandaForaPontaKW) > 0);
+    });
+
+    const allUcData = ucs.map(uc => {
+      let ucBills = completedBills.filter(b => b.uc === uc);
+      const city = ucBills[0]?.cidade || 'N/A';
+      
+      // Sort bills chronologically (Oldest to Newest) for change detection
+      ucBills.sort((a, b) => {
+        const yearA = getYear(a.anoLeitura);
+        const yearB = getYear(b.anoLeitura);
+        if (yearA !== yearB) return yearA - yearB;
+        return getMonthNumber(a.mesReferencia) - getMonthNumber(b.mesReferencia);
+      });
+
+      // Calculate optimal demand (Ideal) based on all history (Max measured)
+      const maxDmp = Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaPonta)));
+      const maxDmfp = Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaForaPonta)));
+      
+      const roundDemand = (val: number) => {
+        const minRequired = val / 1.05;
+        return Math.ceil(minRequired * 2) / 2;
+      };
+
+      const optPonta = roundDemand(maxDmp);
+      const optForaPonta = Math.max(30, roundDemand(maxDmfp));
+
+      // 1st Pass: Calculate Current Total for ALL bills first
+      const processedBills = ucBills.map(b => {
+        const dcp = parseValue(b.demandaPontaKW);
+        const dmp = parseValue(b.demandaPotenciaMedidaPonta);
+        const dcfp = parseValue(b.demandaForaPontaKW);
+        const dmfp = parseValue(b.demandaPotenciaMedidaForaPonta);
+
+        const vDmpP = parseValue(b.valorDemandaPotenciaMedidaPonta);
+        const vDmpFp = parseValue(b.valorDemandaPotenciaMedidaForaPonta);
+        const vDncP = parseValue(b.valorDemandaPotenciaNaoConsumidaPonta);
+        const vDncFp = parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta);
+        const vUltrapP = parseValue(b.valorDemandaPotenciaAtivaUltrapPonta);
+        const vUltrapFp = parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta);
+
+        const currentTotal = vDmpP + vDmpFp + vDncP + vDncFp + vUltrapP + vUltrapFp;
+
+        return {
+          originalBill: b,
+          dcp, dmp, dcfp, dmfp,
+          currentTotal,
+          mes: b.mesReferencia,
+          ano: b.anoLeitura
+        };
+      });
+
+      // 2nd Pass: Detect Changes and Calculate Reference/Economy
+      let activeContract: { ponta: number, foraPonta: number } | null = null;
+      let currentContractStartIdx = 0;
+      let previousContractAverageCost = 0;
+      let accumulatedEconomy = 0;
+
+      const monthlyData = processedBills.map((b, index) => {
+        // Initialize active contract on first bill
+        if (activeContract === null) {
+          activeContract = { ponta: b.dcp, foraPonta: b.dcfp };
+        }
+
+        // Detect Change
+        const isValidContract = activeContract.ponta > 0 || activeContract.foraPonta > 0;
+        const hasChanged = isValidContract && (b.dcp !== activeContract.ponta || b.dcfp !== activeContract.foraPonta);
+        
+        if (hasChanged) {
+          // Calculate average of the PREVIOUS contract period
+          const previousPeriodBills = processedBills.slice(currentContractStartIdx, index);
+          if (previousPeriodBills.length > 0) {
+             const sum = previousPeriodBills.reduce((acc, item) => acc + item.currentTotal, 0);
+             previousContractAverageCost = sum / previousPeriodBills.length;
+          } else {
+             previousContractAverageCost = 0;
+          }
+          
+          // Update for new contract
+          currentContractStartIdx = index;
+          activeContract = { ponta: b.dcp, foraPonta: b.dcfp };
+        } else if (!isValidContract && (b.dcp > 0 || b.dcfp > 0)) {
+           // First valid contract found after 0s
+           activeContract = { ponta: b.dcp, foraPonta: b.dcfp };
+           currentContractStartIdx = index;
+           // previousContractAverageCost remains 0 as there was no valid previous contract
+        }
+
+        // Calculate Economy
+        // If we have a valid previous average (meaning we are in a changed state relative to something valid)
+        let economyFromChange = 0;
+        let referenceTotal = 0;
+
+        if (previousContractAverageCost > 0) {
+            referenceTotal = previousContractAverageCost;
+            economyFromChange = referenceTotal - b.currentTotal;
+            accumulatedEconomy += economyFromChange;
+        }
+
+        return {
+          mes: b.mes,
+          ano: b.ano,
+          currentTotal: b.currentTotal,
+          referenceTotal, // Fixed Average of Previous Contract
+          economy: economyFromChange,
+          accumulatedEconomy,
+          dmp: b.dmp,
+          dmfp: b.dmfp,
+          dcp: b.dcp,
+          dcfp: b.dcfp,
+          hasChanged,
+          referenceContract: null // Not used in new logic but kept for type compatibility if needed
+        };
+      });
+
+      // Reverse to show newest first in UI
+      monthlyData.reverse();
+
+      const totalEconomy = accumulatedEconomy; // Total accumulated from changes
+      const totalCurrent = monthlyData.reduce((acc, curr) => acc + curr.currentTotal, 0);
+      const hasContractChange = monthlyData.some(m => m.hasChanged);
+
+      return {
+        uc,
+        city,
+        totalEconomy,
+        totalCurrent,
+        monthlyData,
+        optPonta,
+        optForaPonta,
+        hasContractChange
+      };
+    });
+
+    const changedUCs = allUcData.filter(uc => uc.hasContractChange);
+    const unchangedUCs = allUcData.filter(uc => !uc.hasContractChange);
+
+    const generalTotalEconomy = allUcData.reduce((acc, curr) => acc + curr.totalEconomy, 0);
+    const generalTotalCurrent = allUcData.reduce((acc, curr) => acc + curr.totalCurrent, 0);
+
+    setMonitoringResults({
+      changedUCs,
+      unchangedUCs,
+      generalTotalEconomy,
+      generalTotalCurrent
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      addFiles(files);
+    }
+  };
+
+  const processFile = async (bill: BillData & { file: File }, retryCount = 0) => {
+    let user = null;
+    if (isSupabaseConfigured) {
+      const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+      user = supabaseUser;
+    }
+
+    // Ensure API key is selected if needed
+    await ensureApiKey();
+
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    
+    try {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          resolve(base64);
+        };
+        if (bill.file instanceof Blob) {
+          reader.readAsDataURL(bill.file);
+        } else {
+          console.error("bill.file is not a Blob:", bill.file);
+          resolve(""); // Or handle error appropriately
+        }
+      });
+
+      const base64Data = await base64Promise;
+
+      const response = await generateContentWithRetry(ai, {
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            parts: [
+              { text: "Extraia os dados solicitados desta fatura de energia. IMPORTANTE: A Unidade Consumidora (UC) deve ser extraída do campo 'CÓDIGO DO CLIENTE' (apenas os números entre a barra e o hífen, ex: 9000076). NÃO inclua o hífen nem os números após ele. NÃO use o 'CÓDIGO DA INSTALAÇÃO' que começa com W. Se um valor não for encontrado, deixe em branco." },
+              {
+                inlineData: {
+                  mimeType: bill.file?.type || 'application/pdf',
+                  data: base64Data
+                }
+              }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: EXTRACTION_SCHEMA,
+        }
+      });
+
+      const result = JSON.parse(response.text || '{}');
+      
+      if (result.uc) {
+        result.uc = result.uc.split('-')[0].trim();
+      }
+
+      if (isSupabaseConfigured && user) {
+        await supabase
+          .from('bills')
+          .insert({
+            file_name: bill.fileName,
+            uc: result.uc,
+            ano_leitura: result.anoLeitura,
+            mes_referencia: result.mesReferencia,
+            valor_total: parseValue(result.valorTotal),
+            cidade: result.cidade,
+            status: 'completed',
+            user_id: user.id
+          });
+      }
+      
+      setBills(prev => {
+        const isDuplicate = prev.some(b => {
+          if (b.id === bill.id || b.status !== 'completed') return false;
+          
+          const normalize = (str: string) => (str || '').toString().trim().toLowerCase();
+          
+          const isDup = normalize(b.uc) === normalize(result.uc) && 
+                        normalize(b.mesReferencia) === normalize(result.mesReferencia) &&
+                        normalize(b.anoLeitura) === normalize(result.anoLeitura);
+          
+          if (isDup) {
+            console.log(`Duplicata detectada: UC ${b.uc}, Mês ${b.mesReferencia}/${b.anoLeitura}`);
+          }
+          return isDup;
+        });
+
+        if (isDuplicate) {
+          return prev.map(b => b.id === bill.id ? {
+            ...b,
+            ...result,
+            status: 'error',
+            error: 'Fatura duplicada (mesma UC e Mês/Ano)'
+          } : b);
+        }
+
+        return prev.map(b => b.id === bill.id ? {
+          ...b,
+          ...result,
+          status: 'completed'
+        } : b);
+      });
+
+    } catch (error: any) {
+      console.error("Erro na extração:", error);
+      
+      let isRateLimit = false;
+      let isQuotaExhausted = false;
+      let retryAfter = 0;
+
+      // Check for rate limit in various error formats
+      const errorStr = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
+      const nestedError = error?.error || error;
+      const errorCode = nestedError?.code || error?.status || 0;
+      const errorStatus = nestedError?.status || '';
+      const msg = nestedError?.message || error?.message || '';
+
+      if (msg.includes('exceeded your current quota') || errorStr.includes('exceeded your current quota')) {
+        isQuotaExhausted = true;
+      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED')) {
+        isRateLimit = true;
+        // Try to extract retry time from message
+        const match = msg.match(/retry in ([\d.]+)s/);
+        if (match && match[1]) {
+          retryAfter = parseFloat(match[1]) * 1000;
+        }
+      }
+
+      if (isQuotaExhausted) {
+        setBills(prev => prev.map(b => b.id === bill.id ? {
+          ...b,
+          status: 'error',
+          error: 'Cota da API excedida. Verifique seu plano de faturamento.'
+        } : b));
+        return;
+      }
+
+      if (isRateLimit) {
+        // Increase max retries to 15
+        if (retryCount < 15) {
+          // Use retryAfter if found, otherwise exponential backoff starting much higher
+          const delay = retryAfter > 0 
+            ? retryAfter + 10000 // Adiciona 10s de margem
+            : Math.pow(1.3, retryCount) * 30000 + Math.random() * 10000; // Começa em ~30s, aumenta mais devagar mas começa bem mais alto
+          
+          console.log(`Limite de taxa atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/15)`);
+          
+          setBills(prev => prev.map(b => b.id === bill.id ? {
+            ...b,
+            status: 'processing',
+            error: `Aguardando limite da API... Tentativa ${retryCount + 1}/15 (${Math.round(delay/1000)}s)`
+          } : b));
+
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return processFile(bill, retryCount + 1);
+        }
+      }
+
+      setBills(prev => prev.map(b => b.id === bill.id ? {
+        ...b,
+        status: 'error',
+        error: error.message || 'Erro na extração'
+      } : b));
+    }
+  };
+
+  const startProcessing = async () => {
+    if (isProcessing) return;
+    
+    const pendingBills = bills.filter(b => b.status === 'pending');
+    if (pendingBills.length === 0) return;
+
+    setIsProcessing(true);
+
+    // Worker pool approach to maintain concurrency between 3 and 5
+    const queue = [...pendingBills];
+    const maxConcurrency = 5;
+    const initialWorkers = Math.min(maxConcurrency, queue.length);
+
+    const runWorker = async () => {
+      while (queue.length > 0) {
+        const bill = queue.shift();
+        if (!bill) break;
+
+        // Update status to processing
+        setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'processing', error: undefined } : b));
+        
+        try {
+          await processFile(bill as any);
+        } catch (error) {
+          console.error(`Erro no processamento de ${bill.fileName}:`, error);
+        }
+      }
+    };
+
+    const workers = [];
+    for (let i = 0; i < initialWorkers; i++) {
+      workers.push(runWorker());
+    }
+
+    await Promise.all(workers);
+    setIsProcessing(false);
+  };
+
+  const [selectedBills, setSelectedBills] = useState<string[]>([]);
+  const [monitoringResults, setMonitoringResults] = useState<any>(null);
+  const [expandedUCs, setExpandedUCs] = useState<Set<string>>(new Set());
+
+  const toggleUCExpansion = (uc: string) => {
+    setExpandedUCs(prev => {
+      const next = new Set(prev);
+      if (next.has(uc)) next.delete(uc);
+      else next.add(uc);
+      return next;
+    });
+  };
+
+  const toggleBillSelection = (id: string) => {
+    setSelectedBills(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
+  const removeBill = (id: string) => {
+    setBills(prev => prev.filter(b => b.id !== id));
+    setSelectedBills(prev => prev.filter(s => s !== id));
+  };
+
+  const removeSelectedBills = () => {
+    setBills(prev => prev.filter(b => !selectedBills.includes(b.id)));
+    setSelectedBills([]);
+  };
+
+  const deselectFirst223 = () => {
+    const first223Ids = bills.slice(0, 223).map(b => b.id);
+    setSelectedBills(prev => prev.filter(id => !first223Ids.includes(id)));
+  };
+
+  const exportAnalysisToCSV = () => {
+    if (!analysisResults || analysisResults.length === 0) return;
+
+    const headers = [
+      "UC", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
+      "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Economia (R$)", "Status",
+      "Grupo Tarifário", "Tarifa Branca", "Optante B"
+    ];
+
+    const rows = analysisResults.map((r: any) => {
+      // Basic classification logic (placeholder, needs refinement based on actual data)
+      const isGrupoA = r.dcp > 0 || r.dcfp > 0; // Simplified assumption
+      const isGrupoB = !isGrupoA;
+      const isSolar = r.solarInjetadaOUC > 0 || r.solarInjetadaMUC > 0; // Assuming these fields exist in analysisResults
+      
+      const grupo = isGrupoA ? "Grupo A (Verde/Azul)" : (isSolar ? "Grupo B (Solar)" : "Grupo B (Não Solar)");
+      const tarifaBranca = "N/A"; // Need to determine how to identify this
+      const optanteB = "N/A"; // Need to determine how to identify this
+
+      return [
+        r.uc, r.ano, r.mes, r.dmp, r.dmfp,
+        r.opt.ponta, r.opt.foraPonta, r.economy.toFixed(2),
+        r.isOverrun ? 'Ultrapassagem' : (r.isSub ? 'Subutilização' : 'OK'),
+        grupo, tarifaBranca, optanteB
+      ];
+    });
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'analise_demanda.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportToCSV = () => {
+    // Export ALL completed bills, regardless of the current dashboard filter
+    const completedBills = bills.filter(b => b.status === 'completed');
+    if (completedBills.length === 0) return;
+
+    const headers = [
+      "Concessionária",
+      "UC", 
+      "Ano Leitura", 
+      "Mês Referência", 
+      "Consumo em kWh - Ponta",
+      "Valor (R$) - Consumo em kWh - Ponta",
+      "Consumo em kWh - Fora Ponta",
+      "Valor (R$) - Consumo em kWh - Fora Ponta",
+      "Valor R$",
+      "Demanda ponta - kW", 
+      "Demanda fora ponta - kW", 
+      "Demanda de Potência Medida - Ponta", 
+      "Valor (R$) - Demanda de Potência Medida - Ponta",
+      "Demanda de Potência Medida - Fora Ponta", 
+      "Valor (R$) - Demanda de Potência Medida - Fora Ponta",
+      "CIDADE",
+      "Demanda Potência Não Consumida - Ponta", 
+      "Valor (R$) - Demanda Potência Não Consumida - Ponta",
+      "Demanda Potência Não Consumida - F Ponta",
+      "Valor (R$) - Demanda Potência Não Consumida - F Ponta",
+      "Demanda Potência Ativa - Ultrap - Ponta",
+      "Valor (R$) - Demanda Potência Ativa - Ultrap - Ponta",
+      "Demanda Potência Ativa - Ultrap - F Ponta",
+      "Valor (R$) - Demanda Potência Ativa - Ultrap - F Ponta",
+      "Energia Reativa Exced em KWh - Ponta",
+      "Valor (R$) - Energia Reativa Exced em KWh - Ponta",
+      "Energia Reativa Exced em KWh - Fponta",
+      "Valor (R$) - Energia Reativa Exced em KWh - Fponta",
+      "Energia Injetada kWh",
+      "Energia Compensada kWh",
+      "Energia Atv Injetada GDI oUC (kWh)",
+      "Valor (R$) - Energia Atv Injetada GDI oUC",
+      "Energia Atv Injetada GDI mUC (kWh)",
+      "Valor (R$) - Energia Atv Injetada GDI mUC",
+      "Tipo"
+    ];
+
+    const rows = completedBills.map(b => [
+      b.concessionaria 
+        ? (b.concessionaria.toUpperCase().includes('ENERGISA') 
+            ? 'ENERGISA' 
+            : b.concessionaria.toUpperCase().includes('ELEKTRO') 
+              ? 'ELEKTRO' 
+              : b.concessionaria)
+        : '',
+      b.uc,
+      b.anoLeitura,
+      b.mesReferencia,
+      b.consumoKwhPonta,
+      b.valorConsumoKwhPonta,
+      b.consumoKwhForaPonta,
+      b.valorConsumoKwhForaPonta,
+      b.valorTotal,
+      b.demandaPontaKW,
+      b.demandaForaPontaKW,
+      b.demandaPotenciaMedidaPonta,
+      b.valorDemandaPotenciaMedidaPonta,
+      b.demandaPotenciaMedidaForaPonta,
+      b.valorDemandaPotenciaMedidaForaPonta,
+      b.cidade,
+      b.demandaPotenciaNaoConsumidaPonta,
+      b.valorDemandaPotenciaNaoConsumidaPonta,
+      b.demandaPotenciaNaoConsumidaFPonta,
+      b.valorDemandaPotenciaNaoConsumidaFPonta,
+      b.demandaPotenciaAtivaUltrapPonta,
+      b.valorDemandaPotenciaAtivaUltrapPonta,
+      b.demandaPotenciaAtivaUltrapFPonta,
+      b.valorDemandaPotenciaAtivaUltrapFPonta,
+      b.energiaReativaExcedPonta,
+      b.valorEnergiaReativaExcedPonta,
+      b.energiaReativaExcedFPonta,
+      b.valorEnergiaReativaExcedFPonta,
+      b.energiaInjetadaKwh,
+      b.energiaCompensadaKwh,
+      b.energiaAtvInjetadaGDIOUC,
+      b.valorEnergiaAtvInjetadaGDIOUC,
+      b.energiaAtvInjetadaGDIMUC,
+      b.valorEnergiaAtvInjetadaGDIMUC,
+      b.tipo || ''
+    ]);
+
+    // Use semicolon as delimiter for better compatibility with Excel in many locales (like Brazil)
+    // Add UTF-8 BOM (\uFEFF) to ensure Excel recognizes the encoding
+    const csvContent = "\uFEFF" + [
+      headers.join(';'),
+      ...rows.map(row => row.map(val => {
+        // Replace any existing semicolons in the value to avoid breaking the CSV structure
+        const safeVal = String(val || '').replace(/;/g, ',');
+        return `"${safeVal}"`;
+      }).join(';'))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `extracao_faturas_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- Dashboard Data Processing ---
+
+  const completedBills = bills.filter(b => b.status === 'completed');
+
+
+
+  const dashboardData = completedBills.map(b => ({
+    name: `${b.mesReferencia}/${b.anoLeitura}`,
+    uc: b.uc,
+    consumoPonta: parseValue(b.consumoKwhPonta),
+    valorConsumoPonta: parseValue(b.valorConsumoKwhPonta),
+    consumoForaPonta: parseValue(b.consumoKwhForaPonta),
+    valorConsumoForaPonta: parseValue(b.valorConsumoKwhForaPonta),
+    valorTotal: parseValue(b.valorTotal),
+    demandaMedidaPonta: parseValue(b.demandaPotenciaMedidaPonta),
+    demandaMedidaForaPonta: parseValue(b.demandaPotenciaMedidaForaPonta),
+    valorDemandaPonta: parseValue(b.valorDemandaPotenciaMedidaPonta),
+    valorDemandaForaPonta: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
+    demandaContratadaPonta: parseValue(b.demandaPontaKW),
+    demandaContratadaForaPonta: parseValue(b.demandaForaPontaKW),
+    ultrapassagemPonta: parseValue(b.demandaPotenciaAtivaUltrapPonta),
+    ultrapassagemForaPonta: parseValue(b.demandaPotenciaAtivaUltrapFPonta),
+    reativaPonta: parseValue(b.energiaReativaExcedPonta),
+    reativaForaPonta: parseValue(b.energiaReativaExcedFPonta),
+    solarInjetada: parseValue(b.energiaInjetadaKwh),
+    solarCompensada: parseValue(b.energiaCompensadaKwh),
+    solarInjetadaOUC: parseValue(b.energiaAtvInjetadaGDIOUC),
+    solarInjetadaMUC: parseValue(b.energiaAtvInjetadaGDIMUC),
+    valorUltrapassagemPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
+    valorUltrapassagemForaPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
+    valorReativaPonta: parseValue(b.valorEnergiaReativaExcedPonta),
+    valorReativaForaPonta: parseValue(b.valorEnergiaReativaExcedFPonta),
+    valorSolarOUC: parseValue(b.valorEnergiaAtvInjetadaGDIOUC),
+    valorSolarMUC: parseValue(b.valorEnergiaAtvInjetadaGDIMUC),
+    cip: parseValue(b.cip),
+    outrosEncargos: parseValue(b.outrosEncargos),
+    pis: parseValue(b.pis),
+    cofins: parseValue(b.cofins),
+    icms: parseValue(b.icms),
+    concessionaria: b.concessionaria || '',
+    numeroNotaFiscal: b.numeroNotaFiscal || '',
+    cidade: b.cidade,
+    modalidadeTarifaria: (b.modalidadeTarifaria || '').toString().toUpperCase(),
+    subgrupo: (b.subgrupo || '').toString().toUpperCase()
+  }));
+
+  const ucs = Array.from(new Set(dashboardData.map(d => d.uc))).filter(Boolean);
+
+  const availableMonths = Array.from(new Set(dashboardData.map(d => d.name))).filter(Boolean).sort((a, b) => {
+    const [mA, yA] = String(a).split('/');
+    const [mB, yB] = String(b).split('/');
+    if (yA !== yB) return Number(yA) - Number(yB);
+    return Number(mA) - Number(mB);
+  });
+
+  const filteredDashboardData = dashboardData.filter(d => {
+    const matchesUC = selectedUC === 'all' || d.uc === selectedUC;
+    const matchesMonth = selectedMonth === 'all' || d.name === selectedMonth;
+    
+    if (!matchesUC || !matchesMonth) return false;
+
+    if (dashboardSubTab === 'financeiro' && financialSubTab === 'energia_solar') {
+      const totalCreditos = Math.abs(d.valorSolarOUC + d.valorSolarMUC);
+      return totalCreditos > 0;
+    }
+
+    if (dashboardSubTab === 'operacionais' && operationalSubTab === 'solar') {
+      const totalInjetada = Math.abs(d.solarInjetadaOUC + d.solarInjetadaMUC);
+      return totalInjetada > 0;
+    }
+
+    if (dashboardSubTab === 'operacionais' && operationalSubTab === 'reativa') {
+      return d.reativaPonta > 0 || d.reativaForaPonta > 0;
+    }
+
+    if (dashboardSubTab === 'operacionais' && operationalSubTab === 'ultrapassagem') {
+      return (d.ultrapassagemPonta + d.ultrapassagemForaPonta) > 0;
+    }
+
+    if (dashboardSubTab === 'operacionais' && operationalSubTab === 'subutilizacao') {
+      return d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
+    }
+
+    if (dashboardSubTab === 'financeiro' && financialSubTab === 'multa_reativa') {
+      return d.valorReativaPonta > 0 || d.valorReativaForaPonta > 0;
+    }
+
+    if (dashboardSubTab === 'financeiro' && financialSubTab === 'multa_ultrapassagem') {
+      return (d.valorUltrapassagemPonta + d.valorUltrapassagemForaPonta) > 0;
+    }
+
+    return true;
+  });
+
+  const filteredRelatorioData = dashboardData.filter(d => {
+    return selectedRelatorioMonth === 'all' || d.name === selectedRelatorioMonth;
+  });
+
+  const filteredUcs = Array.from(new Set(filteredDashboardData.map(d => d.uc))).filter(Boolean);
+
+  const memoData = React.useMemo(() => {
+    const energisa = filteredRelatorioData.filter(d => (d.concessionaria || '').toUpperCase().includes('ENERGISA'));
+    const elektro = filteredRelatorioData.filter(d => (d.concessionaria || '').toUpperCase().includes('ELEKTRO'));
+
+    const sum = (arr: any[], field: string) => arr.reduce((acc, curr) => acc + (curr[field] || 0), 0);
+
+    const energisaData = agrupadoraFiles['ENERGISA'] ? {
+      total: agrupadoraFiles['ENERGISA'].valorTotal,
+      pis: agrupadoraFiles['ENERGISA'].pis,
+      cofins: agrupadoraFiles['ENERGISA'].cofins,
+      icms: agrupadoraFiles['ENERGISA'].icms,
+      cip: agrupadoraFiles['ENERGISA'].cip,
+      nf: agrupadoraFiles['ENERGISA'].numeroNotaFiscal,
+      mesRef: agrupadoraFiles['ENERGISA'].mesReferencia
+    } : {
+      total: sum(energisa, 'valorTotal'),
+      pis: sum(energisa, 'pis'),
+      cofins: sum(energisa, 'cofins'),
+      icms: sum(energisa, 'icms'),
+      cip: sum(energisa, 'cip'),
+      nf: energisa.map(e => e.numeroNotaFiscal).filter(Boolean).join(', ') || '-',
+      mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
+    };
+
+    const elektroData = agrupadoraFiles['ELEKTRO'] ? {
+      total: agrupadoraFiles['ELEKTRO'].valorTotal,
+      pis: agrupadoraFiles['ELEKTRO'].pis,
+      cofins: agrupadoraFiles['ELEKTRO'].cofins,
+      icms: agrupadoraFiles['ELEKTRO'].icms,
+      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || agrupadoraFiles['ELEKTRO'].cip,
+      nf: agrupadoraFiles['ELEKTRO'].numeroNotaFiscal,
+      mesRef: agrupadoraFiles['ELEKTRO'].mesReferencia
+    } : {
+      total: sum(elektro, 'valorTotal'),
+      pis: sum(elektro, 'pis'),
+      cofins: sum(elektro, 'cofins'),
+      icms: sum(elektro, 'icms'),
+      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || sum(elektro, 'cip'),
+      nf: elektro.map(e => e.numeroNotaFiscal).filter(Boolean).join(', ') || '-',
+      mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
+    };
+
+    return {
+      energisa: energisaData,
+      elektro: elektroData
+    };
+  }, [filteredRelatorioData, agrupadoraFiles]);
+
+  // Group by month/year for charts
+  const timeSeriesData = Object.values(filteredDashboardData.reduce((acc: any, curr) => {
+    const key = curr.name;
+    if (!acc[key]) {
+      acc[key] = { 
+        name: key, 
+        consumoPonta: 0, 
+        valorConsumoPonta: 0,
+        consumoForaPonta: 0, 
+        valorConsumoForaPonta: 0,
+        valorTotal: 0,
+        demandaMedidaPonta: 0,
+        demandaMedidaForaPonta: 0,
+        demandaContratadaPonta: 0,
+        demandaContratadaForaPonta: 0,
+        ultrapassagemPonta: 0,
+        ultrapassagemForaPonta: 0,
+        reativaPonta: 0,
+        reativaForaPonta: 0,
+        solarInjetada: 0,
+        solarCompensada: 0,
+        solarInjetadaOUC: 0,
+        solarInjetadaMUC: 0,
+        valorUltrapassagemPonta: 0,
+        valorUltrapassagemForaPonta: 0,
+        valorReativaPonta: 0,
+        valorReativaForaPonta: 0,
+        valorSolarOUC: 0,
+        valorSolarMUC: 0,
+        cip: 0,
+        outrosEncargos: 0
+      };
+    }
+    acc[key].consumoPonta += curr.consumoPonta;
+    acc[key].valorConsumoPonta += curr.valorConsumoPonta;
+    acc[key].consumoForaPonta += curr.consumoForaPonta;
+    acc[key].valorConsumoForaPonta += curr.valorConsumoForaPonta;
+    acc[key].valorTotal += curr.valorTotal;
+    acc[key].demandaMedidaPonta = Math.max(acc[key].demandaMedidaPonta, curr.demandaMedidaPonta);
+    acc[key].demandaMedidaForaPonta = Math.max(acc[key].demandaMedidaForaPonta, curr.demandaMedidaForaPonta);
+    acc[key].demandaContratadaPonta = Math.max(acc[key].demandaContratadaPonta, curr.demandaContratadaPonta);
+    acc[key].demandaContratadaForaPonta = Math.max(acc[key].demandaContratadaForaPonta, curr.demandaContratadaForaPonta);
+    acc[key].ultrapassagemPonta += curr.ultrapassagemPonta;
+    acc[key].ultrapassagemForaPonta += curr.ultrapassagemForaPonta;
+    acc[key].reativaPonta += curr.reativaPonta;
+    acc[key].reativaForaPonta += curr.reativaForaPonta;
+    acc[key].solarInjetada += curr.solarInjetada;
+    acc[key].solarCompensada += curr.solarCompensada;
+    acc[key].solarInjetadaOUC += curr.solarInjetadaOUC;
+    acc[key].solarInjetadaMUC += curr.solarInjetadaMUC;
+    acc[key].valorUltrapassagemPonta += curr.valorUltrapassagemPonta;
+    acc[key].valorUltrapassagemForaPonta += curr.valorUltrapassagemForaPonta;
+    acc[key].valorReativaPonta += curr.valorReativaPonta;
+    acc[key].valorReativaForaPonta += curr.valorReativaForaPonta;
+    acc[key].valorSolarOUC += curr.valorSolarOUC;
+    acc[key].valorSolarMUC += curr.valorSolarMUC;
+    acc[key].cip += curr.cip;
+    acc[key].outrosEncargos += curr.outrosEncargos;
+    acc[key].valorConsumo = acc[key].valorTotal + Math.abs(acc[key].valorSolarOUC + acc[key].valorSolarMUC) - acc[key].cip - acc[key].outrosEncargos;
+    return acc;
+  }, {}));
+
+  const COLORS = ['#0054A6', '#00AEEF', '#1E293B', '#64748B'];
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-sanesul-bg flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-sanesul-primary/10">
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-16 h-16 bg-sanesul-primary rounded-2xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20 mb-4">
+              <Zap className="text-white" size={32} />
+            </div>
+            <h1 className="text-3xl font-display font-bold tracking-tight text-sanesul-primary text-center">
+              Sanesul <span className="text-sanesul-secondary">Energy</span>
+            </h1>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-sanesul-muted font-bold mt-2">
+              Acesso Restrito
+            </p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-6">
+            {!isSupabaseConfigured && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+                <AlertCircle className="text-amber-500 shrink-0" size={18} />
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  <strong>Atenção:</strong> O banco de dados não está configurado. O login não funcionará até que as chaves do Supabase sejam adicionadas.
+                </p>
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-bold text-sanesul-muted uppercase tracking-wider mb-2">Usuário</label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                className="w-full px-4 py-3 bg-sanesul-bg border border-sanesul-primary/20 rounded-xl text-sanesul-text focus:outline-none focus:ring-2 focus:ring-sanesul-primary/50 transition-all"
+                placeholder="Digite seu usuário"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-sanesul-muted uppercase tracking-wider mb-2">Senha</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full px-4 py-3 bg-sanesul-bg border border-sanesul-primary/20 rounded-xl text-sanesul-text focus:outline-none focus:ring-2 focus:ring-sanesul-primary/50 transition-all"
+                placeholder="Digite sua senha"
+                required
+              />
+            </div>
+            
+            {loginError && (
+              <p className="text-red-500 text-sm font-medium text-center">{loginError}</p>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-4 bg-sanesul-primary text-white rounded-xl font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 hover:bg-sanesul-primary/90 transition-all active:scale-95"
+            >
+              ENTRAR
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
+      {/* Header */}
+      <header className="max-w-7xl mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-sanesul-primary rounded-xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20">
+              <Zap className="text-white" size={24} />
+            </div>
+            <div>
+              <h1 className="text-3xl md:text-4xl font-display font-bold tracking-tight text-sanesul-primary">
+                Sanesul <span className="text-sanesul-secondary">Energy</span>
+              </h1>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-sanesul-muted font-bold">
+                Portal de Inteligência Energética
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+              title="Sair"
+            >
+              <LogOut size={16} />
+              Sair
+            </button>
+            <button
+              onClick={() => {
+                setEditingBill({
+                  id: crypto.randomUUID(),
+                  fileName: 'Fatura Manual',
+                  status: 'completed',
+                  tipo: 'OPERACIONAL',
+                  concessionaria: 'ENERGISA',
+                  mesReferencia: new Date().toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' }),
+                  anoLeitura: new Date().getFullYear().toString()
+                });
+                setIsBillModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+            >
+              <Plus size={16} />
+              Nova Fatura Manual
+            </button>
+            <button
+              onClick={() => fileInputEnergisaRef.current?.click()}
+              className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
+            >
+              <Plus size={16} />
+              Adicionar Faturas - ENERGISA
+            </button>
+            <input
+              type="file"
+              ref={fileInputEnergisaRef}
+              onChange={(e) => handleFileUpload(e, 'ENERGISA')}
+              multiple
+              accept="application/pdf,image/*"
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputElektroRef.current?.click()}
+              className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
+            >
+              <Plus size={16} />
+              Adicionar Faturas - ELEKTRO
+            </button>
+            <input
+              type="file"
+              ref={fileInputElektroRef}
+              onChange={(e) => handleFileUpload(e, 'ELEKTRO')}
+              multiple
+              accept="application/pdf,image/*"
+              className="hidden"
+            />
+            {bills.length > 0 && activeTab === 'faturas' && (
+              <button
+                onClick={startProcessing}
+                disabled={isProcessing || !bills.some(b => b.status === 'pending')}
+                className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider disabled:opacity-30 disabled:cursor-not-allowed shadow-sm active:scale-95"
+              >
+                {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                Processar Arquivos
+              </button>
+            )}
+            {bills.some(b => b.status === 'completed') && (
+              <button
+                onClick={exportToCSV}
+                className="flex items-center gap-2 px-6 py-3 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-secondary/20 active:scale-95"
+              >
+                <Download size={16} />
+                Exportar CSV
+              </button>
+            )}
+            {bills.length > 0 && activeTab === 'faturas' && (
+              <button
+                onClick={() => setSelectedBills(bills.filter(b => b.status === 'error' || b.status === 'pending').map(b => b.id))}
+                className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+              >
+                <CheckSquare size={16} />
+                Selecionar Pendentes/Erro
+              </button>
+            )}
+            {(bills.length > 0 || Object.keys(agrupadoraFiles).length > 0) && activeTab === 'faturas' && (
+              <></>
+            )}
+
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 p-1 bg-white/50 backdrop-blur-sm border border-sanesul-primary/10 rounded-2xl w-fit">
+          <button 
+            onClick={() => setActiveTab('faturas')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'faturas' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <FileText size={14} />
+            Gestão de Faturas
+          </button>
+          <button 
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'dashboard' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <LayoutDashboard size={14} />
+            Dashboard Analítico
+          </button>
+          <button 
+            onClick={() => setActiveTab('analises')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'analises' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <BarChart3 size={14} />
+            Análises de Dados
+          </button>
+          <button 
+            onClick={() => setActiveTab('monitoramento')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'monitoramento' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <DollarSign size={14} />
+            Monitoramento de Despesas
+          </button>
+          <button 
+            onClick={() => setActiveTab('relatorio')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'relatorio' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <FileText size={14} />
+            Relatório Financeiro
+          </button>
+
+          <button 
+            onClick={() => window.aistudio?.openSelectKey?.()}
+            className="flex items-center gap-2 px-6 py-3 transition-all rounded-xl text-[10px] font-bold uppercase tracking-wider text-sanesul-muted hover:text-sanesul-primary hover:bg-white border border-dashed border-sanesul-primary/20 ml-4"
+            title="Configurar Chave de API para aumentar limites"
+          >
+            <Plus size={12} />
+            Configurar Chave API
+          </button>
+        </div>
+      </header>
+
+      <main 
+        className="max-w-7xl mx-auto"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {activeTab === 'faturas' ? (
+          bills.length === 0 ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center py-12">
+              <div className="space-y-8">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-sanesul-primary/10 rounded-full">
+                  <span className="w-2 h-2 rounded-full bg-sanesul-primary animate-pulse" />
+                  <span className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">Pronto para processar</span>
+                </div>
+                <h2 className="text-5xl md:text-6xl font-display font-bold text-sanesul-primary leading-[1.1] tracking-tight">
+                  Transforme suas <span className="text-sanesul-secondary">faturas</span> em inteligência.
+                </h2>
+                <p className="text-lg text-sanesul-muted max-w-md leading-relaxed">
+                  Nossa IA extrai automaticamente todos os indicadores técnicos e financeiros das suas faturas de energia em segundos.
+                </p>
+                <div className="flex flex-wrap gap-4 pt-4">
+                  <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-2xl border border-sanesul-primary/10 shadow-sm">
+                    <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center">
+                      <CheckCircle2 className="w-5 h-5 text-green-600" />
+                    </div>
+                    <span className="text-sm font-bold text-sanesul-primary">Extração Precisa</span>
+                  </div>
+                  <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-2xl border border-sanesul-primary/10 shadow-sm">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                      <Zap className="w-5 h-5 text-sanesul-primary" />
+                    </div>
+                    <span className="text-sm font-bold text-sanesul-primary">Análise em Tempo Real</span>
+                  </div>
+                </div>
+              </div>
+
+              <div 
+                className={`relative aspect-square lg:aspect-auto lg:h-[500px] border-2 border-dashed rounded-[40px] flex flex-col items-center justify-center transition-all group overflow-hidden ${
+                  isDragging 
+                    ? 'border-sanesul-primary bg-sanesul-primary/5 scale-[0.98]' 
+                    : 'border-sanesul-primary/20 bg-white/50 hover:border-sanesul-primary/40 hover:bg-white'
+                }`}
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-sanesul-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="relative z-10 flex flex-col items-center">
+                  <div className="w-24 h-24 bg-sanesul-primary rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-sanesul-primary/30 group-hover:scale-110 transition-transform duration-500">
+                    <Upload size={40} className="text-white" />
+                  </div>
+                  <p className="text-2xl font-display font-bold text-sanesul-primary mb-3">
+                    {isDragging ? 'Solte agora' : 'Arraste suas faturas'}
+                  </p>
+                  <p className="text-sm text-sanesul-muted text-center max-w-[240px] mb-8">
+                    Suporta PDF, JPG e PNG. Processamento automático via Gemini AI.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); fileInputEnergisaRef.current?.click(); }}
+                      className="px-8 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest shadow-lg shadow-sanesul-primary/20 hover:bg-sanesul-primary/90 transition-all"
+                    >
+                      Selecionar ENERGISA
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); fileInputElektroRef.current?.click(); }}
+                      className="px-8 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest shadow-lg shadow-sanesul-primary/20 hover:bg-sanesul-primary/90 transition-all"
+                    >
+                      Selecionar ELEKTRO
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Decorative elements */}
+                <div className="absolute -bottom-12 -right-12 w-48 h-48 bg-sanesul-primary/5 rounded-full blur-3xl" />
+                <div className="absolute -top-12 -left-12 w-48 h-48 bg-sanesul-secondary/5 rounded-full blur-3xl" />
+              </div>
+            </div>
+          ) : (
+            <div className={`space-y-8 transition-all ${isDragging ? 'opacity-50 scale-[0.99]' : ''}`}>
+              {/* Stats Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  { label: 'Total de Arquivos', value: bills.length, color: 'sanesul-primary', icon: FileText },
+                  { label: 'Aguardando', value: bills.filter(b => b.status === 'pending').length, color: 'slate-500', icon: Clock },
+                  { label: 'Em Processamento', value: bills.filter(b => b.status === 'processing').length, color: 'sanesul-secondary', icon: Loader2 },
+                  { label: 'Concluídos', value: bills.filter(b => b.status === 'completed').length, color: 'green-600', icon: CheckCircle2 }
+                ].map((stat, i) => (
+                  <div key={i} className="bg-white p-6 rounded-3xl border border-sanesul-primary/5 shadow-sm flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl bg-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color}/10 flex items-center justify-center`}>
+                      <stat.icon size={20} className={`text-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color} ${stat.label === 'Em Processamento' ? 'animate-spin' : ''}`} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-sanesul-muted uppercase tracking-widest">{stat.label}</p>
+                      <p className={`text-2xl font-display font-bold text-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color}`}>{stat.value}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Table Container */}
+              <div className="bg-white rounded-[32px] border border-sanesul-primary/10 shadow-xl overflow-hidden">
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                  <table className="w-full text-left border-collapse relative">
+                    <thead className="sticky top-0 z-20 bg-slate-50 shadow-sm">
+                      <tr className="bg-slate-50/50">
+                        <th className="px-8 py-5 w-12">
+                          <input 
+                            type="checkbox"
+                            checked={selectedBills.length > 0 && selectedBills.length === bills.length}
+                            onChange={() => setSelectedBills(selectedBills.length === bills.length ? [] : bills.map(b => b.id))}
+                            className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
+                          />
+                        </th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('fileName')}>Arquivo</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('uc')}>UC</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('concessionaria')}>Concessionária</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('referencia')}>Referência</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Status</th>
+                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 text-right">
+                          {selectedBills.length > 0 ? (
+                            <div className="flex items-center justify-end gap-4">
+                              <button onClick={removeSelectedBills} className="text-red-600 hover:text-red-700 font-bold">Excluir ({selectedBills.length})</button>
+                              {bills.length >= 223 && (
+                                <button onClick={deselectFirst223} className="text-sanesul-primary hover:text-sanesul-secondary font-bold">Deselecionar 223</button>
+                              )}
+                            </div>
+                          ) : 'Ações'}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-sanesul-primary/5">
+                      <AnimatePresence initial={false}>
+                        {sortedBills.map((bill) => (
+                          <motion.tr
+                            key={bill.id}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, x: -20 }}
+                            className={`hover:bg-sanesul-primary/5 transition-colors group ${selectedBills.includes(bill.id) ? 'bg-sanesul-primary/5' : ''}`}
+                          >
+                            <td className="px-8 py-5">
+                              <input 
+                                type="checkbox"
+                                checked={selectedBills.includes(bill.id)}
+                                onChange={() => toggleBillSelection(bill.id)}
+                                className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
+                              />
+                            </td>
+                            <td className="px-8 py-5">
+                              <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 bg-sanesul-primary/5 rounded-xl flex items-center justify-center text-sanesul-primary group-hover:bg-sanesul-primary group-hover:text-white transition-all">
+                                  <FileText size={18} />
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-bold text-sanesul-primary truncate max-w-[200px]" title={bill.fileName}>
+                                    {bill.fileName}
+                                  </span>
+                                  <span className="text-[10px] text-sanesul-muted uppercase tracking-wider">
+                                    {bill.file ? `${(bill.file.size / 1024 / 1024).toFixed(2)} MB • ${bill.file.type.split('/')[1].toUpperCase()}` : 'ARQUIVO SALVO'}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-8 py-5">
+                              <span className="text-sm font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
+                            </td>
+                            <td className="px-8 py-5">
+                              <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">
+                                {bill.concessionaria 
+                                  ? (bill.concessionaria.toUpperCase().includes('ENERGISA') 
+                                      ? 'ENERGISA' 
+                                      : bill.concessionaria.toUpperCase().includes('ELEKTRO') 
+                                        ? 'ELEKTRO' 
+                                        : bill.concessionaria)
+                                  : '---'}
+                              </span>
+                            </td>
+                            <td className="px-8 py-5">
+                              <span className="text-sm text-slate-600">
+                                {bill.mesReferencia && bill.anoLeitura ? `${bill.mesReferencia}/${bill.anoLeitura}` : '---'}
+                              </span>
+                            </td>
+                            <td className="px-8 py-5">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPontaKW || '0'} kW</span>
+                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaForaPontaKW || '0'} kW</span>
+                              </div>
+                            </td>
+                            <td className="px-8 py-5">
+                              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                bill.tipo === 'OPERACIONAL' 
+                                  ? 'bg-blue-50 text-blue-600' 
+                                  : bill.tipo === 'ADMINISTRATIVO'
+                                    ? 'bg-purple-50 text-purple-600'
+                                    : 'bg-slate-100 text-slate-500'
+                              }`}>
+                                {bill.tipo || 'N/A'}
+                              </span>
+                            </td>
+                            <td className="px-8 py-5">
+                              <div className="flex items-center gap-2">
+                                {bill.status === 'pending' && (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                                    <Clock size={12} />
+                                    Aguardando
+                                  </span>
+                                )}
+                                {bill.status === 'processing' && (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-sanesul-primary rounded-full text-[10px] font-bold uppercase tracking-wider">
+                                    <Loader2 size={12} className="animate-spin" />
+                                    Extraindo...
+                                  </span>
+                                )}
+                                {bill.status === 'completed' && (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                                    <CheckCircle2 size={12} />
+                                    Concluído
+                                  </span>
+                                )}
+                                {bill.status === 'error' && (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold uppercase tracking-wider" title={bill.error}>
+                                    <AlertCircle size={12} />
+                                    {bill.error || 'Erro'}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-8 py-5 text-right">
+                              <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => {
+                                    setEditingBill(bill);
+                                    setIsBillModalOpen(true);
+                                  }}
+                                  className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-500 transition-all"
+                                  disabled={isProcessing && bill.status === 'processing'}
+                                  title="Editar"
+                                >
+                                  <Pencil size={16} />
+                                </button>
+                                <button
+                                  onClick={() => removeBill(bill.id)}
+                                  className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                                  disabled={isProcessing && bill.status === 'processing'}
+                                  title="Excluir"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </motion.tr>
+                        ))}
+                      </AnimatePresence>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )
+        ) : activeTab === 'dashboard' ? (
+          <div className="flex flex-col md:flex-row gap-8">
+            {/* Dashboard Sidebar Navigation */}
+            <aside className="w-full md:w-72 space-y-6">
+              <div className="flex flex-col gap-2 p-3 bg-white rounded-3xl border border-sanesul-primary/10 shadow-xl">
+                <button 
+                  onClick={() => setDashboardSubTab('operacionais')}
+                  className={`flex items-center gap-3 px-5 py-4 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all ${
+                    dashboardSubTab === 'operacionais' 
+                      ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                      : 'text-sanesul-muted hover:bg-sanesul-primary/5 hover:text-sanesul-primary'
+                  }`}
+                >
+                  <Zap size={16} />
+                  Operacionais
+                </button>
+                
+                {dashboardSubTab === 'operacionais' && (
+                  <div className="ml-4 flex flex-col gap-1 border-l-2 border-sanesul-primary/10 pl-4 py-2">
+                    {[
+                      { id: 'consumo', label: 'Consumo de Energia' },
+                      { id: 'ultrapassagem', label: 'Ultrapassagem de Demanda' },
+                      { id: 'subutilizacao', label: 'Subutilização de Demanda' },
+                      { id: 'reativa', label: 'Energia Reativa' },
+                      { id: 'solar', label: 'Energia Solar' }
+                    ].map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => setOperationalSubTab(item.id as any)}
+                        className={`text-left px-3 py-2.5 text-[11px] font-bold uppercase tracking-tight transition-all rounded-xl ${
+                          operationalSubTab === item.id 
+                            ? 'text-sanesul-primary bg-sanesul-primary/5' 
+                            : 'text-sanesul-muted hover:text-sanesul-primary'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+ 
+                <button 
+                  onClick={() => setDashboardSubTab('financeiro')}
+                  className={`flex items-center gap-3 px-5 py-4 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all ${
+                    dashboardSubTab === 'financeiro' 
+                      ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                      : 'text-sanesul-muted hover:bg-sanesul-primary/5 hover:text-sanesul-primary'
+                  }`}
+                >
+                  <DollarSign size={16} />
+                  Financeiro
+                </button>
+ 
+                {dashboardSubTab === 'financeiro' && (
+                  <div className="ml-4 flex flex-col gap-1 border-l-2 border-sanesul-primary/10 pl-4 py-2">
+                    {[
+                      { id: 'despesas', label: 'Despesas com Energia' },
+                      { id: 'multa_ultrapassagem', label: 'Multa de Ultrapassagem' },
+                      { id: 'multa_reativa', label: 'Multa de Energia Reativa' },
+                      { id: 'tarifa_media', label: 'Tarifa Média' },
+                      { id: 'energia_solar', label: 'Energia Solar' }
+                    ].map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => setFinancialSubTab(item.id as any)}
+                        className={`text-left px-3 py-2.5 text-[11px] font-bold uppercase tracking-tight transition-all rounded-xl ${
+                          financialSubTab === item.id 
+                            ? 'text-sanesul-primary bg-sanesul-primary/5' 
+                            : 'text-sanesul-muted hover:text-sanesul-primary'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              <div className="p-6 bg-sanesul-primary rounded-3xl shadow-xl shadow-sanesul-primary/20 text-white hidden md:block">
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60 mb-4">Resumo Geral</h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-end">
+                    <span className="text-[10px] font-bold uppercase opacity-60">Processados</span>
+                    <span className="text-2xl font-display font-bold leading-none">{completedBills.length}</span>
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <span className="text-[10px] font-bold uppercase opacity-60">Unidades</span>
+                    <span className="text-2xl font-display font-bold leading-none">{new Set(dashboardData.map(d => d.uc)).size}</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+
+            <div className="flex-1 space-y-10">
+              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-sanesul-primary/10 pb-6 gap-6">
+                <div className="flex flex-col">
+                  <h2 className="text-3xl font-display font-bold text-sanesul-primary">
+                    {dashboardSubTab === 'financeiro' ? (
+                      financialSubTab === 'despesas' ? 'Despesas com Energia' :
+                      financialSubTab === 'multa_ultrapassagem' ? 'Multa de Ultrapassagem' :
+                      financialSubTab === 'multa_reativa' ? 'Multa de Energia Reativa' : 
+                      financialSubTab === 'energia_solar' ? 'Créditos de Energia Solar' : 'Tarifa Média'
+                    ) : (
+                      operationalSubTab === 'consumo' ? 'Consumo de Energia' :
+                      operationalSubTab === 'ultrapassagem' ? 'Ultrapassagem de Demanda' :
+                      operationalSubTab === 'subutilizacao' ? 'Subutilização de Demanda' :
+                      operationalSubTab === 'reativa' ? 'Energia Reativa' : 'Energia Solar'
+                    )}
+                  </h2>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-sanesul-muted mt-1">
+                    {selectedUC === 'all' ? 'Visão consolidada do grupo' : `Unidade Consumidora: ${selectedUC}`}
+                  </p>
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-sanesul-primary/10 shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted ml-2">Mês:</span>
+                    <select 
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(e.target.value)}
+                      className="bg-sanesul-bg border-none px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
+                    >
+                      <option value="all">Todos os Meses</option>
+                      {availableMonths.map(month => (
+                        <option key={month} value={month}>{month}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-sanesul-primary/10 shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted ml-2">Filtrar UC:</span>
+                    <select 
+                      value={selectedUC}
+                      onChange={(e) => setSelectedUC(e.target.value)}
+                      className="bg-sanesul-bg border-none px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
+                    >
+                      <option value="all">Todas as Unidades</option>
+                      {ucs.map(uc => (
+                        <option key={uc} value={uc}>{uc}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {completedBills.length === 0 ? (
+                <div className="p-24 text-center bg-white rounded-3xl border border-sanesul-primary/10 shadow-xl">
+                  <div className="w-16 h-16 bg-sanesul-primary/5 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <AlertCircle size={32} className="text-sanesul-primary/30" />
+                  </div>
+                  <p className="text-xl font-display font-semibold text-sanesul-primary">Nenhum dado disponível</p>
+                  <p className="text-sanesul-muted mt-2">Processe algumas faturas para visualizar o dashboard analítico</p>
+                </div>
+              ) : (
+                <div className="space-y-10">
+                  {/* Summary Cards */}
+                  <div className={`grid grid-cols-1 gap-8 ${
+                    (dashboardSubTab === 'financeiro' && financialSubTab === 'energia_solar') || (dashboardSubTab === 'operacionais' && operationalSubTab === 'consumo')
+                      ? 'md:grid-cols-2 lg:grid-cols-3' 
+                      : 'md:grid-cols-2 lg:grid-cols-3'
+                  }`}>
+                    {dashboardSubTab === 'operacionais' ? (
+                      <>
+                        {operationalSubTab === 'consumo' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <FileText size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total de Faturas</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <Zap size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Consumo Total</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Grupo A</p>
+                              <div className="space-y-2">
+                                <p className="text-lg font-bold text-sanesul-primary flex justify-between">
+                                  <span>Verde:</span> 
+                                  <span>{filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('VERDE')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                </p>
+                                <p className="text-lg font-bold text-sanesul-primary flex justify-between">
+                                  <span>Azul:</span> 
+                                  <span>{filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('AZUL')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Grupo B</p>
+                              <div className="space-y-2">
+                                <p className="text-lg font-bold text-sanesul-primary flex justify-between">
+                                  <span>Solar:</span> 
+                                  <span>{filteredDashboardData.filter(d => (d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                </p>
+                                <p className="text-lg font-bold text-sanesul-primary flex justify-between">
+                                  <span>Não Solar:</span> 
+                                  <span>{filteredDashboardData.filter(d => !(d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0) && (d.consumoPonta + d.consumoForaPonta > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Tarifa Branca</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">
+                                {filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('BRANCA')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span>
+                              </p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Optante B</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">
+                                {filteredDashboardData.filter(d => d.subgrupo.startsWith('B') && d.demandaContratadaPonta > 0).length} <span className="text-base font-sans font-medium opacity-40">Faturas</span>
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {operationalSubTab === 'ultrapassagem' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <AlertCircle size={80} className="text-red-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Ultrapassagem</p>
+                              <p className="text-5xl font-display font-bold text-red-600">{filteredDashboardData.reduce((acc, curr) => acc + curr.ultrapassagemPonta + curr.ultrapassagemForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kW</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <FileText size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Ocorrências</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.filter(d => d.ultrapassagemPonta > 0 || d.ultrapassagemForaPonta > 0).length} <span className="text-base font-sans font-medium opacity-40">Meses</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-red-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Desvio</p>
+                              <p className="text-5xl font-display font-bold text-red-600">{Math.max(...filteredDashboardData.map(d => d.ultrapassagemPonta + d.ultrapassagemForaPonta), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kW</span></p>
+                            </div>
+                          </>
+                        )}
+                        {operationalSubTab === 'subutilizacao' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Utilização</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">
+                                {((filteredDashboardData.reduce((acc, curr) => acc + (curr.demandaMedidaPonta / (curr.demandaContratadaPonta || 1)), 0) / filteredDashboardData.length || 0) * 100).toFixed(1)}%
+                              </p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <AlertCircle size={80} className="text-orange-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Subutilizados (&lt;80%)</p>
+                              <p className="text-5xl font-display font-bold text-orange-600">{filteredDashboardData.filter(d => d.demandaMedidaPonta < (d.demandaContratadaPonta * 0.8)).length} <span className="text-base font-sans font-medium opacity-40">Meses</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-orange-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Mínima Utilização</p>
+                              <p className="text-5xl font-display font-bold text-orange-600">{Math.min(...filteredDashboardData.map(d => (d.demandaMedidaPonta / (d.demandaContratadaPonta || 1)) * 100), 100).toFixed(1)}%</p>
+                            </div>
+                          </>
+                        )}
+                        {operationalSubTab === 'reativa' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <Zap size={80} className="text-purple-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Excedente</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">{filteredDashboardData.reduce((acc, curr) => acc + curr.reativaPonta + curr.reativaForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kVArh</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <FileText size={80} className="text-purple-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Meses com Excesso</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">{filteredDashboardData.filter(d => d.reativaPonta > 0 || d.reativaForaPonta > 0).length} <span className="text-base font-sans font-medium opacity-40">Meses</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-purple-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Excedente</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">{(filteredDashboardData.reduce((acc, curr) => acc + curr.reativaPonta + curr.reativaForaPonta, 0) / timeSeriesData.length || 0).toFixed(1)} <span className="text-base font-sans font-medium opacity-40">kVArh</span></p>
+                            </div>
+                          </>
+                        )}
+                        {operationalSubTab === 'solar' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <Zap size={80} className="text-sanesul-secondary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Consumo em kWh</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-secondary">{filteredDashboardData.reduce((acc, curr) => acc + (curr.consumoPonta + curr.consumoForaPonta), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <Zap size={80} className="text-green-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Injetada</p>
+                              <p className="text-5xl font-display font-bold text-green-600">{filteredDashboardData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC + curr.solarInjetadaMUC), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-green-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Saldo Energia</p>
+                              <p className="text-5xl font-display font-bold text-green-600">{(filteredDashboardData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC + curr.solarInjetadaMUC) - (curr.consumoPonta + curr.consumoForaPonta), 0)).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {financialSubTab === 'despesas' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <FileText size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total de Faturas</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <DollarSign size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Gasto Acumulado</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Mensal</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <LayoutDashboard size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Unidades Ativas</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredUcs.length} <span className="text-base font-sans font-medium opacity-40">UCs</span></p>
+                            </div>
+                          </>
+                        )}
+                        {financialSubTab === 'multa_ultrapassagem' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <AlertCircle size={80} className="text-red-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Multas</p>
+                              <p className="text-5xl font-display font-bold text-red-600">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorUltrapassagemPonta + curr.valorUltrapassagemForaPonta, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-red-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Mensal</p>
+                              <p className="text-5xl font-display font-bold text-red-600">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorUltrapassagemPonta + curr.valorUltrapassagemForaPonta, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <DollarSign size={80} className="text-red-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Penalidade</p>
+                              <p className="text-5xl font-display font-bold text-red-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorUltrapassagemPonta + d.valorUltrapassagemForaPonta), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                          </>
+                        )}
+                        {financialSubTab === 'multa_reativa' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <Zap size={80} className="text-purple-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Multas</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorReativaPonta + curr.valorReativaForaPonta, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-purple-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Mensal</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorReativaPonta + curr.valorReativaForaPonta, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <DollarSign size={80} className="text-purple-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Penalidade</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorReativaPonta + d.valorReativaForaPonta), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                          </>
+                        )}
+                        {financialSubTab === 'tarifa_media' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Tarifa Média</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0) / (filteredDashboardData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0) || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 3 })} <span className="text-base font-sans font-medium opacity-40">/kWh</span></p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-green-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Menor Tarifa</p>
+                              <p className="text-5xl font-display font-bold text-green-600">R$ {Math.min(...filteredDashboardData.map(d => d.valorTotal / (d.consumoPonta + d.consumoForaPonta || 1)), 100).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-red-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Tarifa</p>
+                              <p className="text-5xl font-display font-bold text-red-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorTotal / (d.consumoPonta + d.consumoForaPonta || 1)), 0).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</p>
+                            </div>
+                          </>
+                        )}
+                        {financialSubTab === 'energia_solar' && (
+                          <>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <Zap size={80} className="text-sanesul-primary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Consumo (R$)</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {filteredDashboardData.reduce((acc, curr) => acc + Math.abs(curr.valorSolarOUC + curr.valorSolarMUC) + (curr.valorTotal - curr.cip - curr.outrosEncargos), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp size={80} className="text-green-600" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Créditos</p>
+                              <p className="text-5xl font-display font-bold text-green-600">R$ {Math.abs(filteredDashboardData.reduce((acc, curr) => acc + curr.valorSolarOUC + curr.valorSolarMUC, 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                              <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                                <DollarSign size={80} className="text-sanesul-secondary" />
+                              </div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Valor Total da Fatura</p>
+                              <p className="text-5xl font-display font-bold text-sanesul-secondary">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Charts removed as per user request */}
+
+                  <div className="mt-12">
+                    <div className="bg-white rounded-3xl border border-sanesul-primary/10 shadow-xl overflow-hidden">
+                      <div className="p-8 border-b border-sanesul-primary/5 bg-slate-50/50 flex justify-between items-center">
+                        <div>
+                          <h3 className="text-lg font-display font-bold text-sanesul-primary">Detalhamento por Unidade Consumidora</h3>
+                          <p className="text-sm text-sanesul-muted mt-1">Visão granular dos indicadores para cada registro no período selecionado.</p>
+                        </div>
+                        <div className="px-4 py-2 bg-sanesul-primary/10 rounded-full">
+                          <span className="text-xs font-bold text-sanesul-primary uppercase tracking-widest">{filteredDashboardData.length} Registros</span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50/50">
+                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">UC</th>
+                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Mês/Ano</th>
+                              {dashboardSubTab === 'operacionais' ? (
+                                <>
+                                  {operationalSubTab === 'consumo' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Consumo Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Consumo F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Total (kWh)</th>
+                                    </>
+                                  )}
+                                  {operationalSubTab === 'ultrapassagem' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Contratada Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Contratada F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Ultrap. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Ultrap. F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-red-600 border-b border-sanesul-primary/5 text-right">Total (kW)</th>
+                                    </>
+                                  )}
+                                  {operationalSubTab === 'subutilizacao' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Contratada Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Contratada F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Medida Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Medida F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-orange-600 border-b border-sanesul-primary/5 text-right">Utilização (%)</th>
+                                    </>
+                                  )}
+                                  {operationalSubTab === 'reativa' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Reativa Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Reativa F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-purple-600 border-b border-sanesul-primary/5 text-right">Total (kVArh)</th>
+                                    </>
+                                  )}
+                                  {operationalSubTab === 'solar' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Consumo em kWh</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Injetada oUC</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Injetada mUC</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Saldo Energia</th>
+                                    </>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  {financialSubTab === 'despesas' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Valor Total</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Cidade</th>
+                                    </>
+                                  )}
+                                  {financialSubTab === 'multa_ultrapassagem' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Multa Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Multa F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-red-600 border-b border-sanesul-primary/5 text-right">Total (R$)</th>
+                                    </>
+                                  )}
+                                  {financialSubTab === 'multa_reativa' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Multa Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Multa F. Ponta</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-purple-600 border-b border-sanesul-primary/5 text-right">Total (R$)</th>
+                                    </>
+                                  )}
+                                  {financialSubTab === 'tarifa_media' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Valor Total</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Consumo Total</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Tarifa (R$/kWh)</th>
+                                    </>
+                                  )}
+                                  {financialSubTab === 'energia_solar' && (
+                                    <>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Consumo (R$)</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Total Créditos</th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-secondary border-b border-sanesul-primary/5 text-right">Valor Total da Fatura</th>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-sanesul-primary/5">
+                            {filteredDashboardData.sort((a, b) => b.name.localeCompare(a.name)).map((row, idx) => (
+                              <tr key={idx} className="hover:bg-sanesul-primary/5 transition-colors group">
+                                <td className="px-8 py-5 text-sm font-bold text-sanesul-primary">{row.uc}</td>
+                                <td className="px-8 py-5 text-sm text-slate-600">{row.name}</td>
+                                {dashboardSubTab === 'operacionais' ? (
+                                  <>
+                                    {operationalSubTab === 'consumo' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.consumoPonta.toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.consumoForaPonta.toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR')} kWh</td>
+                                      </>
+                                    )}
+                                    {operationalSubTab === 'ultrapassagem' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaForaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.ultrapassagemPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.ultrapassagemForaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-red-600">{(row.ultrapassagemPonta + row.ultrapassagemForaPonta).toLocaleString('pt-BR')} kW</td>
+                                      </>
+                                    )}
+                                    {operationalSubTab === 'subutilizacao' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaForaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaMedidaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaMedidaForaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className={`px-8 py-5 text-sm font-bold text-right ${row.demandaMedidaPonta < (row.demandaContratadaPonta * 0.8) ? 'text-orange-600' : 'text-slate-600'}`}>
+                                          {((row.demandaMedidaPonta / (row.demandaContratadaPonta || 1)) * 100).toFixed(1)}%
+                                        </td>
+                                      </>
+                                    )}
+                                    {operationalSubTab === 'reativa' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.reativaPonta.toLocaleString('pt-BR')} kVArh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.reativaForaPonta.toLocaleString('pt-BR')} kVArh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">{(row.reativaPonta + row.reativaForaPonta).toLocaleString('pt-BR')} kVArh</td>
+                                      </>
+                                    )}
+                                    {operationalSubTab === 'solar' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.solarInjetadaOUC.toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.solarInjetadaMUC.toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-green-600">{((row.solarInjetadaOUC + row.solarInjetadaMUC) - (row.consumoPonta + row.consumoForaPonta)).toLocaleString('pt-BR')} kWh</td>
+                                      </>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    {financialSubTab === 'despesas' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">R$ {row.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm text-slate-600">{row.cidade}</td>
+                                      </>
+                                    )}
+                                    {financialSubTab === 'multa_ultrapassagem' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">R$ {row.valorUltrapassagemPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">R$ {row.valorUltrapassagemForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-red-600">R$ {(row.valorUltrapassagemPonta + row.valorUltrapassagemForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                      </>
+                                    )}
+                                    {financialSubTab === 'multa_reativa' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">R$ {row.valorReativaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">R$ {row.valorReativaForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">R$ {(row.valorReativaPonta + row.valorReativaForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                      </>
+                                    )}
+                                    {financialSubTab === 'tarifa_media' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">R$ {row.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">R$ {(row.valorTotal / (row.consumoPonta + row.consumoForaPonta || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</td>
+                                      </>
+                                    )}
+                                    {financialSubTab === 'energia_solar' && (
+                                      <>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">R$ {(Math.abs(row.valorSolarOUC + row.valorSolarMUC) + (row.valorTotal - row.cip - row.outrosEncargos)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-green-600">R$ {Math.abs(row.valorSolarOUC + row.valorSolarMUC).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-secondary">R$ {row.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                      </>
+                                    )}
+                                  </>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : activeTab === 'analises' ? (
+          <div className="space-y-8">
+            <div className="bg-white p-10 rounded-3xl border border-sanesul-primary/10 shadow-xl">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+                <div>
+                  <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Análises de Dados</h2>
+                  <p className="text-sanesul-muted">Analise ultrapassagens e subutilização de demanda com base nas faturas processadas.</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={runAnalysis}
+                    disabled={bills.filter(b => b.status === 'completed').length === 0}
+                    className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <BarChart3 size={16} />
+                    Gerar Análise
+                  </button>
+                  {analysisResults && (
+                    <div className="flex items-center gap-4">
+                      <button 
+                        onClick={exportAnalysisToCSV}
+                        className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                      >
+                        <Download size={16} />
+                        Exportar
+                      </button>
+                      <button 
+                        onClick={() => { setAnalysisResults(null); setAnalysisData([]); }}
+                        className="flex items-center gap-2 px-6 py-3 bg-red-50 text-red-600 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-red-100 transition-all"
+                      >
+                        <Trash2 size={16} />
+                        Limpar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {!analysisResults ? (
+                <div className="border-2 border-dashed border-sanesul-primary/10 rounded-3xl p-20 text-center bg-slate-50/50">
+                  <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm">
+                    <FileSpreadsheet size={40} className="text-sanesul-primary/40" />
+                  </div>
+                  <h3 className="text-xl font-bold text-sanesul-primary mb-2">Nenhuma análise gerada</h3>
+                  <p className="text-sanesul-muted max-w-md mx-auto mb-8">
+                    Clique em "Gerar Análise" para utilizar os dados das faturas processadas e calcular a demanda ideal.
+                  </p>
+                  <div className="flex justify-center gap-4">
+                    <div className="p-4 rounded-xl bg-white border border-slate-100 text-left max-w-xs">
+                      <div className="flex items-center gap-2 text-sanesul-primary font-bold text-xs mb-2">
+                        <TrendingUp size={14} />
+                        Ultrapassagem
+                      </div>
+                      <p className="text-[10px] text-sanesul-muted">Calculamos a demanda otimizada para eliminar multas de ultrapassagem (Resolução 1000 ANEEL).</p>
+                    </div>
+                    <div className="p-4 rounded-xl bg-white border border-slate-100 text-left max-w-xs">
+                      <div className="flex items-center gap-2 text-sanesul-primary font-bold text-xs mb-2">
+                        <Zap size={14} />
+                        Subutilização
+                      </div>
+                      <p className="text-[10px] text-sanesul-muted">Identificamos a demanda ideal para evitar pagamentos por potência não utilizada.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-10">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                        <TrendingUp size={80} className="text-green-600" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Economia Potencial</p>
+                      <p className="text-4xl font-display font-bold text-green-600">
+                        R$ {analysisResults.reduce((acc: any, curr: any) => acc + (curr.economy > 0 ? curr.economy : 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                        <AlertCircle size={80} className="text-red-600" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Ultrapassagens</p>
+                      <p className="text-5xl font-display font-bold text-red-600">{analysisResults.filter((r: any) => r.isOverrun).length}</p>
+                    </div>
+                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                        <TrendingDown size={80} className="text-orange-600" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Subutilizações</p>
+                      <p className="text-5xl font-display font-bold text-orange-600">{analysisResults.filter((r: any) => r.isSub).length}</p>
+                    </div>
+                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                        <Zap size={80} className="text-green-600" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Eficiência</p>
+                      <p className="text-5xl font-display font-bold text-green-600">
+                        {Math.round((analysisResults.filter((r: any) => !r.isOverrun && !r.isSub).length / analysisResults.length) * 100)}%
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Results Table */}
+                  <div className="overflow-hidden rounded-2xl border border-sanesul-primary/5 shadow-sm">
+                    <table className="w-full border-collapse bg-white text-left">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">UC</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">Mês/Ano</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Contratada (P/FP)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Medida (P/FP)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-red-600 border-b border-sanesul-primary/5 text-right">Ultrapassagem</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-orange-600 border-b border-sanesul-primary/5 text-right">Subutilização</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Demanda Ideal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {analysisResults.map((result: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="font-bold text-sanesul-primary text-xs">{result.uc}</div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="font-bold text-slate-700 text-xs">{result.mes} {result.ano ? `/ ${result.ano}` : ''}</div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="text-xs font-mono text-slate-600">{result.dcp.toFixed(2)} / {result.dcfp.toFixed(2)} kW</div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="text-xs font-mono font-bold text-sanesul-primary">{result.dmp.toFixed(2)} / {result.dmfp.toFixed(2)} kW</div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              {result.isOverrun ? (
+                                <div className="flex flex-col items-end gap-1">
+                                  {result.overrunPonta > 0 && (
+                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold">
+                                      <AlertCircle size={10} />
+                                      P: +{result.overrunPonta.toFixed(2)} kW
+                                    </div>
+                                  )}
+                                  {result.overrunForaPonta > 0 && (
+                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold">
+                                      <AlertCircle size={10} />
+                                      FP: +{result.overrunForaPonta.toFixed(2)} kW
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-300 text-[10px]">-</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              {result.isSub ? (
+                                <div className="flex flex-col items-end gap-1">
+                                  {result.subPonta > 0 && (
+                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 rounded text-[10px] font-bold">
+                                      <TrendingDown size={10} />
+                                      P: -{result.subPonta.toFixed(2)} kW
+                                    </div>
+                                  )}
+                                  {result.subForaPonta > 0 && (
+                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 rounded text-[10px] font-bold">
+                                      <TrendingDown size={10} />
+                                      FP: -{result.subForaPonta.toFixed(2)} kW
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-300 text-[10px]">-</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="text-xs font-mono font-bold text-green-600">
+                                {result.optimizedPonta.toFixed(2)} / {result.optimizedForaPonta.toFixed(2)} kW
+                              </div>
+                              <div className="text-[9px] text-green-500 uppercase font-bold tracking-tighter">Ideal Fixo (1 Ano)</div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : activeTab === 'monitoramento' ? (
+          <div className="py-12 space-y-12">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div>
+                <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Monitoramento de Despesas</h2>
+                <p className="text-sanesul-muted">Acompanhamento detalhado de gastos e economia com demanda por cidade e UC.</p>
+              </div>
+              <button 
+                onClick={runMonitoringAnalysis}
+                disabled={bills.filter(b => b.status === 'completed').length === 0}
+                className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <BarChart3 size={16} />
+                Atualizar Monitoramento
+              </button>
+            </div>
+
+            {!monitoringResults ? (
+              <div className="border-2 border-dashed border-sanesul-primary/10 rounded-[40px] p-20 text-center bg-white/50 backdrop-blur-sm">
+                <div className="w-24 h-24 bg-sanesul-primary/5 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-inner">
+                  <DollarSign size={48} className="text-sanesul-primary/40" />
+                </div>
+                <h3 className="text-2xl font-display font-bold text-sanesul-primary mb-4">Pronto para analisar</h3>
+                <p className="text-sanesul-muted max-w-md mx-auto mb-10 text-lg">
+                  Clique no botão acima para processar os indicadores de despesa e economia baseados nas faturas extraídas.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-12">
+                {/* Summary Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                      <FileText size={80} className="text-sanesul-primary" />
+                    </div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Faturas Analisadas</p>
+                    <p className="text-4xl font-display font-bold text-sanesul-primary">{bills.filter(b => b.status === 'completed').length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
+                  </div>
+
+                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                      <TrendingUp size={80} className="text-green-600" />
+                    </div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Economia Geral Total</p>
+                    <p className="text-4xl font-display font-bold text-green-600">R$ {monitoringResults.generalTotalEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  </div>
+
+                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                      <DollarSign size={80} className="text-sanesul-primary" />
+                    </div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Despesa Atual Total</p>
+                    <p className="text-4xl font-display font-bold text-sanesul-primary">R$ {monitoringResults.generalTotalCurrent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  </div>
+
+                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                      <Zap size={80} className="text-sanesul-secondary" />
+                    </div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Potencial de Redução</p>
+                    <p className="text-5xl font-display font-bold text-sanesul-secondary">
+                      {((monitoringResults.generalTotalEconomy / monitoringResults.generalTotalCurrent) * 100).toFixed(1)}%
+                    </p>
+                  </div>
+                </div>
+
+                {/* Charts Section */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
+                    <h3 className="text-lg font-display font-bold text-sanesul-primary mb-6">Economia por Cidade</h3>
+                    <div className="h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monitoringResults.cityData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis 
+                            dataKey="city" 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                          />
+                          <YAxis 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                            tickFormatter={(value) => `R$ ${value}`}
+                          />
+                          <Tooltip 
+                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                            formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR')}`, 'Economia']}
+                          />
+                          <Bar dataKey="totalEconomy" fill="#16a34a" radius={[8, 8, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
+                    <h3 className="text-lg font-display font-bold text-sanesul-primary mb-6">Gasto vs Economia</h3>
+                    <div className="h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Gasto Otimizado', value: monitoringResults.generalTotalCurrent - monitoringResults.generalTotalEconomy },
+                              { name: 'Economia Potencial', value: monitoringResults.generalTotalEconomy }
+                            ]}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={100}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            <Cell fill="#004a99" />
+                            <Cell fill="#16a34a" />
+                          </Pie>
+                          <Tooltip 
+                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                            formatter={(value: number) => `R$ ${value.toLocaleString('pt-BR')}`}
+                          />
+                          <Legend verticalAlign="bottom" height={36}/>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* City Breakdown */}
+                <div className="space-y-8">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-2xl font-display font-bold text-sanesul-primary border-l-4 border-sanesul-secondary pl-4">Detalhamento por Cidade</h3>
+                  </div>
+                {/* Changed UCs Group */}
+                {monitoringResults.changedUCs.length > 0 && (
+                  <div className="bg-white rounded-[40px] border border-sanesul-primary/10 shadow-2xl overflow-hidden mb-8">
+                    <div className="bg-slate-50/80 px-10 py-8 border-b border-sanesul-primary/5">
+                      <h3 className="text-2xl font-display font-bold text-sanesul-primary border-l-4 border-yellow-500 pl-4">
+                        Unidades com Alteração de Demanda
+                      </h3>
+                      <p className="text-xs font-bold text-sanesul-muted uppercase tracking-widest mt-2 pl-5">
+                        {monitoringResults.changedUCs.length} Unidades Encontradas
+                      </p>
+                    </div>
+                    
+                    <div className="p-10">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] w-10"></th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Unidade Consumidora</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Cidade</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Contratada Atual (P/FP)</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Demanda Ideal (P/FP)</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-right">Gasto Atual (Total)</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-right">Economia Acumulada</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-right">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {monitoringResults.changedUCs.map((uc: any, uIdx: number) => (
+                              <React.Fragment key={uIdx}>
+                                <tr className={`group hover:bg-slate-50/50 transition-colors cursor-pointer ${expandedUCs.has(uc.uc) ? 'bg-slate-50/80' : ''}`} onClick={() => toggleUCExpansion(uc.uc)}>
+                                  <td className="py-6 text-center">
+                                    <ChevronRight size={16} className={`text-sanesul-muted transition-transform ${expandedUCs.has(uc.uc) ? 'rotate-90' : ''}`} />
+                                  </td>
+                                  <td className="py-6">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-xl bg-sanesul-primary/5 flex items-center justify-center font-bold text-sanesul-primary text-xs">
+                                        {uIdx + 1}
+                                      </div>
+                                      <span className="font-bold text-sanesul-primary font-mono">{uc.uc}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-6 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                    {uc.city}
+                                  </td>
+                                  <td className="py-6 text-center">
+                                    <span className="px-3 py-1.5 bg-slate-50 text-slate-700 rounded-lg text-xs font-bold font-mono">
+                                      {uc.monthlyData[0]?.dcp} / {uc.monthlyData[0]?.dcfp} kW
+                                    </span>
+                                  </td>
+                                  <td className="py-6 text-center">
+                                    <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-bold font-mono">
+                                      {uc.optPonta} / {uc.optForaPonta} kW
+                                    </span>
+                                  </td>
+                                  <td className="py-6 text-right font-mono text-sm text-sanesul-muted">
+                                    R$ {uc.totalCurrent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-6 text-right font-bold text-green-600 text-lg">
+                                    R$ {uc.totalEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-6 text-right">
+                                    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                      uc.totalEconomy > 0 ? 'bg-green-100 text-green-700' : uc.totalEconomy < 0 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'
+                                    }`}>
+                                      {uc.totalEconomy > 0 ? <TrendingUp size={12} /> : uc.totalEconomy < 0 ? <TrendingDown size={12} /> : <div className="w-3 h-3 rounded-full bg-slate-400" />}
+                                      {uc.totalEconomy > 0 ? 'Economia' : uc.totalEconomy < 0 ? 'Prejuízo' : 'Neutro'}
+                                    </div>
+                                  </td>
+                                </tr>
+                                {expandedUCs.has(uc.uc) && (
+                                  <tr>
+                                    <td colSpan={8} className="px-10 py-0">
+                                      <div className="bg-slate-50/50 rounded-2xl p-6 mb-6 border border-slate-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                                        <div className="flex items-center gap-2 mb-4">
+                                          <Calendar size={14} className="text-sanesul-primary" />
+                                          <h5 className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">Histórico de Alterações e Economia</h5>
+                                        </div>
+                                        <div className="grid grid-cols-6 gap-4 mb-2 px-4">
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest">Mês/Ano</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-center">Contratada (P/FP)</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-center">Medida (P/FP)</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-right">Gasto Real</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-right">Ref. Anterior</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-right">Economia</div>
+                                        </div>
+                                        <div className="space-y-2">
+                                          {uc.monthlyData.map((month: any, mIdx: number) => (
+                                            <div key={mIdx} className={`grid grid-cols-6 gap-4 px-4 py-3 rounded-xl border transition-colors ${month.hasChanged ? 'bg-yellow-50 border-yellow-200' : 'bg-white border-slate-100 hover:border-sanesul-primary/20'}`}>
+                                              <div className="flex flex-col">
+                                                <span className="text-xs font-bold text-slate-700">{month.mes}/{month.ano}</span>
+                                                {month.hasChanged && <span className="text-[9px] font-bold text-yellow-600 uppercase tracking-wider mt-1">Alteração de Contrato</span>}
+                                              </div>
+                                              <div className="text-xs font-mono text-center text-slate-500">{month.dcp} / {month.dcfp} kW</div>
+                                              <div className="text-xs font-mono text-center text-slate-500">{month.dmp} / {month.dmfp} kW</div>
+                                              <div className="text-xs font-mono text-right font-bold text-sanesul-primary">R$ {month.currentTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                                              <div className="text-xs font-mono text-right text-slate-400">
+                                                {month.referenceTotal > 0 ? `R$ ${month.referenceTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}
+                                              </div>
+                                              <div className={`text-xs font-mono text-right font-bold ${month.economy > 0 ? 'text-green-600' : month.economy < 0 ? 'text-red-500' : 'text-slate-400'}`}>
+                                                {month.economy !== 0 ? `R$ ${month.economy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Unchanged UCs Group */}
+                {monitoringResults.unchangedUCs.length > 0 && (
+                  <div className="bg-white rounded-[40px] border border-sanesul-primary/10 shadow-2xl overflow-hidden">
+                    <div className="bg-slate-50/80 px-10 py-8 border-b border-sanesul-primary/5">
+                      <h3 className="text-2xl font-display font-bold text-sanesul-muted border-l-4 border-slate-300 pl-4">
+                        Unidades sem Alteração (Contrato Estável)
+                      </h3>
+                      <p className="text-xs font-bold text-sanesul-muted uppercase tracking-widest mt-2 pl-5">
+                        {monitoringResults.unchangedUCs.length} Unidades Encontradas
+                      </p>
+                    </div>
+                    
+                    <div className="p-10">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse opacity-80 hover:opacity-100 transition-opacity">
+                          <thead>
+                            <tr>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] w-10"></th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Unidade Consumidora</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Cidade</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Contratada (P/FP)</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Demanda Ideal (P/FP)</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-right">Gasto Atual (Total)</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-right">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {monitoringResults.unchangedUCs.map((uc: any, uIdx: number) => (
+                              <React.Fragment key={uIdx}>
+                                <tr className={`group hover:bg-slate-50/50 transition-colors cursor-pointer ${expandedUCs.has(uc.uc) ? 'bg-slate-50/80' : ''}`} onClick={() => toggleUCExpansion(uc.uc)}>
+                                  <td className="py-6 text-center">
+                                    <ChevronRight size={16} className={`text-sanesul-muted transition-transform ${expandedUCs.has(uc.uc) ? 'rotate-90' : ''}`} />
+                                  </td>
+                                  <td className="py-6">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-xs">
+                                        {uIdx + 1}
+                                      </div>
+                                      <span className="font-bold text-slate-600 font-mono">{uc.uc}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-6 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                    {uc.city}
+                                  </td>
+                                  <td className="py-6 text-center">
+                                    <span className="px-3 py-1.5 bg-slate-50 text-slate-700 rounded-lg text-xs font-bold font-mono">
+                                      {uc.monthlyData[0]?.dcp} / {uc.monthlyData[0]?.dcfp} kW
+                                    </span>
+                                  </td>
+                                  <td className="py-6 text-center">
+                                    <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-bold font-mono">
+                                      {uc.optPonta} / {uc.optForaPonta} kW
+                                    </span>
+                                  </td>
+                                  <td className="py-6 text-right font-mono text-sm text-sanesul-muted">
+                                    R$ {uc.totalCurrent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-6 text-right">
+                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500">
+                                      <div className="w-3 h-3 rounded-full bg-slate-400" />
+                                      Sem Alteração
+                                    </div>
+                                  </td>
+                                </tr>
+                                {expandedUCs.has(uc.uc) && (
+                                  <tr>
+                                    <td colSpan={8} className="px-10 py-0">
+                                      <div className="bg-slate-50/50 rounded-2xl p-6 mb-6 border border-slate-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                                        <div className="flex items-center gap-2 mb-4">
+                                          <Calendar size={14} className="text-sanesul-primary" />
+                                          <h5 className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">Detalhamento Mensal</h5>
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-4 mb-2 px-4">
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest">Mês/Ano</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-center">Contratada (P/FP)</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-center">Medida (P/FP)</div>
+                                          <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-right">Gasto Real</div>
+                                        </div>
+                                        <div className="space-y-2">
+                                          {uc.monthlyData.map((month: any, mIdx: number) => (
+                                            <div key={mIdx} className="grid grid-cols-4 gap-4 px-4 py-3 bg-white rounded-xl border border-slate-100 hover:border-sanesul-primary/20 transition-colors">
+                                              <div className="text-xs font-bold text-slate-700">{month.mes}/{month.ano}</div>
+                                              <div className="text-xs font-mono text-center text-slate-500">{month.dcp} / {month.dcfp} kW</div>
+                                              <div className="text-xs font-mono text-center text-slate-500">{month.dmp} / {month.dmfp} kW</div>
+                                              <div className="text-xs font-mono text-right font-bold text-sanesul-primary">R$ {month.currentTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'relatorio' ? (
+          <div className="py-12 space-y-12">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div>
+                <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Relatório Financeiro</h2>
+                <p className="text-sanesul-muted">Visão consolidada de faturamento, impostos e indicadores financeiros.</p>
+              </div>
+              <div className="flex flex-wrap gap-4 items-center">
+                <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-sanesul-primary/10 shadow-sm">
+                  <Calendar size={16} className="text-sanesul-primary" />
+                  <select 
+                    value={selectedRelatorioMonth}
+                    onChange={(e) => setSelectedRelatorioMonth(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-sanesul-primary uppercase tracking-wider outline-none cursor-pointer"
+                  >
+                    <option value="all">Todos os Meses</option>
+                    {availableMonths.map(month => (
+                      <option key={month} value={month}>{month}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+
+                  <button 
+                    onClick={() => agrupadoraInputRef.current?.click()}
+                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
+                  >
+                    <Upload size={16} />
+                    Anexar Agrupadora (Elektro)
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={agrupadoraInputRef} 
+                    className="hidden" 
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => handleAgrupadoraUpload(e, 'summary')}
+                  />
+
+                  <button 
+                    onClick={() => energisaInputRef.current?.click()}
+                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
+                  >
+                    <Upload size={16} />
+                    Anexar Agrupadora (Energisa)
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={energisaInputRef} 
+                    className="hidden" 
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => handleAgrupadoraUpload(e, 'summary')}
+                  />
+
+                  <button 
+                    onClick={() => detailedElektroInputRef.current?.click()}
+                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
+                  >
+                    <FileText size={16} />
+                    Anexar Relatório Detalhado (Elektro)
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={detailedElektroInputRef} 
+                    className="hidden" 
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => handleAgrupadoraUpload(e, 'detailed')}
+                  />
+                  <button 
+                    id="btn-gerar-relatorio"
+                    onClick={() => {
+                      setTempMemoNumber(memoNumber);
+                      setShowMemoNumberPrompt(true);
+                    }}
+                    className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20"
+                  >
+                    <BarChart3 size={16} />
+                    Gerar Relatório
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {uploadProgress && (
+              <div className="bg-white p-6 rounded-2xl border border-sanesul-primary/10 shadow-sm mb-8 animate-in fade-in slide-in-from-bottom-4">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm font-bold text-sanesul-primary">{uploadProgress.status}</span>
+                  <span className="text-sm font-bold text-sanesul-primary">{uploadProgress.percent}%</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                  <div 
+                    className="bg-sanesul-primary h-2.5 rounded-full transition-all duration-300 ease-out" 
+                    style={{ width: `${uploadProgress.percent}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
+
+            {Object.keys(agrupadoraFiles).length > 0 && (
+              <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-blue-600" />
+                    <h3 className="text-sm font-bold text-blue-800 uppercase tracking-wider">
+                      Dados Extraídos das Faturas
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setAgrupadoraFiles({})}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-white border border-red-100 text-red-500 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-red-50 transition-all"
+                  >
+                    <Trash2 size={12} />
+                    Limpar
+                  </button>
+                </div>
+                <div className="flex flex-col lg:flex-row gap-6">
+                  {(Object.values(agrupadoraFiles) as AgrupadoraData[]).map((data, idx) => {
+                    const isDetailed = data.concessionaria.includes('DETALHADO');
+                    return (
+                    <div key={idx} className="flex-1 bg-white p-5 rounded-xl border border-blue-100 shadow-sm min-w-[300px]">
+                      <div className="flex justify-between items-start mb-4 pb-3 border-b border-slate-100">
+                        <span className="text-sm font-bold text-blue-600 uppercase tracking-wider">{data.concessionaria}</span>
+                        <span className="text-[10px] text-slate-400 truncate max-w-[150px] text-right" title={data.fileName}>{data.fileName}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Mês Ref</span>
+                          <span className="font-mono font-bold text-slate-700 text-sm">{data.mesReferencia || '-'}</span>
+                        </div>
+                        {!isDetailed && (
+                          <div className="flex flex-col">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Vencimento</span>
+                            <span className="font-mono font-bold text-slate-700 text-sm">{data.vencimento || '-'}</span>
+                          </div>
+                        )}
+                        {!isDetailed && (
+                          <div className="flex flex-col col-span-2">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Nota Fiscal</span>
+                            <span className="font-mono font-bold text-slate-700 text-sm">{data.numeroNotaFiscal || '-'}</span>
+                          </div>
+                        )}
+                        {!isDetailed && (
+                          <>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">ICMS</span>
+                              <span className="font-mono font-bold text-slate-700 text-sm">R$ {data.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">COFINS</span>
+                              <span className="font-mono font-bold text-slate-700 text-sm">R$ {data.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">PIS</span>
+                              <span className="font-mono font-bold text-slate-700 text-sm">R$ {data.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
+                          </>
+                        )}
+                        <div className={`flex flex-col ${isDetailed ? 'col-span-2' : ''}`}>
+                          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">CIP</span>
+                          <span className={`font-mono font-bold text-slate-700 ${isDetailed ? 'text-2xl text-blue-700' : 'text-sm'}`}>R$ {data.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        {!isDetailed && (
+                          <div className="flex flex-col col-span-2 pt-3 border-t border-slate-100 mt-1">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Total Faturado</span>
+                            <span className="font-mono font-bold text-blue-700 text-lg">R$ {data.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )})}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5">
+                <h3 className="text-lg font-display font-bold text-sanesul-primary mb-8 flex items-center gap-3">
+                  <DollarSign className="text-sanesul-primary" size={20} />
+                  Resumo de Impostos e Contribuições - Energisa
+                </h3>
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">PIS</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.pis, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">COFINS</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.cofins, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">ICMS</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.icms, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-sanesul-primary/5 rounded-2xl border border-sanesul-primary/10">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-primary">CIP MUNICIPAL</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.cip, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5">
+                <h3 className="text-lg font-display font-bold text-sanesul-primary mb-8 flex items-center gap-3">
+                  <DollarSign className="text-sanesul-primary" size={20} />
+                  Resumo de Impostos e Contribuições - ELEKTRO
+                </h3>
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">PIS</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.pis, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">COFINS</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.cofins, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">ICMS</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.icms, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-4 bg-sanesul-primary/5 rounded-2xl border border-sanesul-primary/10">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sanesul-primary">CIP MUNICIPAL</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.cip, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[40px] border border-sanesul-primary/5 shadow-2xl overflow-hidden hidden">
+              <div className="p-10 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="text-xl font-display font-bold text-sanesul-primary">Detalhamento por Unidade Consumidora</h3>
+                <div className="text-[10px] font-bold text-sanesul-muted uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-full">
+                  {Array.from(new Set(filteredRelatorioData.map(d => d.uc))).filter(Boolean).length} Unidades
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/50">
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">UC</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">Cidade</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">PIS</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">COFINS</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">ICMS</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">CIP</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from(new Set(filteredRelatorioData.map(d => d.uc))).filter(Boolean).map(uc => {
+                      const ucData = filteredRelatorioData.filter(d => d.uc === uc);
+                      const totals = {
+                        pis: ucData.reduce((acc, curr) => acc + curr.pis, 0),
+                        cofins: ucData.reduce((acc, curr) => acc + curr.cofins, 0),
+                        icms: ucData.reduce((acc, curr) => acc + curr.icms, 0),
+                        cip: ucData.reduce((acc, curr) => acc + curr.cip, 0),
+                        total: ucData.reduce((acc, curr) => acc + curr.valorTotal, 0)
+                      };
+                      return (
+                        <tr key={uc} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="px-8 py-6 border-b border-slate-50">
+                            <span className="text-sm font-bold text-sanesul-primary group-hover:text-sanesul-secondary transition-colors">{uc}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50">
+                            <span className="text-xs font-medium text-sanesul-muted">{ucData[0]?.cidade || '-'}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50 text-right">
+                            <span className="text-xs font-mono font-bold text-slate-600">R$ {totals.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50 text-right">
+                            <span className="text-xs font-mono font-bold text-slate-600">R$ {totals.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50 text-right">
+                            <span className="text-xs font-mono font-bold text-slate-600">R$ {totals.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50 text-right">
+                            <span className="text-xs font-mono font-bold text-sanesul-primary">R$ {totals.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50 text-right">
+                            <span className="text-sm font-display font-bold text-sanesul-primary">R$ {totals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </main>
+
+      {/* Custom Memo Number Prompt Modal */}
+      {showMemoNumberPrompt && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 animate-in zoom-in duration-200">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-sanesul-primary/10 flex items-center justify-center">
+                <FileText className="text-sanesul-primary" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-display font-bold text-sanesul-primary">Número do Memorando</h3>
+                <p className="text-[10px] text-sanesul-muted uppercase tracking-widest font-bold">Identificação do Documento</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-sanesul-muted uppercase tracking-widest mb-2 px-1">Número do Memorando</label>
+                <input 
+                  type="text" 
+                  value={tempMemoNumber}
+                  onChange={(e) => setTempMemoNumber(e.target.value)}
+                  placeholder="Ex: 001447/2024/GEDEO/DCO"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-sanesul-primary focus:outline-none focus:ring-2 focus:ring-sanesul-primary/20 focus:bg-white transition-all"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setMemoNumber(tempMemoNumber);
+                      setShowMemoNumberPrompt(false);
+                      setShowMemo(true);
+                    }
+                  }}
+                />
+              </div>
+              
+              <div className="flex gap-3 pt-4">
+                <button 
+                  onClick={() => setShowMemoNumberPrompt(false)}
+                  className="flex-1 px-6 py-3 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-slate-200 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => {
+                    setMemoNumber(tempMemoNumber);
+                    setShowMemoNumberPrompt(false);
+                    setShowMemo(true);
+                  }}
+                  className="flex-1 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Memo Modal */}
+      {showMemo && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-black/60 backdrop-blur-sm print:static print:bg-white print:overflow-visible">
+          <div className="flex min-h-full items-start justify-center p-4 print:p-0 print:block">
+            <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl relative my-4 sm:my-8 print:my-0 print:shadow-none print:rounded-none">
+              <div className="sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-100 p-4 sm:p-6 flex justify-between items-center z-20 print:hidden rounded-t-3xl">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-sanesul-primary/10 flex items-center justify-center">
+                  <FileText className="text-sanesul-primary" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-display font-bold text-sanesul-primary">Memorando de Faturamento</h3>
+                  <p className="text-[10px] text-sanesul-muted uppercase tracking-widest font-bold">GEDEO/DCO - Sanesul</p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  onClick={handleDownloadPDF}
+                  disabled={isGeneratingPDF}
+                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingPDF ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Gerando PDF...
+                    </>
+                  ) : (
+                    <>
+                      <Printer size={16} />
+                      Baixar PDF
+                    </>
+                  )}
+                </button>
+                <button 
+                  onClick={handleDownloadDocx}
+                  className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
+                >
+                  <FileText size={16} />
+                  Baixar DOCX
+                </button>
+                <button 
+                  onClick={() => setShowMemo(false)}
+                  className="p-3 hover:bg-slate-100 rounded-xl transition-colors text-slate-400 hover:text-red-500"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div id="memo-content" className="p-16 font-serif text-slate-800 leading-relaxed print:p-8 bg-white">
+              {/* Header */}
+              <div className="flex justify-between items-start mb-16">
+                <div className="flex items-center gap-6">
+                  <img src="https://www.sanesul.ms.gov.br/images/logo_sanesul.png" alt="Sanesul" className="h-20 object-contain" referrerPolicy="no-referrer" />
+                  <div className="h-16 w-px bg-slate-200" />
+                  <div className="text-[11px] font-bold text-sanesul-primary leading-tight uppercase tracking-tight">
+                    Empresa de Saneamento de <br /> Mato Grosso do Sul S.A.<br />
+                    <span className="text-sanesul-muted font-medium">Diretoria da Presidência</span>
+                  </div>
+                </div>
+                <img src="https://www.ms.gov.br/wp-content/uploads/2023/01/logo-governo-ms.png" alt="Governo MS" className="h-20 object-contain" referrerPolicy="no-referrer" />
+              </div>
+
+              {/* Memo Info */}
+              <div className="space-y-1 mb-12 text-sm">
+                <p className="font-bold text-base memo-number-text">MEMO Nº {memoNumber}</p>
+                <p className="text-slate-500 italic">Campo Grande, {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(new Date())}.</p>
+              </div>
+
+              <div className="space-y-4 mb-12 text-sm border-l-4 border-sanesul-primary/20 pl-6 py-2">
+                <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">DE:</span> <br />GEDEO - Gerência de Desenvolvimento Operacional</p>
+                <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">PARA:</span> <br />GEFI - Gerência Financeira e Gestão de Recursos</p>
+                <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">ASSUNTO:</span> <br />Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — {selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}.</p>
+              </div>
+
+              <p className="mb-6 font-medium">Prezado(a),</p>
+              <p className="mb-10 text-justify">
+                Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da concessionária Elektro — todas referentes ao mês de <span className="font-bold underline decoration-sanesul-primary/30 underline-offset-4">{selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth}</span> e correspondentes às unidades operacionais da SANESUL.
+              </p>
+
+              <div className="mb-6 flex items-center gap-3">
+                <div className="h-px flex-1 bg-slate-200" />
+                <p className="font-bold text-xs uppercase tracking-widest text-slate-400">Tabela 1 - Faturas Anexas</p>
+                <div className="h-px flex-1 bg-slate-200" />
+              </div>
+              
+              <table className="w-full border-collapse border border-slate-300 text-sm mb-12 shadow-sm">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className="border border-slate-300 p-3 text-left text-[10px] font-bold uppercase tracking-wider">LOCALIDADE</th>
+                    <th className="border border-slate-300 p-3 text-right text-[10px] font-bold uppercase tracking-wider">VALOR (R$)</th>
+                    <th className="border border-slate-300 p-3 text-center text-[10px] font-bold uppercase tracking-wider">NOTA FISCAL</th>
+                    <th className="border border-slate-300 p-3 text-center text-[10px] font-bold uppercase tracking-wider">REF: MÊS / ANO</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Energisa */}
+                  <tr className="font-bold bg-sanesul-primary/5">
+                    <td className="border border-slate-300 p-3 text-sanesul-primary">Agrupadora Energisa Operacional</td>
+                    <td className="border border-slate-300 p-3 text-right text-sanesul-primary">R$ {memoData.energisa.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                    <td rowSpan={5} className="border border-slate-300 p-3 text-center align-middle font-mono text-xs max-w-[120px] break-all">{memoData.energisa.nf}</td>
+                    <td rowSpan={5} className="border border-slate-300 p-3 text-center align-middle font-bold text-sanesul-primary">{memoData.energisa.mesRef}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600">PIS</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.energisa.pis > 0 ? `R$ ${memoData.energisa.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600">COFINS</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.energisa.cofins > 0 ? `R$ ${memoData.energisa.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600">ICMS</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.energisa.icms > 0 ? `R$ ${memoData.energisa.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600 italic">Tarifa de Iluminação Pública</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.energisa.cip > 0 ? `R$ ${memoData.energisa.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+
+                  {/* Elektro */}
+                  <tr className="font-bold bg-sanesul-secondary/5">
+                    <td className="border border-slate-300 p-3 text-sanesul-secondary">Agrupadora Elektro</td>
+                    <td className="border border-slate-300 p-3 text-right text-sanesul-secondary">R$ {memoData.elektro.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                    <td rowSpan={5} className="border border-slate-300 p-3 text-center align-middle font-mono text-xs max-w-[120px] break-all">{memoData.elektro.nf}</td>
+                    <td rowSpan={5} className="border border-slate-300 p-3 text-center align-middle font-bold text-sanesul-secondary">{memoData.elektro.mesRef}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600">PIS</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.elektro.pis > 0 ? `R$ ${memoData.elektro.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600">COFINS</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.elektro.cofins > 0 ? `R$ ${memoData.elektro.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600">ICMS</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.elektro.icms > 0 ? `R$ ${memoData.elektro.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 p-2 pl-8 text-[11px] text-slate-600 italic">Tarifa de Iluminação Pública</td>
+                    <td className="border border-slate-300 p-2 text-right text-[11px] text-slate-600 font-mono">{memoData.elektro.cip > 0 ? `R$ ${memoData.elektro.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  </tr>
+
+                  {/* Total */}
+                  <tr className="font-bold bg-slate-100">
+                    <td className="border border-slate-300 p-4 uppercase text-xs tracking-wider">TOTAL (Agrupadora ENERGISA + ELEKTRO)</td>
+                    <td className="border border-slate-300 p-4 text-right text-base text-sanesul-primary">R$ {(memoData.energisa.total + memoData.elektro.total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                    <td className="border border-slate-300 p-4 text-center text-slate-300">-------------------</td>
+                    <td className="border border-slate-300 p-4 text-center text-slate-300">-------------------</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div className="flex justify-between items-end text-[10px] text-slate-400 mb-12 italic">
+                <p>Proc. N.º 694/2018</p>
+                <p>Nota Orçamentária Nº 003/2019</p>
+              </div>
+
+              <div className="mt-16 text-sm text-slate-600 mb-12">
+                <p>A planilha contendo a estratificação dos dados apresentados neste memorando está disponível em <span className="font-mono text-[10px] bg-slate-50 px-2 py-1 rounded break-all">\\srv-fs 01\DADOS\DCO\GEDEO\OPERACAO_AGUA\COTAA\ENERGIA\FATURAS</span>.</p>
+              </div>
+
+              <p className="mb-12">Atenciosamente,</p>
+
+              <div className="mt-32 text-center">
+                <div className="w-72 h-px bg-slate-800 mx-auto mb-4" />
+                <p className="font-bold text-lg text-slate-900">Fabio Roberto Alves da Silva</p>
+                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mt-1">Engenheiro Eletricista/GEDEO</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Gerência de Desenvolvimento Operacional</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+      )}
+
+      {/* Footer Info */}
+      {isBillModalOpen && editingBill && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <h2 className="text-xl font-bold text-sanesul-primary flex items-center gap-2">
+                <Pencil size={20} />
+                {editingBill.id && bills.some(b => b.id === editingBill.id) ? 'Editar Fatura' : 'Nova Fatura Manual'}
+              </h2>
+              <button
+                onClick={() => setIsBillModalOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Basic Info */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">UC</label>
+                  <input
+                    type="text"
+                    value={editingBill.uc || ''}
+                    onChange={e => setEditingBill({ ...editingBill, uc: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Concessionária</label>
+                  <select
+                    value={editingBill.concessionaria || 'ENERGISA'}
+                    onChange={e => setEditingBill({ ...editingBill, concessionaria: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  >
+                    <option value="ENERGISA">ENERGISA</option>
+                    <option value="ELEKTRO">ELEKTRO</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Mês/Ano</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="MM/AAAA"
+                      value={editingBill.mesReferencia || ''}
+                      onChange={e => setEditingBill({ ...editingBill, mesReferencia: e.target.value })}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Tipo</label>
+                  <select
+                    value={editingBill.tipo || 'OPERACIONAL'}
+                    onChange={e => setEditingBill({ ...editingBill, tipo: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  >
+                    <option value="OPERACIONAL">OPERACIONAL</option>
+                    <option value="ADMINISTRATIVO">ADMINISTRATIVO</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Total (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorTotal || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorTotal: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                
+                {/* Demanda */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Ponta (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPontaKW || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPontaKW: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Fora Ponta (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaForaPontaKW || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaForaPontaKW: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Medida P (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaMedidaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaMedidaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Medida FP (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaMedidaForaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaMedidaForaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+
+                {/* Consumo */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Consumo Ponta (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.consumoKwhPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, consumoKwhPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Consumo Fora Ponta (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.consumoKwhForaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, consumoKwhForaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+
+                {/* Ultrapassagem */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Ultrapassagem P (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaAtivaUltrapPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaAtivaUltrapPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Ultrapassagem FP (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaAtivaUltrapFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaAtivaUltrapFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+
+                {/* Reativa */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Reativa P (kVArh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaReativaExcedPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, energiaReativaExcedPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Reativa FP (kVArh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaReativaExcedFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, energiaReativaExcedFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+
+                {/* Encargos */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">CIP (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.cip || ''}
+                    onChange={e => setEditingBill({ ...editingBill, cip: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Outros Encargos (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.outrosEncargos || ''}
+                    onChange={e => setEditingBill({ ...editingBill, outrosEncargos: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
+              <button
+                onClick={() => setIsBillModalOpen(false)}
+                className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (bills.some(b => b.id === editingBill.id)) {
+                    setBills(bills.map(b => b.id === editingBill.id ? (editingBill as BillData) : b));
+                  } else {
+                    setBills([...bills, editingBill as BillData]);
+                  }
+                  setIsBillModalOpen(false);
+                }}
+                className="flex items-center gap-2 px-6 py-2.5 bg-sanesul-primary text-white rounded-xl text-sm font-bold shadow-lg shadow-sanesul-primary/20 hover:bg-sanesul-primary/90 transition-all active:scale-95"
+              >
+                <Save size={16} />
+                Salvar Fatura
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <footer className="max-w-7xl mx-auto mt-24 pb-12 px-8">
+        <div className="pt-8 border-t border-sanesul-primary/10 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="flex items-center gap-4">
+            <div className="w-8 h-8 rounded-lg bg-sanesul-primary/10 flex items-center justify-center">
+              <Zap className="w-4 h-4 text-sanesul-primary" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-sanesul-primary uppercase tracking-widest">Sanesul - Extrator de Faturas</div>
+              <div className="text-[10px] text-sanesul-muted mt-0.5">© 2024 Empresa de Saneamento de Mato Grosso do Sul</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-8">
+            <div className="flex flex-col items-end">
+              <span className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">COTAA</span>
+              <span className="text-[10px] text-sanesul-muted">Processamento via Gemini 3 Flash</span>
+            </div>
+            <div className="flex flex-col items-end">
+              <span className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">GEDEO</span>
+              <span className="text-[10px] text-sanesul-muted">CSV UTF-8 / Excel</span>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
