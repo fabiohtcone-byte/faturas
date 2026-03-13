@@ -31,6 +31,7 @@ import {
   CheckSquare,
   ChevronRight,
   Calendar,
+  Filter,
   X,
   Printer,
   LogOut,
@@ -478,18 +479,40 @@ export default function App() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        const { data, error } = await supabase
-          .from('bills')
-          .select('*')
-          .eq('user_id', user.id);
+        let allData: any[] = [];
+        let from = 0;
+        let to = 999;
+        let finished = false;
 
-        if (error) {
-          console.error('Erro ao buscar faturas do Supabase:', error);
-          return;
+        while (!finished) {
+          const { data, error } = await supabase
+            .from('bills')
+            .select('*')
+            .eq('user_id', user.id)
+            .range(from, to)
+            .order('created_at', { ascending: false });
+
+          if (error) {
+            console.error('Erro ao buscar faturas do Supabase:', error);
+            finished = true;
+            return;
+          }
+
+          if (data && data.length > 0) {
+            allData = [...allData, ...data];
+            if (data.length < 1000) {
+              finished = true;
+            } else {
+              from += 1000;
+              to += 1000;
+            }
+          } else {
+            finished = true;
+          }
         }
 
-        if (data && data.length > 0) {
-          const mappedBills = data.map(mapDbToBillData);
+        if (allData.length > 0) {
+          const mappedBills = allData.map(mapDbToBillData);
           setBills(mappedBills);
         }
       } catch (err) {
@@ -501,17 +524,22 @@ export default function App() {
   }, [isAuthenticated]);
 
   React.useEffect(() => {
-    const billsToSave = bills.map(b => {
-      // We cannot serialize File objects, so we remove it before saving
-      const { file, ...rest } = b as any;
-      return rest;
-    });
-    localStorage.setItem('sanesul_bills', JSON.stringify(billsToSave));
+    try {
+      const billsToSave = bills.map(b => {
+        // We cannot serialize File objects, so we remove it before saving
+        const { file, ...rest } = b as any;
+        return rest;
+      });
+      localStorage.setItem('sanesul_bills', JSON.stringify(billsToSave));
+    } catch (e) {
+      console.warn('LocalStorage limit reached, skipping save:', e);
+    }
   }, [bills]);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'relatorio'>('faturas');
+  const [filterReference, setFilterReference] = useState<string>('all');
   const [sortConfig, setSortConfig] = useState<{ key: keyof BillData | 'referencia', direction: 'asc' | 'desc' } | null>(null);
   const [analysisData, setAnalysisData] = useState<any[]>([]);
   const [memoNumber, setMemoNumber] = useState(`001447/${new Date().getFullYear()}/GEDEO/DCO`);
@@ -565,7 +593,7 @@ export default function App() {
       document.body.removeChild(container);
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
-      alert('Erro ao gerar o PDF. Tente novamente.');
+      showAlert('Erro', 'Erro ao gerar o PDF. Tente novamente.');
       setIsGeneratingPDF(false);
     } finally {
       setIsGeneratingPDF(false);
@@ -763,8 +791,32 @@ export default function App() {
     }
   };
 
+  const availableReferences = React.useMemo(() => {
+    const refs = new Set<string>();
+    bills.forEach(b => {
+      if (b.mesReferencia && b.anoLeitura) {
+        refs.add(`${b.mesReferencia}/${b.anoLeitura}`);
+      }
+    });
+    return Array.from(refs).sort((a, b) => {
+      const [mA, yA] = a.split('/');
+      const [mB, yB] = b.split('/');
+      const monthOrder: Record<string, number> = {
+        'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
+        'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
+        'outubro': 10, 'novembro': 11, 'dezembro': 12
+      };
+      if (yA !== yB) return parseInt(yB) - parseInt(yA);
+      return (monthOrder[mB.toLowerCase()] || 0) - (monthOrder[mA.toLowerCase()] || 0);
+    });
+  }, [bills]);
+
   const sortedBills = React.useMemo(() => {
-    let sortableBills = [...bills];
+    let filtered = [...bills];
+    if (filterReference !== 'all') {
+      filtered = filtered.filter(b => `${b.mesReferencia}/${b.anoLeitura}` === filterReference);
+    }
+    let sortableBills = filtered;
     
     sortableBills.sort((a, b) => {
       // Priority mapping for statuses
@@ -823,7 +875,7 @@ export default function App() {
     });
 
     return sortableBills;
-  }, [bills, sortConfig]);
+  }, [bills, sortConfig, filterReference]);
 
   const [analysisResults, setAnalysisResults] = useState<any>(null);
   const [dashboardSubTab, setDashboardSubTab] = useState<'operacionais' | 'financeiro'>('operacionais');
@@ -851,6 +903,40 @@ export default function App() {
     }
     return {};
   });
+
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmModalData, setConfirmModalData] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'info';
+    isAlert?: boolean;
+  } | null>(null);
+
+  const showAlert = (title: string, message: string) => {
+    setConfirmModalData({
+      title,
+      message,
+      onConfirm: () => setShowConfirmModal(false),
+      type: 'info',
+      isAlert: true
+    });
+    setShowConfirmModal(true);
+  };
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'info' = 'info') => {
+    setConfirmModalData({
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setShowConfirmModal(false);
+      },
+      type,
+      isAlert: false
+    });
+    setShowConfirmModal(true);
+  };
 
   React.useEffect(() => {
     localStorage.setItem('sanesul_agrupadora_files', JSON.stringify(agrupadoraFiles));
@@ -978,9 +1064,9 @@ export default function App() {
       const errorStr = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
       
       if (error?.isQuotaError || errorStr.includes('quota') || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED')) {
-        alert("Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio. Se você já tem um plano pago, aguarde alguns minutos.");
+        showAlert('Limite Atingido', "Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio. Se você já tem um plano pago, aguarde alguns minutos.");
       } else {
-        alert("Erro ao processar fatura agrupadora: " + errorStr);
+        showAlert('Erro', "Erro ao processar fatura agrupadora: " + errorStr);
       }
       setUploadProgress(null);
     } finally {
@@ -1572,6 +1658,78 @@ export default function App() {
     setSelectedBills(prev => prev.filter(id => !first223Ids.includes(id)));
   };
 
+  const removeDuplicateUCs = async () => {
+    // Se estiver em "Todas as Referências", limpamos duplicados considerando UC + Mês + Ano em todo o sistema
+    // Se estiver em uma referência específica, limpamos apenas naquela referência
+    
+    const billsToProcess = filterReference === 'all' 
+      ? bills 
+      : bills.filter(b => `${String(b.mesReferencia || '').trim()}/${String(b.anoLeitura || '').trim()}` === filterReference.trim());
+
+    const ucMap = new Map<string, BillData[]>();
+
+    billsToProcess.forEach(bill => {
+      const normalizedUC = String(bill.uc || '').trim();
+      const month = String(bill.mesReferencia || '').trim();
+      const year = String(bill.anoLeitura || '').trim();
+      
+      if (normalizedUC && normalizedUC !== '---' && month && year) {
+        // A chave da duplicata é a combinação única de UC + Mês + Ano
+        const key = `${normalizedUC}_${month}_${year}`;
+        const list = ucMap.get(key) || [];
+        list.push(bill);
+        ucMap.set(key, list);
+      }
+    });
+
+    const idsToDelete: string[] = [];
+    const duplicateKeys: string[] = [];
+
+    ucMap.forEach((billsList, key) => {
+      if (billsList.length > 1) {
+        duplicateKeys.push(key);
+        // Prioridade: manter a que está 'completed' (processada), senão a primeira encontrada
+        // Isso garante que se houver 2, 3 ou mais, sempre sobrará apenas 1
+        const bestToKeep = billsList.find(b => b.status === 'completed') || billsList[0];
+        billsList.forEach(b => {
+          if (b.id !== bestToKeep.id) {
+            idsToDelete.push(b.id);
+          }
+        });
+      }
+    });
+
+    if (idsToDelete.length === 0) {
+      showAlert(
+        'Limpeza de Duplicados',
+        filterReference === 'all' 
+          ? 'Nenhuma fatura duplicada encontrada em todo o sistema.' 
+          : 'Nenhuma fatura duplicada encontrada para esta referência.'
+      );
+      return;
+    }
+
+    const confirmMsg = `Foram encontradas duplicatas para ${duplicateKeys.length} combinações de UC/Mês/Ano.\n\nNo total, ${idsToDelete.length} faturas repetidas serão excluídas, deixando sempre apenas uma de cada. Deseja continuar?`;
+    
+    showConfirm(
+      'Confirmar Exclusão',
+      confirmMsg,
+      async () => {
+        if (isSupabaseConfigured && isAuthenticated) {
+          try {
+            const { error } = await supabase.from('bills').delete().in('id', idsToDelete);
+            if (error) console.error('Erro ao deletar duplicados do Supabase:', error);
+          } catch (err) {
+            console.error('Erro inesperado ao deletar duplicados:', err);
+          }
+        }
+        setBills(prev => prev.filter(b => !idsToDelete.includes(b.id)));
+        setSelectedBills(prev => prev.filter(id => !idsToDelete.includes(id)));
+      },
+      'danger'
+    );
+  };
+
   const exportAnalysisToCSV = () => {
     if (!analysisResults || analysisResults.length === 0) return;
 
@@ -1593,18 +1751,27 @@ export default function App() {
 
       return [
         r.uc, r.ano, r.mes, r.dmp, r.dmfp,
-        r.opt.ponta, r.opt.foraPonta, r.economy.toFixed(2),
+        r.opt.ponta, r.opt.foraPonta, String(r.economy.toFixed(2)).replace('.', ','),
         r.isOverrun ? 'Ultrapassagem' : (r.isSub ? 'Subutilização' : 'OK'),
         grupo, tarifaBranca, optanteB
       ];
     });
 
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    // Use semicolon as delimiter for better compatibility with Excel in many locales (like Brazil)
+    // Add UTF-8 BOM (\uFEFF) to ensure Excel recognizes the encoding
+    const csvContent = "\uFEFF" + [
+      headers.join(';'),
+      ...rows.map(row => row.map(val => {
+        const safeVal = String(val || '').replace(/;/g, ',');
+        return `"${safeVal}"`;
+      }).join(';'))
+    ].join('\n');
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'analise_demanda.csv';
+    link.download = `analise_demanda_${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1612,9 +1779,12 @@ export default function App() {
   };
 
   const exportToCSV = () => {
-    // Export ALL completed bills, regardless of the current dashboard filter
-    const completedBills = bills.filter(b => b.status === 'completed');
-    if (completedBills.length === 0) return;
+    // Use sortedBills which are already filtered by the selected reference
+    const completedBills = sortedBills.filter(b => b.status === 'completed');
+    if (completedBills.length === 0) {
+      showAlert('Exportação', 'Não há faturas concluídas para exportar nesta referência.');
+      return;
+    }
 
     const headers = [
       "Concessionária",
@@ -1653,6 +1823,18 @@ export default function App() {
       "Valor (R$) - Energia Atv Injetada GDI mUC",
       "Tipo"
     ];
+
+    const formatCSVValue = (val: any) => {
+      if (val === null || val === undefined) return '';
+      let str = String(val);
+      // If it looks like a number with a dot, replace it with a comma for Brazilian Excel
+      if (!isNaN(Number(val)) && str.includes('.') && !str.includes(',')) {
+        str = str.replace('.', ',');
+      }
+      // Replace any existing semicolons to avoid breaking the CSV structure
+      str = str.replace(/;/g, ',');
+      return `"${str}"`;
+    };
 
     const rows = completedBills.map(b => [
       b.concessionaria 
@@ -1702,22 +1884,23 @@ export default function App() {
     // Add UTF-8 BOM (\uFEFF) to ensure Excel recognizes the encoding
     const csvContent = "\uFEFF" + [
       headers.join(';'),
-      ...rows.map(row => row.map(val => {
-        // Replace any existing semicolons in the value to avoid breaking the CSV structure
-        const safeVal = String(val || '').replace(/;/g, ',');
-        return `"${safeVal}"`;
-      }).join(';'))
+      ...rows.map(row => row.map(formatCSVValue).join(';'))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
+    const fileName = filterReference === 'all' 
+      ? `extracao_faturas_consolidado_${new Date().toISOString().split('T')[0]}.csv`
+      : `extracao_faturas_${filterReference.replace('/', '_')}.csv`;
+    
     link.setAttribute("href", url);
-    link.setAttribute("download", `extracao_faturas_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", fileName);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // --- Dashboard Data Processing ---
@@ -2091,6 +2274,31 @@ export default function App() {
               </button>
             )}
             {bills.length > 0 && activeTab === 'faturas' && (
+              <div className="flex items-center gap-2 bg-white border border-sanesul-primary/20 rounded-xl px-4 py-2 shadow-sm">
+                <Filter size={14} className="text-sanesul-primary" />
+                <select
+                  value={filterReference}
+                  onChange={(e) => setFilterReference(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-sanesul-primary outline-none cursor-pointer min-w-[140px]"
+                >
+                  <option value="all">Todas as Referências</option>
+                  {availableReferences.map(ref => (
+                    <option key={ref} value={ref}>{ref}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {bills.length > 0 && activeTab === 'faturas' && (
+              <button
+                onClick={removeDuplicateUCs}
+                className="flex items-center gap-2 px-6 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                title="Remove faturas duplicadas (mesma UC) para a referência selecionada"
+              >
+                <Trash2 size={16} />
+                Remover Duplicados
+              </button>
+            )}
+            {bills.length > 0 && activeTab === 'faturas' && (
               <button
                 onClick={() => setSelectedBills(bills.filter(b => b.status === 'error' || b.status === 'pending').map(b => b.id))}
                 className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
@@ -2255,10 +2463,10 @@ export default function App() {
               {/* Stats Bar */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
-                  { label: 'Total de Arquivos', value: bills.length, color: 'sanesul-primary', icon: FileText },
-                  { label: 'Aguardando', value: bills.filter(b => b.status === 'pending').length, color: 'slate-500', icon: Clock },
-                  { label: 'Em Processamento', value: bills.filter(b => b.status === 'processing').length, color: 'sanesul-secondary', icon: Loader2 },
-                  { label: 'Concluídos', value: bills.filter(b => b.status === 'completed').length, color: 'green-600', icon: CheckCircle2 }
+                  { label: filterReference === 'all' ? 'Total de Arquivos' : `Arquivos (${filterReference})`, value: sortedBills.length, color: 'sanesul-primary', icon: FileText },
+                  { label: 'Aguardando', value: sortedBills.filter(b => b.status === 'pending').length, color: 'slate-500', icon: Clock },
+                  { label: 'Em Processamento', value: sortedBills.filter(b => b.status === 'processing').length, color: 'sanesul-secondary', icon: Loader2 },
+                  { label: 'Concluídos', value: sortedBills.filter(b => b.status === 'completed').length, color: 'green-600', icon: CheckCircle2 }
                 ].map((stat, i) => (
                   <div key={i} className="bg-white p-6 rounded-3xl border border-sanesul-primary/5 shadow-sm flex items-center gap-4">
                     <div className={`w-12 h-12 rounded-2xl bg-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color}/10 flex items-center justify-center`}>
@@ -2339,7 +2547,17 @@ export default function App() {
                               </div>
                             </td>
                             <td className="px-8 py-5">
-                              <span className="text-sm font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
+                              <div className="flex flex-col">
+                                <span className="text-sm font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
+                                {bill.uc && bills.filter(b => 
+                                  String(b.uc).trim() === String(bill.uc).trim() && 
+                                  `${String(b.mesReferencia).trim()}/${String(b.anoLeitura).trim()}` === `${String(bill.mesReferencia).trim()}/${String(bill.anoLeitura).trim()}`
+                                ).length > 1 && (
+                                  <span className="text-[9px] text-red-500 font-bold flex items-center gap-1 mt-1">
+                                    <AlertCircle size={10} /> DUPLICADA
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-8 py-5">
                               <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">
@@ -4418,6 +4636,53 @@ export default function App() {
           </div>
         </div>
       </footer>
+      {/* Custom Confirmation Modal */}
+      <AnimatePresence>
+        {showConfirmModal && confirmModalData && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100"
+            >
+              <div className="p-8">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 ${
+                  confirmModalData.type === 'danger' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'
+                }`}>
+                  {confirmModalData.type === 'danger' ? <Trash2 size={28} /> : <AlertCircle size={28} />}
+                </div>
+                <h3 className="text-xl font-display font-bold text-slate-900 mb-2">
+                  {confirmModalData.title}
+                </h3>
+                <p className="text-slate-600 leading-relaxed">
+                  {confirmModalData.message}
+                </p>
+              </div>
+              <div className="p-6 bg-slate-50 flex gap-3 justify-end">
+                {!confirmModalData.isAlert && (
+                  <button
+                    onClick={() => setShowConfirmModal(false)}
+                    className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                )}
+                <button
+                  onClick={confirmModalData.onConfirm}
+                  className={`px-8 py-2.5 rounded-xl text-sm font-bold text-white transition-all active:scale-95 shadow-lg ${
+                    confirmModalData.type === 'danger' 
+                      ? 'bg-red-600 shadow-red-600/20 hover:bg-red-700' 
+                      : 'bg-sanesul-primary shadow-sanesul-primary/20 hover:bg-sanesul-primary/90'
+                  }`}
+                >
+                  {confirmModalData.isAlert ? 'Entendido' : 'Confirmar'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
