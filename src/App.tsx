@@ -251,11 +251,28 @@ const generateContentWithRetry = async (
   }
 };
 
-const parseValue = (val: string) => {
-  if (!val) return 0;
-  // Handle Brazilian currency format: 71.398,07 -> 71398.07
-  const normalized = val.replace(/\./g, '').replace(',', '.');
-  const parsed = parseFloat(normalized);
+const parseValue = (val: string | number) => {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return val;
+  
+  let str = val.toString().trim();
+  
+  const lastDot = str.lastIndexOf('.');
+  const lastComma = str.lastIndexOf(',');
+  
+  if (lastComma > lastDot) {
+    // Brazilian format: 1.234,56
+    str = str.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot > lastComma && lastComma !== -1) {
+    // US format: 1,234.56
+    str = str.replace(/,/g, '');
+  } else if (lastComma !== -1) {
+    // Only comma: 1234,56
+    str = str.replace(',', '.');
+  }
+  // If only dot, it's already in US format: 1234.56
+  
+  const parsed = parseFloat(str);
   return isNaN(parsed) ? 0 : parsed;
 };
 
