@@ -269,14 +269,20 @@ const generateContentWithRetry = async (
       if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
         await window.aistudio.openSelectKey();
       }
-      throw new Error('Chave de API não encontrada ou inválida. Por favor, selecione uma chave válida.');
+      const msg = window.aistudio 
+        ? 'Chave de API não encontrada ou inválida. Por favor, selecione uma chave válida.'
+        : 'Chave de API não encontrada ou inválida. Verifique a variável de ambiente GEMINI_API_KEY ou API_KEY no seu painel de controle (ex: Vercel).';
+      throw new Error(msg);
     }
 
     if (isExpired) {
       if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
         await window.aistudio.openSelectKey();
       }
-      throw new Error('A chave da API expirou ou é inválida. Por favor, selecione uma nova chave.');
+      const msg = window.aistudio 
+        ? 'A chave da API expirou ou é inválida. Por favor, selecione uma nova chave.'
+        : 'A chave da API expirou ou é inválida. Verifique se a variável de ambiente GEMINI_API_KEY ou API_KEY está correta e ativa no seu painel de controle (ex: Vercel).';
+      throw new Error(msg);
     }
 
     if (retries > 0 && (isRateLimit || isTimeout || isLockError) && !isQuota) {
@@ -1198,7 +1204,8 @@ export default function App() {
     // Ensure API key is selected if needed
     await ensureApiKey();
     
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    const ai = new GoogleGenAI({ apiKey });
 
     try {
       const reader = new FileReader();
@@ -1731,7 +1738,8 @@ export default function App() {
       user = supabaseUser;
     }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    const ai = new GoogleGenAI({ apiKey });
     
     try {
       const reader = new FileReader();
