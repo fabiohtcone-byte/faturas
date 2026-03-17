@@ -28,6 +28,7 @@ import {
   FileSpreadsheet,
   DollarSign,
   Zap,
+  RotateCcw,
   CheckSquare,
   ChevronRight,
   Calendar,
@@ -36,7 +37,10 @@ import {
   Printer,
   LogOut,
   Pencil,
-  Save
+  Save,
+  ArrowLeft,
+  Search,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -107,6 +111,8 @@ interface BillData {
   status: 'pending' | 'processing' | 'completed' | 'error';
   error?: string;
   file?: File;
+  progress?: number;
+  abortController?: AbortController;
 }
 
 // --- Constants ---
@@ -211,7 +217,17 @@ const generateContentWithRetry = async (
   delay = 2000
 ): Promise<GenerateContentResponse> => {
   try {
-    return await ai.models.generateContent(params);
+    // Add a timeout of 60 seconds to the API call
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('TIMEOUT_API: A API demorou muito para responder (60s).')), 60000)
+    );
+
+    const response = await Promise.race([
+      ai.models.generateContent(params),
+      timeoutPromise
+    ]) as GenerateContentResponse;
+
+    return response;
   } catch (error: any) {
     // Extract error details
     let errorStr = '';
@@ -228,6 +244,14 @@ const generateContentWithRetry = async (
       errorStr = nestedError.message || error.message || JSON.stringify(error);
     }
 
+    console.error('generateContentWithRetry Error:', {
+      params: JSON.stringify(params),
+      errorCode,
+      errorStatus,
+      errorStr,
+      retries
+    });
+
     const isRateLimit = 
       errorCode === 429 || 
       errorStatus === 'RESOURCE_EXHAUSTED' ||
@@ -235,15 +259,38 @@ const generateContentWithRetry = async (
       errorStr.includes('RESOURCE_EXHAUSTED') ||
       errorStr.includes('quota');
 
-    if (retries > 0 && isRateLimit) {
-      console.warn(`Rate limit hit, retrying in ${delay}ms... (${retries} retries left)`);
+    const isTimeout = errorStr.includes('TIMEOUT_API');
+    const isLockError = errorStr.includes('Lock broken by another request');
+    const isQuota = errorStr.includes('quota') || errorStr.includes('spending cap') || errorStr.includes('limit reached');
+    const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID');
+    const isNotFound = errorStr.includes('Requested entity was not found');
+
+    if (isNotFound) {
+      if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+        await window.aistudio.openSelectKey();
+      }
+      throw new Error('Chave de API não encontrada ou inválida. Por favor, selecione uma chave válida.');
+    }
+
+    if (isExpired) {
+      if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+        await window.aistudio.openSelectKey();
+      }
+      throw new Error('A chave da API expirou ou é inválida. Por favor, selecione uma nova chave.');
+    }
+
+    if (retries > 0 && (isRateLimit || isTimeout || isLockError) && !isQuota) {
+      console.warn(`${isTimeout ? 'Timeout' : isLockError ? 'Lock error' : 'Rate limit'} hit, retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return generateContentWithRetry(ai, params, retries - 1, delay * 2);
     }
     
-    // If it's a quota error and we're out of retries, throw a descriptive error
-    if (isRateLimit) {
-      const quotaError = new Error("Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio. " + errorStr);
+    // If it's a quota error or we're out of retries, throw
+    if (isQuota) {
+      const msg = errorStr.includes('spending cap') 
+        ? "O limite de gastos do seu projeto foi atingido. Verifique sua conta do Google Cloud (https://ai.google.dev/gemini-api/docs/billing)."
+        : "Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio (https://ai.google.dev/gemini-api/docs/billing). " + errorStr;
+      const quotaError = new Error(msg);
       (quotaError as any).isQuotaError = true;
       throw quotaError;
     }
@@ -378,6 +425,188 @@ const mapBillDataToDb = (bill: BillData, userId: string) => ({
 });
 
 // --- Components ---
+
+const MetricCard = ({ title, custo, consumo, isReference = false, rightElement, titleColorClass = "text-sanesul-primary" }: { title: React.ReactNode, custo: number, consumo: number, isReference?: boolean, rightElement?: React.ReactNode, titleColorClass?: string }) => {
+  const tarifaMedia = consumo > 0 ? (custo / consumo) : 0;
+  const tarifaLabel = 'Tarifa Média (R$/kWh)';
+  const custoLabel = isReference ? 'CUSTO (R$)' : 'Custo (R$)';
+  const consumoLabel = isReference ? 'CONSUMO (kWh)' : 'Consumo (kWh)';
+
+  return (
+    <div className="bg-white p-6 rounded-[24px] border border-sanesul-primary/10 shadow-lg hover:shadow-xl transition-all hover:border-sanesul-primary/30">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className={`text-sm font-display font-bold uppercase tracking-wider ${titleColorClass}`}>{title}</h3>
+        {rightElement}
+      </div>
+      <div className="space-y-3">
+        <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+          <span className="text-[10px] font-bold text-sanesul-muted uppercase tracking-wider">{custoLabel}</span>
+          <span className="text-lg font-bold text-slate-800">R$ {custo.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+        <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+          <span className="text-[10px] font-bold text-sanesul-muted uppercase tracking-wider">{consumoLabel}</span>
+          <span className="text-lg font-bold text-slate-800">{consumo.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
+        </div>
+        <div className="flex justify-between items-end pt-1">
+          <span className="text-[10px] font-bold text-sanesul-secondary uppercase tracking-wider">{tarifaLabel}</span>
+          <span className="text-xl font-bold text-sanesul-secondary">R$ {tarifaMedia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const UCS_PPP = new Set([
+  "12018", "33857", "34548", "34594", "34724", "36245", "36246", "74255", "74256", "75226", "94009", "101432", "101434", "101435", "102438", "108130", "108132", "112154", "112156", "112157", "112158", "112160", "112581", "121252", "121253", "121254", "121600", "128389", "128392", "128394", "128898", "132652", "132666", "132671", "138551", "138555", "138557", "152427", "152434", "152446", "153011", "158690", "163517", "163521", "163944", "172004", "172005", "172705", "179857", "179858", "179859", "189729", "189730", "189731", "189732", "189790", "197712", "206446", "209223", "209225", "209226", "209227", "209397", "211934", "211935", "211936", "211937", "216228", "216229", "216861", "220535", "220546", "222648", "222650", "223697", "231303", "231304", "231305", "231306", "233304", "233306", "238383", "244193", "244194", "244199", "244200", "244205", "244206", "244209", "247298", "247299", "249353", "249354", "252248", "252249", "252250", "252251", "253245", "253246", "256200", "258183", "264010", "264986", "264988", "269110", "269118", "270079", "274331", "464406", "1047259", "1084731", "1113637", "1126680", "1151043", "2414930", "2420193", "2558334", "2657735", "2700471", "2716454", "2754088", "2765050", "2797860", "2858514", "2884288", "2954787", "2999073", "3047887", "3058557", "3070666", "3102869", "3141335", "3175195", "3181887", "3188966", "3206144", "3207043", "3214000", "3234876", "3235300", "3248099", "3275502", "3301943", "3302837", "3310090", "3313761", "3324892", "3331889", "3341371", "3341373", "3341380", "3343169", "3348432", "3366558", "3367575", "3371198", "3375315", "3390948", "3409248", "3412949", "3414263", "3417002", "3418302", "3421139", "3426808", "3481691", "3498079", "272605", "272951", "273988", "273989", "274332", "276549", "277100", "277101", "279007", "280858", "280860", "281808", "281809", "283247", "283248", "283352", "283480", "453683", "453827", "456560", "456731", "456907", "457351", "457765", "457766", "457891", "458050", "458289", "458661", "460570", "460571", "461216", "461759", "462534", "462964", "463730", "463783", "463908", "464549", "464764", "464765", "465134", "465135", "465971", "466787", "467063", "467064", "467145", "482891", "518898", "527978", "533217", "905272", "925640", "938246", "973292", "978395", "984681", "988341", "996818", "1000652", "1034959", "1047248", "1089791", "1126687", "1127638", "1136937", "1142030", "1142916", "1144446", "1148016", "1204522", "1223492", "1273099", "1273146", "1292715", "1309765", "1320065", "1352920", "1361474", "1388271", "1467369", "1479890", "1491784", "1543691", "1548221", "1600326", "1650695", "1656911", "1673468", "1677710", "1686836", "1690088", "1698936", "1698960", "1699438", "1701676", "1702111", "1745575", "1745856", "1748386", "1821234", "1877305", "1879309", "1879837", "1899594", "1901647", "1916616", "1923325", "1924437", "1936660", "1975585", "2065093", "2093921", "2140053", "2188959", "2203819", "2233618", "2283427", "2337244", "2342909", "2392852", "2398903", "2480085", "2524079", "2527881", "2563141", "2613087", "2632342", "3001597", "3001613", "3005931", "3005999", "3011291", "3036982", "3422802", "3443659", "3495962", "2601732", "2601678"
+]);
+
+const UCS_USINA = new Set([
+  "2400975", "1602335", "279006", "176817", "176812", "102690", "3211"
+]);
+
+const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+
+  const availableMonths = Array.from(new Set(data.map(d => d.name))).filter(Boolean).sort((a, b) => {
+    const [mA, yA] = String(a).split('/');
+    const [mB, yB] = String(b).split('/');
+    if (yA !== yB) return Number(yA) - Number(yB);
+    return Number(mA) - Number(mB);
+  });
+
+  const filteredData = selectedMonth === 'all' ? data : data.filter(d => d.name === selectedMonth);
+
+  const calc = (filterFn: (d: any) => boolean) => {
+    const filtered = filteredData.filter(filterFn);
+    const custo = filtered.reduce((acc, curr) => acc + curr.valorTotal, 0);
+    const consumo = filtered.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0);
+    return { custo, consumo };
+  };
+
+  const isGrupoA = (d: any) => d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
+  const isGrupoB = (d: any) => !isGrupoA(d);
+  const isACL = (d: any) => d.modalidadeTarifaria.includes('LIVRE') || d.modalidadeTarifaria.includes('ACL') || d.tipo === 'ACL';
+  const isCativo = (d: any) => !isACL(d);
+  
+  const isAzul = (d: any) => d.modalidadeTarifaria.includes('AZUL');
+  const isVerde = (d: any) => d.modalidadeTarifaria.includes('VERDE');
+  const isOutrosGrupoA = (d: any) => isGrupoA(d) && !isAzul(d) && !isVerde(d);
+  
+  const hasCompensacao = (d: any) => d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0;
+  
+  const isConsumoMinimo = (d: any) => isGrupoB(d) && (d.consumoPonta + d.consumoForaPonta) <= 100 && d.valorTotal < 150;
+  const isPPP = (d: any) => isGrupoB(d) && UCS_PPP.has(String(d.uc));
+  const isUsina = (d: any) => isGrupoB(d) && UCS_USINA.has(String(d.uc));
+  const isGeral = (d: any) => isGrupoB(d) && !isConsumoMinimo(d) && !isPPP(d) && !isUsina(d);
+
+  return (
+    <div className="space-y-10 py-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div>
+          <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Análise de Insumo de Energia Elétrica - SANESUL</h2>
+          <p className="text-sanesul-muted">Visão geral consolidada de custos e consumos por grupos tarifários.</p>
+        </div>
+      </div>
+
+      {data.length === 0 ? (
+        <div className="p-24 text-center bg-white rounded-3xl border border-sanesul-primary/10 shadow-xl">
+          <div className="w-16 h-16 bg-sanesul-primary/5 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertCircle size={32} className="text-sanesul-primary/30" />
+          </div>
+          <p className="text-xl font-display font-semibold text-sanesul-primary">Nenhum dado disponível</p>
+          <p className="text-sanesul-muted mt-2">Processe algumas faturas para visualizar a análise de insumos.</p>
+        </div>
+      ) : (
+        <div className="space-y-12">
+          {/* Referência */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-3">
+              <MetricCard 
+                title="Referência (Total Geral)" 
+                {...calc(() => true)} 
+                isReference={true} 
+                rightElement={
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted">Mês:</span>
+                    <select 
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
+                    >
+                      <option value="all">Todos</option>
+                      {availableMonths.map(month => (
+                        <option key={month} value={month}>{month}</option>
+                      ))}
+                    </select>
+                  </div>
+                }
+              />
+            </div>
+          </div>
+
+          {/* Grupos Principais */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <MetricCard title="GRUPO A (MT/AT)" {...calc(isGrupoA)} />
+            <MetricCard title="GRUPO B (BT)" {...calc(isGrupoB)} />
+          </div>
+
+          {/* Detalhamento Grupo A */}
+          <div className="space-y-6">
+            <h3 className="text-xl font-display font-bold text-sanesul-primary border-b border-sanesul-primary/10 pb-2">Detalhamento Grupo A</h3>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              
+              {/* ACL */}
+              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
+                <MetricCard title="ACL - Mercado Livre" {...calc(d => isGrupoA(d) && isACL(d))} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
+                  <MetricCard title="Faturas no ACL - Azul" titleColorClass="text-blue-600" {...calc(d => isGrupoA(d) && isACL(d) && isAzul(d))} />
+                  <MetricCard title="Faturas no ACL - Verde" titleColorClass="text-emerald-600" {...calc(d => isGrupoA(d) && isACL(d) && isVerde(d))} />
+                </div>
+              </div>
+
+              {/* Cativo */}
+              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
+                <MetricCard title="Consumidor Cativo" {...calc(d => isGrupoA(d) && isCativo(d))} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
+                  <MetricCard title="Faturas Cativo - Azul" titleColorClass="text-blue-600" {...calc(d => isGrupoA(d) && isCativo(d) && isAzul(d))} />
+                  <MetricCard title="Faturas Cativo - Verde" titleColorClass="text-emerald-600" {...calc(d => isGrupoA(d) && isCativo(d) && isVerde(d))} />
+                  <MetricCard title="Faturas Cativo - Outras" titleColorClass="text-slate-600" {...calc(d => isGrupoA(d) && isCativo(d) && isOutrosGrupoA(d))} />
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          {/* Detalhamento Grupo B */}
+          <div className="space-y-6">
+            <h3 className="text-xl font-display font-bold text-sanesul-primary border-b border-sanesul-primary/10 pb-2">Detalhamento Grupo B</h3>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              
+              {/* Sem Compensação */}
+              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
+                <MetricCard title="UC's sem Compensação" {...calc(d => isGrupoB(d) && !hasCompensacao(d))} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
+                  <MetricCard title="Geral" {...calc(isGeral)} />
+                  <MetricCard title="Consumos Mínimos" {...calc(isConsumoMinimo)} />
+                </div>
+              </div>
+
+              {/* Com Compensação */}
+              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
+                <MetricCard title="UC's com Compensação" {...calc(d => isGrupoB(d) && hasCompensacao(d))} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
+                  <MetricCard title="PPP Fotovoltaica" {...calc(isPPP)} />
+                  <MetricCard title="Usinas SANESUL" {...calc(isUsina)} />
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -538,6 +767,7 @@ export default function App() {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [currentPage, setCurrentPage] = useState<'visao_geral' | 'sistema'>('visao_geral');
   const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'relatorio'>('faturas');
   const [filterReference, setFilterReference] = useState<string>('all');
   const [sortConfig, setSortConfig] = useState<{ key: keyof BillData | 'referencia', direction: 'asc' | 'desc' } | null>(null);
@@ -881,13 +1111,20 @@ export default function App() {
   const [dashboardSubTab, setDashboardSubTab] = useState<'operacionais' | 'financeiro'>('operacionais');
   const [operationalSubTab, setOperationalSubTab] = useState<'consumo' | 'ultrapassagem' | 'subutilizacao' | 'reativa' | 'solar'>('consumo');
   const [financialSubTab, setFinancialSubTab] = useState<'despesas' | 'multa_ultrapassagem' | 'multa_reativa' | 'tarifa_media' | 'energia_solar'>('despesas');
-  const [selectedUC, setSelectedUC] = useState<string>('all');
+  const [selectedUC, setSelectedUC] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedRelatorioMonth, setSelectedRelatorioMonth] = useState<string>('all');
+  const [dashboardSort, setDashboardSort] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'name', direction: 'desc' });
   const [showMemo, setShowMemo] = useState(false);
   const [showMemoNumberPrompt, setShowMemoNumberPrompt] = useState(false);
   const [tempMemoNumber, setTempMemoNumber] = useState('');
-  const [uploadProgress, setUploadProgress] = useState<{ status: string, percent: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, { 
+    status: string, 
+    percent: number, 
+    fileName: string, 
+    fileSize: number,
+    abortController: AbortController | null 
+  }>>({});
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
   const [editingBill, setEditingBill] = useState<Partial<BillData> | null>(null);
   const fileInputEnergisaRef = useRef<HTMLInputElement>(null);
@@ -949,10 +1186,14 @@ export default function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    const fileId = `${file.name}-${Date.now()}`;
+    const abortController = new AbortController();
     const statusPrefix = reportType === 'detailed' ? 'Relatório Detalhado' : 'Fatura Agrupadora';
 
-    setIsProcessing(true);
-    setUploadProgress({ status: `Lendo ${statusPrefix}...`, percent: 0 });
+    setUploadProgress(prev => ({
+      ...prev,
+      [fileId]: { status: `Lendo ${statusPrefix}...`, percent: 0, fileName: file.name, fileSize: file.size, abortController }
+    }));
     
     // Ensure API key is selected if needed
     await ensureApiKey();
@@ -961,29 +1202,35 @@ export default function App() {
 
     try {
       const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (30s)')), 30000);
+        
         reader.onprogress = (data) => {
           if (data.lengthComputable) {
             const progress = Math.round((data.loaded / data.total) * 30);
-            setUploadProgress({ status: `Lendo ${statusPrefix}...`, percent: progress });
+            setUploadProgress(prev => ({
+              ...prev,
+              [fileId]: { ...prev[fileId], status: `Lendo ${statusPrefix}...`, percent: progress }
+            }));
           }
         };
         reader.onload = () => {
+          clearTimeout(timeout);
           const base64 = (reader.result as string).split(',')[1];
-          setUploadProgress({ status: 'Processando com IA...', percent: 30 });
+          setUploadProgress(prev => ({
+            ...prev,
+            [fileId]: { ...prev[fileId], status: 'Processando com IA...', percent: 30 }
+          }));
           resolve(base64);
+        };
+        reader.onerror = () => {
+          clearTimeout(timeout);
+          reject(new Error('Erro ao ler arquivo'));
         };
         reader.readAsDataURL(file);
       });
 
       const base64Data = await base64Promise;
-
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (!prev || prev.percent >= 95) return prev;
-          return { ...prev, percent: prev.percent + 5 };
-        });
-      }, 500);
 
       let prompt = "Extraia os dados desta Fatura Agrupadora. Identifique a concessionária (ELEKTRO ou ENERGISA), valor total, mês de referência, vencimento, número da nota fiscal (AGP... ou número do documento), e valores de impostos (PIS, COFINS, ICMS, CIP). Para Energisa, atente-se aos campos 'Imp. Fed.' (PIS/COFINS) e 'ICMS' no resumo. Se algum valor não for encontrado, retorne 0 ou string vazia.";
       let selectedModel = "gemini-3-flash-preview";
@@ -993,74 +1240,105 @@ export default function App() {
         prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado. O objetivo é CALCULAR O TOTAL DA 'COBRANCA ILUM PUBLICA'. \n\nINSTRUÇÕES:\n1. Percorra TODAS as páginas do documento.\n2. Em cada página, procure na tabela de itens faturados pela descrição exata: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n3. Extraia o valor monetário associado a essa linha em cada ocorrência.\n4. SOMA: Some todos os valores encontrados em todas as páginas.\n5. RETORNO: Retorne o JSON preenchendo APENAS o campo 'cip' com o resultado dessa soma. Os campos 'valorTotal', 'pis', 'cofins', 'icms' DEVEM ser 0.\n6. Identifique também a 'concessionaria' (ELEKTRO) e o 'mesReferencia'.";
       }
 
-      const response = await generateContentWithRetry(ai, {
-        model: selectedModel,
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: file.type || 'application/pdf',
-                  data: base64Data
+      if (abortController.signal.aborted) throw new Error('Upload cancelado');
+
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (!prev || !prev[fileId] || prev[fileId].percent >= 95) {
+            clearInterval(progressInterval);
+            return prev;
+          }
+          return { ...prev, [fileId]: { ...prev[fileId], percent: prev[fileId].percent + 5 } };
+        });
+      }, 1000);
+
+      let response;
+      try {
+        response = await generateContentWithRetry(ai, {
+          model: selectedModel,
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: file.type || 'application/pdf',
+                    data: base64Data
+                  }
                 }
-              }
-            ]
+              ]
+            }
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: AGRUPADORA_SCHEMA,
           }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: AGRUPADORA_SCHEMA,
-        }
-      });
-
-      clearInterval(progressInterval);
-      setUploadProgress({ status: 'Concluído!', percent: 100 });
-      setTimeout(() => setUploadProgress(null), 2000);
-
-      const result = JSON.parse(response.text || '{}');
-      const concessionariaRaw = (result.concessionaria || 'DESCONHECIDA').toUpperCase();
-      const key = concessionariaRaw.includes('ENERGISA') ? 'ENERGISA' : 'ELEKTRO';
-      
-      if (reportType === 'detailed') {
-        const detailedKey = `${key}_DETALHADO`;
-        setAgrupadoraFiles(prev => ({
-          ...prev,
-          [detailedKey]: {
-            cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
-            concessionaria: `${concessionariaRaw} (DETALHADO)`,
-            mesReferencia: result.mesReferencia || '',
-            valorTotal: 0,
-            vencimento: '',
-            numeroNotaFiscal: '',
-            pis: 0,
-            cofins: 0,
-            icms: 0,
-            fileName: file.name
-          }
-        }));
-      } else {
-        const newData: AgrupadoraData = {
-          concessionaria: concessionariaRaw,
-          valorTotal: typeof result.valorTotal === 'string' ? parseValue(result.valorTotal) : result.valorTotal,
-          mesReferencia: result.mesReferencia || '',
-          vencimento: result.vencimento || '',
-          numeroNotaFiscal: result.numeroNotaFiscal || '',
-          pis: typeof result.pis === 'string' ? parseValue(result.pis) : result.pis,
-          cofins: typeof result.cofins === 'string' ? parseValue(result.cofins) : result.cofins,
-          icms: typeof result.icms === 'string' ? parseValue(result.icms) : result.icms,
-          cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
-          fileName: file.name
-        };
-
-        setAgrupadoraFiles(prev => ({
-          ...prev,
-          [key]: newData
-        }));
+        });
+      } finally {
+        clearInterval(progressInterval);
       }
 
+        if (abortController.signal.aborted) throw new Error('Upload cancelado');
+
+        setUploadProgress(prev => ({
+          ...prev,
+          [fileId]: { ...prev[fileId], status: 'Concluído!', percent: 100 }
+        }));
+        setTimeout(() => setUploadProgress(prev => {
+          const next = { ...prev };
+          delete next[fileId];
+          return next;
+        }), 2000);
+
+        const result = JSON.parse(response.text || '{}');
+        const concessionariaRaw = (result.concessionaria || 'DESCONHECIDA').toUpperCase();
+        const key = concessionariaRaw.includes('ENERGISA') ? 'ENERGISA' : 'ELEKTRO';
+        
+        if (reportType === 'detailed') {
+          const detailedKey = `${key}_DETALHADO`;
+          setAgrupadoraFiles(prev => ({
+            ...prev,
+            [detailedKey]: {
+              cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
+              concessionaria: `${concessionariaRaw} (DETALHADO)`,
+              mesReferencia: result.mesReferencia || '',
+              valorTotal: 0,
+              vencimento: '',
+              numeroNotaFiscal: '',
+              pis: 0,
+              cofins: 0,
+              icms: 0,
+              fileName: file.name
+            }
+          }));
+        } else {
+          const newData: AgrupadoraData = {
+            concessionaria: concessionariaRaw,
+            valorTotal: typeof result.valorTotal === 'string' ? parseValue(result.valorTotal) : result.valorTotal,
+            mesReferencia: result.mesReferencia || '',
+            vencimento: result.vencimento || '',
+            numeroNotaFiscal: result.numeroNotaFiscal || '',
+            pis: typeof result.pis === 'string' ? parseValue(result.pis) : result.pis,
+            cofins: typeof result.cofins === 'string' ? parseValue(result.cofins) : result.cofins,
+            icms: typeof result.icms === 'string' ? parseValue(result.icms) : result.icms,
+            cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
+            fileName: file.name
+          };
+
+          setAgrupadoraFiles(prev => ({
+            ...prev,
+            [key]: newData
+          }));
+        }
+
     } catch (error: any) {
-      console.error("Agrupadora extraction error:", error);
+      console.error("Agrupadora extraction error:", {
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        reportType,
+        error
+      });
       const errorStr = error?.message || (typeof error === 'string' ? error : JSON.stringify(error));
       
       if (error?.isQuotaError || errorStr.includes('quota') || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED')) {
@@ -1392,11 +1670,39 @@ export default function App() {
     const generalTotalEconomy = allUcData.reduce((acc, curr) => acc + curr.totalEconomy, 0);
     const generalTotalCurrent = allUcData.reduce((acc, curr) => acc + curr.totalCurrent, 0);
 
+    // Group by city for the chart
+    const cityMap: Record<string, { city: string, totalEconomy: number, positiveEconomy: number, negativeEconomy: number, totalCurrent: number, optimized: number, ucs: { uc: string, economy: number }[], positiveUcs: { uc: string, economy: number }[], negativeUcs: { uc: string, economy: number }[] }> = {};
+    allUcData.forEach(uc => {
+      if (!cityMap[uc.city]) {
+        cityMap[uc.city] = { city: uc.city, totalEconomy: 0, positiveEconomy: 0, negativeEconomy: 0, totalCurrent: 0, optimized: 0, ucs: [], positiveUcs: [], negativeUcs: [] };
+      }
+      cityMap[uc.city].totalEconomy += uc.totalEconomy;
+      if (uc.totalEconomy > 0) {
+        cityMap[uc.city].positiveEconomy += uc.totalEconomy;
+        cityMap[uc.city].positiveUcs.push({ uc: String(uc.uc), economy: uc.totalEconomy });
+      } else if (uc.totalEconomy < 0) {
+        cityMap[uc.city].negativeEconomy += uc.totalEconomy;
+        cityMap[uc.city].negativeUcs.push({ uc: String(uc.uc), economy: uc.totalEconomy });
+      }
+      cityMap[uc.city].totalCurrent += uc.totalCurrent;
+      cityMap[uc.city].ucs.push({ uc: String(uc.uc), economy: uc.totalEconomy });
+    });
+    const cityData = Object.values(cityMap)
+      .map(c => ({
+        ...c,
+        optimized: Math.max(0, c.totalCurrent - c.totalEconomy),
+        ucs: c.ucs.sort((a, b) => b.economy - a.economy),
+        positiveUcs: c.positiveUcs.sort((a, b) => b.economy - a.economy),
+        negativeUcs: c.negativeUcs.sort((a, b) => a.economy - b.economy)
+      }))
+      .sort((a, b) => b.totalCurrent - a.totalCurrent);
+
     setMonitoringResults({
       changedUCs,
       unchangedUCs,
       generalTotalEconomy,
-      generalTotalCurrent
+      generalTotalCurrent,
+      cityData
     });
   };
 
@@ -1425,21 +1731,33 @@ export default function App() {
       user = supabaseUser;
     }
 
-    // Ensure API key is selected if needed
-    await ensureApiKey();
-
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
     
     try {
       const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (30s)')), 30000);
+        
+        reader.onprogress = (data) => {
+          if (data.lengthComputable) {
+            const progress = Math.round((data.loaded / data.total) * 30);
+            setBills(prev => prev.map(b => b.id === bill.id ? { ...b, progress } : b));
+          }
+        };
         reader.onload = () => {
+          clearTimeout(timeout);
           const base64 = (reader.result as string).split(',')[1];
+          setBills(prev => prev.map(b => b.id === bill.id ? { ...b, progress: 30 } : b));
           resolve(base64);
+        };
+        reader.onerror = () => {
+          clearTimeout(timeout);
+          reject(new Error('Erro ao ler arquivo'));
         };
         if (bill.file instanceof Blob) {
           reader.readAsDataURL(bill.file);
         } else {
+          clearTimeout(timeout);
           console.error("bill.file is not a Blob:", bill.file);
           resolve(""); // Or handle error appropriately
         }
@@ -1447,32 +1765,59 @@ export default function App() {
 
       const base64Data = await base64Promise;
 
-      const response = await generateContentWithRetry(ai, {
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              { text: "Extraia os dados solicitados desta fatura de energia. IMPORTANTE: A Unidade Consumidora (UC) deve ser extraída do campo 'CÓDIGO DO CLIENTE' (apenas os números entre a barra e o hífen, ex: 9000076). NÃO inclua o hífen nem os números após ele. NÃO use o 'CÓDIGO DA INSTALAÇÃO' que começa com W. Se um valor não for encontrado, deixe em branco." },
-              {
-                inlineData: {
-                  mimeType: bill.file?.type || 'application/pdf',
-                  data: base64Data
-                }
-              }
-            ]
-          }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: EXTRACTION_SCHEMA,
-        }
-      });
+      if (bill.abortController?.signal.aborted) throw new Error('Upload cancelado');
 
-      const result = JSON.parse(response.text || '{}');
-      
-      if (result.uc) {
-        result.uc = result.uc.split('-')[0].trim();
+      const progressInterval = setInterval(() => {
+        setBills(prev => {
+          const currentBill = prev.find(b => b.id === bill.id);
+          if (!currentBill || (currentBill.progress || 0) >= 95) {
+            clearInterval(progressInterval);
+            return prev;
+          }
+          return prev.map(b => b.id === bill.id ? { ...b, progress: (b.progress || 0) + 5 } : b);
+        });
+      }, 1000);
+
+      let response;
+      try {
+        response = await generateContentWithRetry(ai, {
+          model: "gemini-3-flash-preview",
+          contents: [
+            {
+              parts: [
+                { text: "Extraia os dados solicitados desta fatura de energia. IMPORTANTE: A Unidade Consumidora (UC) deve ser extraída do campo 'CÓDIGO DO CLIENTE' (apenas os números entre a barra e o hífen, ex: 9000076). NÃO inclua o hífen nem os números após ele. NÃO use o 'CÓDIGO DA INSTALAÇÃO' que começa com W. ATENÇÃO: Verifique com muito cuidado os valores de Demanda Medida Ponta e Fora Ponta. Certifique-se de extrair todos os dígitos antes da vírgula (ex: 410,93 e não 40,93). Se um valor não for encontrado, deixe em branco." },
+                {
+                  inlineData: {
+                    mimeType: bill.file?.type || 'application/pdf',
+                    data: base64Data
+                  }
+                }
+              ]
+            }
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: EXTRACTION_SCHEMA,
+          }
+        });
+      } finally {
+        clearInterval(progressInterval);
       }
+
+      if (bill.abortController?.signal.aborted) throw new Error('Upload cancelado');
+
+        let result: any = {};
+        try {
+          result = JSON.parse(response.text || '{}');
+        } catch (parseError) {
+          console.error(`Erro ao fazer parse do JSON para o arquivo ${bill.fileName}:`, parseError);
+          console.error('Texto retornado pela API:', response.text);
+          throw new Error('Falha ao interpretar a resposta da IA. O formato retornado não é um JSON válido.');
+        }
+        
+        if (result.uc) {
+          result.uc = result.uc.split('-')[0].trim();
+        }
 
       const isDuplicate = bills.some(b => {
         if (b.id === bill.id || b.status !== 'completed') return false;
@@ -1505,9 +1850,19 @@ export default function App() {
         }
       }
       
-      setBills(prev => prev.map(b => b.id === bill.id ? updatedBill : b));
+      setBills(prev => prev.map(b => b.id === bill.id ? { ...updatedBill, progress: 100 } : b));
 
     } catch (error: any) {
+      if (error.message === 'Upload cancelado') {
+        setBills(prev => prev.map(b => b.id === bill.id ? {
+          ...b,
+          status: 'error',
+          error: 'Cancelado',
+          progress: 0
+        } : b));
+        return;
+      }
+
       console.error("Erro na extração:", error);
       
       let isRateLimit = false;
@@ -1521,7 +1876,7 @@ export default function App() {
       const errorStatus = nestedError?.status || '';
       const msg = nestedError?.message || error?.message || '';
 
-      if (msg.includes('exceeded your current quota') || errorStr.includes('exceeded your current quota')) {
+      if (msg.includes('exceeded your current quota') || errorStr.includes('exceeded your current quota') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('Cota')) {
         isQuotaExhausted = true;
       } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED')) {
         isRateLimit = true;
@@ -1542,23 +1897,25 @@ export default function App() {
       }
 
       if (isRateLimit) {
-        // Increase max retries to 15
-        if (retryCount < 15) {
-          // Use retryAfter if found, otherwise exponential backoff starting much higher
+        // Limit max retries to 5 to avoid freezing the app for too long
+        if (retryCount < 5) {
+          // Use retryAfter if found, otherwise exponential backoff starting at 5s
           const delay = retryAfter > 0 
-            ? retryAfter + 10000 // Adiciona 10s de margem
-            : Math.pow(1.3, retryCount) * 30000 + Math.random() * 10000; // Começa em ~30s, aumenta mais devagar mas começa bem mais alto
+            ? retryAfter + 2000 // Adiciona 2s de margem
+            : Math.pow(1.5, retryCount) * 5000 + Math.random() * 2000;
           
-          console.log(`Limite de taxa atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/15)`);
+          console.log(`[Worker] Limite de taxa atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/5)`);
           
           setBills(prev => prev.map(b => b.id === bill.id ? {
             ...b,
             status: 'processing',
-            error: `Aguardando limite da API... Tentativa ${retryCount + 1}/15 (${Math.round(delay/1000)}s)`
+            error: `Aguardando limite da API... Tentativa ${retryCount + 1}/5 (${Math.round(delay/1000)}s)`
           } : b));
 
           await new Promise(resolve => setTimeout(resolve, delay));
           return processFile(bill, retryCount + 1);
+        } else {
+          console.error(`[Worker] Falha após ${retryCount} tentativas para ${bill.fileName} devido a limite de taxa.`);
         }
       }
 
@@ -1576,11 +1933,14 @@ export default function App() {
     const pendingBills = bills.filter(b => b.status === 'pending');
     if (pendingBills.length === 0) return;
 
+    // Ensure API key is selected once before starting workers
+    await ensureApiKey();
+
     setIsProcessing(true);
 
-    // Worker pool approach to maintain concurrency between 3 and 5
+    // Worker pool approach to maintain concurrency limited to 3 to avoid freezing
     const queue = [...pendingBills];
-    const maxConcurrency = 5;
+    const maxConcurrency = 3;
     const initialWorkers = Math.min(maxConcurrency, queue.length);
 
     const runWorker = async () => {
@@ -1589,12 +1949,15 @@ export default function App() {
         if (!bill) break;
 
         // Update status to processing
-        setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'processing', error: undefined } : b));
+        const abortController = new AbortController();
+        setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'processing', error: undefined, abortController, progress: 0 } : b));
         
         try {
-          await processFile(bill as any);
+          console.log(`[Worker] Iniciando processamento de: ${bill.fileName} (Restam: ${queue.length})`);
+          await processFile({ ...bill, abortController } as any);
+          console.log(`[Worker] Concluído processamento de: ${bill.fileName}`);
         } catch (error) {
-          console.error(`Erro no processamento de ${bill.fileName}:`, error);
+          console.error(`[Worker] Erro crítico no processamento de ${bill.fileName}:`, error);
         }
       }
     };
@@ -1608,9 +1971,24 @@ export default function App() {
     setIsProcessing(false);
   };
 
+  const resetStuckProcesses = () => {
+    setBills(prev => prev.map(b => b.status === 'processing' ? { ...b, status: 'pending', progress: 0 } : b));
+    setIsProcessing(false);
+  };
+
   const [selectedBills, setSelectedBills] = useState<string[]>([]);
   const [monitoringResults, setMonitoringResults] = useState<any>(null);
   const [expandedUCs, setExpandedUCs] = useState<Set<string>>(new Set());
+  const [expandedSummaryCities, setExpandedSummaryCities] = useState<Set<string>>(new Set());
+
+  const toggleSummaryCity = (city: string) => {
+    setExpandedSummaryCities(prev => {
+      const next = new Set(prev);
+      if (next.has(city)) next.delete(city);
+      else next.add(city);
+      return next;
+    });
+  };
 
   const toggleUCExpansion = (uc: string) => {
     setExpandedUCs(prev => {
@@ -1959,7 +2337,7 @@ export default function App() {
   });
 
   const filteredDashboardData = dashboardData.filter(d => {
-    const matchesUC = selectedUC === 'all' || d.uc === selectedUC;
+    const matchesUC = !selectedUC || selectedUC === 'all' || d.uc.toString().includes(selectedUC);
     const matchesMonth = selectedMonth === 'all' || d.name === selectedMonth;
     
     if (!matchesUC || !matchesMonth) return false;
@@ -1997,11 +2375,59 @@ export default function App() {
     return true;
   });
 
+  const generalFilteredData = dashboardData.filter(d => {
+    const matchesUC = !selectedUC || selectedUC === 'all' || d.uc.toString().includes(selectedUC);
+    const matchesMonth = selectedMonth === 'all' || d.name === selectedMonth;
+    return matchesUC && matchesMonth;
+  });
+
   const filteredRelatorioData = dashboardData.filter(d => {
     return selectedRelatorioMonth === 'all' || d.name === selectedRelatorioMonth;
   });
 
   const filteredUcs = Array.from(new Set(filteredDashboardData.map(d => d.uc))).filter(Boolean);
+
+  const sortedDashboardData = React.useMemo(() => {
+    return [...filteredDashboardData].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (dashboardSort.key) {
+        case 'name':
+          const [mA, yA] = a.name.split('/');
+          const [mB, yB] = b.name.split('/');
+          aValue = Number(yA) * 12 + Number(mA);
+          bValue = Number(yB) * 12 + Number(mB);
+          break;
+        case 'uc':
+          aValue = a.uc;
+          bValue = b.uc;
+          break;
+        case 'total_kw':
+          aValue = a.ultrapassagemPonta + a.ultrapassagemForaPonta;
+          bValue = b.ultrapassagemPonta + b.ultrapassagemForaPonta;
+          break;
+        case 'utilizacao':
+          aValue = (a.demandaMedidaPonta / (a.demandaContratadaPonta || 1));
+          bValue = (b.demandaMedidaPonta / (b.demandaContratadaPonta || 1));
+          break;
+        case 'total_kvarh':
+          aValue = a.reativaPonta + a.reativaForaPonta;
+          bValue = b.reativaPonta + b.reativaForaPonta;
+          break;
+        default:
+          aValue = a[dashboardSort.key as keyof typeof a];
+          bValue = b[dashboardSort.key as keyof typeof b];
+      }
+
+      if (aValue === undefined || aValue === null) return 1;
+      if (bValue === undefined || bValue === null) return -1;
+
+      if (aValue < bValue) return dashboardSort.direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return dashboardSort.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredDashboardData, dashboardSort]);
 
   const memoData = React.useMemo(() => {
     const energisa = filteredRelatorioData.filter(d => (d.concessionaria || '').toUpperCase().includes('ENERGISA'));
@@ -2179,6 +2605,58 @@ export default function App() {
     );
   }
 
+  if (currentPage === 'visao_geral') {
+    return (
+      <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
+        <header className="max-w-7xl mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-sanesul-primary rounded-xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20">
+                <Zap className="text-white" size={24} />
+              </div>
+              <div>
+                <h1 className="text-3xl md:text-4xl font-display font-bold tracking-tight text-sanesul-primary">
+                  Sanesul <span className="text-sanesul-secondary">Energy</span>
+                </h1>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-sanesul-muted font-bold">
+                  Portal de Inteligência Energética
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={() => window.aistudio?.openSelectKey?.()}
+                className="flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                title="Configurar ou trocar a chave da API Gemini"
+              >
+                <Zap size={16} />
+                Configurar API
+              </button>
+              <button
+                onClick={() => setCurrentPage('sistema')}
+                className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
+              >
+                <LayoutDashboard size={16} />
+                Acessar Sistema
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                title="Sair"
+              >
+                <LogOut size={16} />
+                Sair
+              </button>
+            </div>
+          </div>
+        </header>
+        <main className="max-w-7xl mx-auto">
+          <VisaoGeralDashboard data={dashboardData} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
       {/* Header */}
@@ -2198,6 +2676,21 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => setCurrentPage('visao_geral')}
+              className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+            >
+              <ArrowLeft size={16} />
+              Voltar para Visão Geral
+            </button>
+            <button
+              onClick={() => window.aistudio?.openSelectKey?.()}
+              className="flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+              title="Configurar ou trocar a chave da API Gemini"
+            >
+              <Zap size={16} />
+              Configurar API
+            </button>
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 px-4 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
@@ -2262,6 +2755,16 @@ export default function App() {
               >
                 {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
                 Processar Arquivos
+              </button>
+            )}
+            {bills.some(b => b.status === 'processing') && (
+              <button
+                onClick={resetStuckProcesses}
+                className="flex items-center gap-2 px-6 py-3 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                title="Reseta faturas que ficaram presas no status 'Extraindo'"
+              >
+                <RotateCcw size={16} />
+                Resetar Travados
               </button>
             )}
             {bills.some(b => b.status === 'completed') && (
@@ -2383,6 +2886,24 @@ export default function App() {
         </div>
       </header>
 
+      {bills.some(b => b.error?.includes('limite de gastos') || b.error?.includes('Cota')) && (
+        <div className="max-w-7xl mx-auto mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-red-700">
+            <AlertCircle size={20} />
+            <p className="text-sm font-medium">
+              <strong>Atenção:</strong> O limite de gastos ou cota da sua chave API foi atingido. 
+              Verifique seu faturamento no Google Cloud ou tente trocar a chave.
+            </p>
+          </div>
+          <button
+            onClick={() => window.aistudio?.openSelectKey?.()}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all whitespace-nowrap"
+          >
+            Trocar Chave API
+          </button>
+        </div>
+      )}
+
       <main 
         className="max-w-7xl mx-auto"
         onDragOver={handleDragOver}
@@ -2486,7 +3007,7 @@ export default function App() {
                   <table className="w-full text-left border-collapse relative">
                     <thead className="sticky top-0 z-20 bg-slate-50 shadow-sm">
                       <tr className="bg-slate-50/50">
-                        <th className="px-8 py-5 w-12">
+                        <th className="px-4 py-3 w-12">
                           <input 
                             type="checkbox"
                             checked={selectedBills.length > 0 && selectedBills.length === bills.length}
@@ -2494,14 +3015,15 @@ export default function App() {
                             className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
                           />
                         </th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('fileName')}>Arquivo</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('uc')}>UC</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('concessionaria')}>Concessionária</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('referencia')}>Referência</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Status</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 text-right">
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('fileName')}>Arquivo</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('uc')}>UC</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('concessionaria')}>Concessionária</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('referencia')}>Referência</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Medida</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Contratada</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Status</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 text-right">
                           {selectedBills.length > 0 ? (
                             <div className="flex items-center justify-end gap-4">
                               <button onClick={removeSelectedBills} className="text-red-600 hover:text-red-700 font-bold">Excluir ({selectedBills.length})</button>
@@ -2523,7 +3045,7 @@ export default function App() {
                             exit={{ opacity: 0, x: -20 }}
                             className={`hover:bg-sanesul-primary/5 transition-colors group ${selectedBills.includes(bill.id) ? 'bg-sanesul-primary/5' : ''}`}
                           >
-                            <td className="px-8 py-5">
+                            <td className="px-4 py-3">
                               <input 
                                 type="checkbox"
                                 checked={selectedBills.includes(bill.id)}
@@ -2531,24 +3053,24 @@ export default function App() {
                                 className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
                               />
                             </td>
-                            <td className="px-8 py-5">
+                            <td className="px-4 py-3">
                               <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 bg-sanesul-primary/5 rounded-xl flex items-center justify-center text-sanesul-primary group-hover:bg-sanesul-primary group-hover:text-white transition-all">
-                                  <FileText size={18} />
+                                <div className="w-8 h-8 bg-sanesul-primary/5 rounded-lg flex items-center justify-center text-sanesul-primary group-hover:bg-sanesul-primary group-hover:text-white transition-all">
+                                  <FileText size={16} />
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-bold text-sanesul-primary truncate max-w-[200px]" title={bill.fileName}>
+                                  <span className="text-xs font-bold text-sanesul-primary truncate max-w-[200px]" title={bill.fileName}>
                                     {bill.fileName}
                                   </span>
-                                  <span className="text-[10px] text-sanesul-muted uppercase tracking-wider">
+                                  <span className="text-[9px] text-sanesul-muted uppercase tracking-wider">
                                     {bill.file ? `${(bill.file.size / 1024 / 1024).toFixed(2)} MB • ${bill.file.type.split('/')[1].toUpperCase()}` : 'ARQUIVO SALVO'}
                                   </span>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-8 py-5">
+                            <td className="px-4 py-3">
                               <div className="flex flex-col">
-                                <span className="text-sm font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
+                                <span className="text-xs font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
                                 {bill.uc && bills.filter(b => 
                                   String(b.uc).trim() === String(bill.uc).trim() && 
                                   `${String(b.mesReferencia).trim()}/${String(b.anoLeitura).trim()}` === `${String(bill.mesReferencia).trim()}/${String(bill.anoLeitura).trim()}`
@@ -2559,8 +3081,8 @@ export default function App() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-8 py-5">
-                              <span className="text-sm font-bold text-slate-600 uppercase tracking-wider">
+                            <td className="px-4 py-3">
+                              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                                 {bill.concessionaria 
                                   ? (bill.concessionaria.toUpperCase().includes('ENERGISA') 
                                       ? 'ENERGISA' 
@@ -2570,19 +3092,25 @@ export default function App() {
                                   : '---'}
                               </span>
                             </td>
-                            <td className="px-8 py-5">
-                              <span className="text-sm text-slate-600">
+                            <td className="px-4 py-3">
+                              <span className="text-xs text-slate-600">
                                 {bill.mesReferencia && bill.anoLeitura ? `${bill.mesReferencia}/${bill.anoLeitura}` : '---'}
                               </span>
                             </td>
-                            <td className="px-8 py-5">
+                            <td className="px-4 py-3">
                               <div className="flex flex-col">
-                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPontaKW || '0'} kW</span>
-                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaForaPontaKW || '0'} kW</span>
+                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPotenciaMedidaPonta || '0'} kW</span>
+                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaPotenciaMedidaForaPonta || '0'} kW</span>
                               </div>
                             </td>
-                            <td className="px-8 py-5">
-                              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            <td className="px-4 py-3">
+                              <div className="flex flex-col">
+                                <span className="text-[9px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPontaKW || '0'} kW</span>
+                                <span className="text-[9px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaForaPontaKW || '0'} kW</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
                                 bill.tipo === 'OPERACIONAL' 
                                   ? 'bg-blue-50 text-blue-600' 
                                   : bill.tipo === 'ADMINISTRATIVO'
@@ -2592,19 +3120,36 @@ export default function App() {
                                 {bill.tipo || 'N/A'}
                               </span>
                             </td>
-                            <td className="px-8 py-5">
+                            <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                 {bill.status === 'pending' && (
-                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                                    <Clock size={12} />
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[9px] font-bold uppercase tracking-wider">
+                                    <Clock size={10} />
                                     Aguardando
                                   </span>
                                 )}
                                 {bill.status === 'processing' && (
-                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-sanesul-primary rounded-full text-[10px] font-bold uppercase tracking-wider">
-                                    <Loader2 size={12} className="animate-spin" />
-                                    Extraindo...
-                                  </span>
+                                  <div className="flex flex-col gap-1 w-full min-w-[100px]">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-sanesul-primary rounded-full text-[9px] font-bold uppercase tracking-wider">
+                                        <Loader2 size={10} className="animate-spin" />
+                                        Extraindo... {bill.progress || 0}%
+                                      </span>
+                                      <button 
+                                        onClick={() => bill.abortController?.abort()}
+                                        className="text-red-500 hover:text-red-700 p-0.5 rounded-full hover:bg-red-50 transition-colors"
+                                        title="Cancelar"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                    <div className="w-full bg-slate-100 rounded-full h-1 overflow-hidden">
+                                      <div 
+                                        className="bg-sanesul-primary h-1 rounded-full transition-all duration-300 ease-out" 
+                                        style={{ width: `${bill.progress || 0}%` }}
+                                      ></div>
+                                    </div>
+                                  </div>
                                 )}
                                 {bill.status === 'completed' && (
                                   <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
@@ -2735,11 +3280,21 @@ export default function App() {
                 <div className="space-y-4">
                   <div className="flex justify-between items-end">
                     <span className="text-[10px] font-bold uppercase opacity-60">Processados</span>
-                    <span className="text-2xl font-display font-bold leading-none">{completedBills.length}</span>
+                    <span className="text-2xl font-display font-bold leading-none">{generalFilteredData.length}</span>
                   </div>
                   <div className="flex justify-between items-end">
                     <span className="text-[10px] font-bold uppercase opacity-60">Unidades</span>
-                    <span className="text-2xl font-display font-bold leading-none">{new Set(dashboardData.map(d => d.uc)).size}</span>
+                    <span className="text-2xl font-display font-bold leading-none">{new Set(generalFilteredData.map(d => d.uc)).size}</span>
+                  </div>
+                  <div className="pt-4 border-t border-white/10 space-y-4">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase opacity-60 mb-1">Custo Total</span>
+                      <span className="text-xl font-display font-bold">R$ {generalFilteredData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase opacity-60 mb-1">Consumo Total</span>
+                      <span className="text-xl font-display font-bold">{generalFilteredData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} <span className="text-xs opacity-60">kWh</span></span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2762,7 +3317,7 @@ export default function App() {
                     )}
                   </h2>
                   <p className="text-[11px] font-bold uppercase tracking-wider text-sanesul-muted mt-1">
-                    {selectedUC === 'all' ? 'Visão consolidada do grupo' : `Unidade Consumidora: ${selectedUC}`}
+                    {!selectedUC || selectedUC === 'all' ? 'Visão consolidada do grupo' : `Unidade Consumidora: ${selectedUC}`}
                   </p>
                 </div>
                 
@@ -2782,16 +3337,16 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-sanesul-primary/10 shadow-sm">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted ml-2">Filtrar UC:</span>
-                    <select 
-                      value={selectedUC}
-                      onChange={(e) => setSelectedUC(e.target.value)}
-                      className="bg-sanesul-bg border-none px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
-                    >
-                      <option value="all">Todas as Unidades</option>
-                      {ucs.map(uc => (
-                        <option key={uc} value={uc}>{uc}</option>
-                      ))}
-                    </select>
+                    <div className="relative flex items-center">
+                      <Search size={14} className="absolute left-3 text-sanesul-primary/40" />
+                      <input 
+                        type="text"
+                        value={selectedUC === 'all' ? '' : selectedUC}
+                        onChange={(e) => setSelectedUC(e.target.value)}
+                        placeholder="Buscar UC..."
+                        className="bg-sanesul-bg border-none pl-9 pr-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all w-48"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2884,7 +3439,7 @@ export default function App() {
                                 <FileText size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Ocorrências</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.filter(d => d.ultrapassagemPonta > 0 || d.ultrapassagemForaPonta > 0).length} <span className="text-base font-sans font-medium opacity-40">Meses</span></p>
+                              <p className="text-5xl font-display font-bold text-sanesul-primary">{new Set(filteredDashboardData.filter(d => d.ultrapassagemPonta > 0 || d.ultrapassagemForaPonta > 0).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
@@ -2911,7 +3466,7 @@ export default function App() {
                                 <AlertCircle size={80} className="text-orange-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Subutilizados (&lt;80%)</p>
-                              <p className="text-5xl font-display font-bold text-orange-600">{filteredDashboardData.filter(d => d.demandaMedidaPonta < (d.demandaContratadaPonta * 0.8)).length} <span className="text-base font-sans font-medium opacity-40">Meses</span></p>
+                              <p className="text-5xl font-display font-bold text-orange-600">{new Set(filteredDashboardData.filter(d => d.demandaMedidaPonta < (d.demandaContratadaPonta * 0.8)).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
@@ -2935,8 +3490,8 @@ export default function App() {
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <FileText size={80} className="text-purple-600" />
                               </div>
-                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Meses com Excesso</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">{filteredDashboardData.filter(d => d.reativaPonta > 0 || d.reativaForaPonta > 0).length} <span className="text-base font-sans font-medium opacity-40">Meses</span></p>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Unidades com Excesso</p>
+                              <p className="text-5xl font-display font-bold text-purple-600">{new Set(filteredDashboardData.filter(d => d.reativaPonta > 0 || d.reativaForaPonta > 0).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
@@ -3124,12 +3679,24 @@ export default function App() {
                           <span className="text-xs font-bold text-sanesul-primary uppercase tracking-widest">{filteredDashboardData.length} Registros</span>
                         </div>
                       </div>
-                      <div className="overflow-x-auto">
+                      <div className="overflow-auto max-h-[600px]">
                         <table className="w-full text-left border-collapse">
-                          <thead>
+                          <thead className="sticky top-0 z-10 bg-slate-50">
                             <tr className="bg-slate-50/50">
-                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">UC</th>
-                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Mês/Ano</th>
+                              <th 
+                                onClick={() => setDashboardSort(prev => ({ key: 'uc', direction: prev.key === 'uc' && prev.direction === 'desc' ? 'asc' : 'desc' }))}
+                                className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 cursor-pointer hover:bg-sanesul-primary/5 transition-colors"
+                              >
+                                UC {dashboardSort.key === 'uc' && (dashboardSort.direction === 'asc' ? '↑' : '↓')}
+                              </th>
+                              <th 
+                                onClick={() => setDashboardSort(prev => ({ key: 'name', direction: prev.key === 'name' && prev.direction === 'desc' ? 'asc' : 'desc' }))}
+                                className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 cursor-pointer hover:bg-sanesul-primary/5 transition-colors"
+                              >
+                                Mês/Ano {dashboardSort.key === 'name' && (dashboardSort.direction === 'asc' ? '↑' : '↓')}
+                              </th>
+                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Classificação</th>
+                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Modalidade</th>
                               {dashboardSubTab === 'operacionais' ? (
                                 <>
                                   {operationalSubTab === 'consumo' && (
@@ -3145,7 +3712,12 @@ export default function App() {
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Contratada F. Ponta</th>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Ultrap. Ponta</th>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Ultrap. F. Ponta</th>
-                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-red-600 border-b border-sanesul-primary/5 text-right">Total (kW)</th>
+                                      <th 
+                                        onClick={() => setDashboardSort(prev => ({ key: 'total_kw', direction: prev.key === 'total_kw' && prev.direction === 'desc' ? 'asc' : 'desc' }))}
+                                        className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-red-600 border-b border-sanesul-primary/5 text-right cursor-pointer hover:bg-red-50 transition-colors"
+                                      >
+                                        Total (kW) {dashboardSort.key === 'total_kw' && (dashboardSort.direction === 'asc' ? '↑' : '↓')}
+                                      </th>
                                     </>
                                   )}
                                   {operationalSubTab === 'subutilizacao' && (
@@ -3154,14 +3726,24 @@ export default function App() {
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Contratada F. Ponta</th>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Medida Ponta</th>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Medida F. Ponta</th>
-                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-orange-600 border-b border-sanesul-primary/5 text-right">Utilização (%)</th>
+                                      <th 
+                                        onClick={() => setDashboardSort(prev => ({ key: 'utilizacao', direction: prev.key === 'utilizacao' && prev.direction === 'desc' ? 'asc' : 'desc' }))}
+                                        className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-orange-600 border-b border-sanesul-primary/5 text-right cursor-pointer hover:bg-orange-50 transition-colors"
+                                      >
+                                        Utilização (%) {dashboardSort.key === 'utilizacao' && (dashboardSort.direction === 'asc' ? '↑' : '↓')}
+                                      </th>
                                     </>
                                   )}
                                   {operationalSubTab === 'reativa' && (
                                     <>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Reativa Ponta</th>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Reativa F. Ponta</th>
-                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-purple-600 border-b border-sanesul-primary/5 text-right">Total (kVArh)</th>
+                                      <th 
+                                        onClick={() => setDashboardSort(prev => ({ key: 'total_kvarh', direction: prev.key === 'total_kvarh' && prev.direction === 'desc' ? 'asc' : 'desc' }))}
+                                        className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-purple-600 border-b border-sanesul-primary/5 text-right cursor-pointer hover:bg-purple-50 transition-colors"
+                                      >
+                                        Total (kVArh) {dashboardSort.key === 'total_kvarh' && (dashboardSort.direction === 'asc' ? '↑' : '↓')}
+                                      </th>
                                     </>
                                   )}
                                   {operationalSubTab === 'solar' && (
@@ -3214,10 +3796,16 @@ export default function App() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-sanesul-primary/5">
-                            {filteredDashboardData.sort((a, b) => b.name.localeCompare(a.name)).map((row, idx) => (
+                            {sortedDashboardData.map((row, idx) => (
                               <tr key={idx} className="hover:bg-sanesul-primary/5 transition-colors group">
                                 <td className="px-8 py-5 text-sm font-bold text-sanesul-primary">{row.uc}</td>
                                 <td className="px-8 py-5 text-sm text-slate-600">{row.name}</td>
+                                <td className="px-8 py-5 text-sm font-medium text-slate-600">
+                                  {UCS_PPP.has(String(row.uc)) ? 'PPP Fotovoltaica' : (UCS_USINA.has(String(row.uc)) ? 'Usinas SANESUL' : 'Geral')}
+                                </td>
+                                <td className="px-8 py-5 text-sm font-medium text-slate-600">
+                                  {row.modalidadeTarifaria || '-'}
+                                </td>
                                 {dashboardSubTab === 'operacionais' ? (
                                   <>
                                     {operationalSubTab === 'consumo' && (
@@ -3564,63 +4152,118 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Charts Section */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
-                    <h3 className="text-lg font-display font-bold text-sanesul-primary mb-6">Economia por Cidade</h3>
-                    <div className="h-[300px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={monitoringResults.cityData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis 
-                            dataKey="city" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
-                          />
-                          <YAxis 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
-                            tickFormatter={(value) => `R$ ${value}`}
-                          />
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                            formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR')}`, 'Economia']}
-                          />
-                          <Bar dataKey="totalEconomy" fill="#16a34a" radius={[8, 8, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                {/* Charts Section - Replaced with Text Summary */}
+                <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-display font-bold text-sanesul-primary">Resumo de Economia por Cidade</h3>
+                    <div className="px-4 py-2 bg-sanesul-primary/5 rounded-full">
+                      <span className="text-xs font-bold text-sanesul-primary uppercase tracking-wider">Top Impactos Financeiros</span>
                     </div>
                   </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                    {/* Top Economies */}
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-3 pb-4 border-b border-green-100">
+                        <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center">
+                          <TrendingUp className="text-green-600" size={20} />
+                        </div>
+                        <h4 className="font-display font-bold text-green-700 uppercase tracking-tight">Principais Economias</h4>
+                      </div>
+                      <div className="space-y-2">
+                        {[...monitoringResults.cityData]
+                          .filter(c => c.positiveEconomy > 0)
+                          .sort((a, b) => b.positiveEconomy - a.positiveEconomy)
+                          .slice(0, 10)
+                          .map((city, idx) => (
+                            <div key={idx} className="flex flex-col rounded-2xl bg-green-50/50 border border-green-100/50 hover:bg-green-50 transition-colors overflow-hidden">
+                              <div 
+                                className="flex items-center justify-between p-3 cursor-pointer"
+                                onClick={() => toggleSummaryCity(`pos-${city.city}`)}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xs font-bold text-green-600/50 w-4">{String(idx + 1).padStart(2, '0')}</span>
+                                  <span className="font-bold text-sanesul-primary text-sm">{city.city}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="font-mono font-bold text-green-600 text-sm">
+                                    + R$ {city.positiveEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </span>
+                                  <ChevronDown className={`w-4 h-4 text-green-600/50 transition-transform ${expandedSummaryCities.has(`pos-${city.city}`) ? 'rotate-180' : ''}`} />
+                                </div>
+                              </div>
+                              {expandedSummaryCities.has(`pos-${city.city}`) && city.positiveUcs && (
+                                <div className="px-3 pb-3 pt-1 border-t border-green-100/30 bg-green-50/30">
+                                  <div className="space-y-1 mt-2">
+                                    {city.positiveUcs.map((u: any, i: number) => (
+                                      <div key={i} className="flex justify-between items-center text-xs">
+                                        <span className="text-sanesul-muted font-medium">UC {u.uc}</span>
+                                        <span className="font-mono text-green-600/80">
+                                          + R$ {Math.abs(u.economy).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        {monitoringResults.cityData.filter(c => c.positiveEconomy > 0).length === 0 && (
+                          <p className="text-sm text-sanesul-muted italic p-4">Nenhuma economia significativa identificada.</p>
+                        )}
+                      </div>
+                    </div>
 
-                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
-                    <h3 className="text-lg font-display font-bold text-sanesul-primary mb-6">Gasto vs Economia</h3>
-                    <div className="h-[300px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={[
-                              { name: 'Gasto Otimizado', value: monitoringResults.generalTotalCurrent - monitoringResults.generalTotalEconomy },
-                              { name: 'Economia Potencial', value: monitoringResults.generalTotalEconomy }
-                            ]}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={100}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            <Cell fill="#004a99" />
-                            <Cell fill="#16a34a" />
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                            formatter={(value: number) => `R$ ${value.toLocaleString('pt-BR')}`}
-                          />
-                          <Legend verticalAlign="bottom" height={36}/>
-                        </PieChart>
-                      </ResponsiveContainer>
+                    {/* Top Losses */}
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-3 pb-4 border-b border-red-100">
+                        <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
+                          <TrendingDown className="text-red-600" size={20} />
+                        </div>
+                        <h4 className="font-display font-bold text-red-700 uppercase tracking-tight">Principais Prejuízos</h4>
+                      </div>
+                      <div className="space-y-2">
+                        {[...monitoringResults.cityData]
+                          .filter(c => c.negativeEconomy < 0)
+                          .sort((a, b) => a.negativeEconomy - b.negativeEconomy)
+                          .slice(0, 10)
+                          .map((city, idx) => (
+                            <div key={idx} className="flex flex-col rounded-2xl bg-red-50/50 border border-red-100/50 hover:bg-red-50 transition-colors overflow-hidden">
+                              <div 
+                                className="flex items-center justify-between p-3 cursor-pointer"
+                                onClick={() => toggleSummaryCity(`neg-${city.city}`)}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xs font-bold text-red-600/50 w-4">{String(idx + 1).padStart(2, '0')}</span>
+                                  <span className="font-bold text-sanesul-primary text-sm">{city.city}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="font-mono font-bold text-red-600 text-sm">
+                                    - R$ {Math.abs(city.negativeEconomy).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                  </span>
+                                  <ChevronDown className={`w-4 h-4 text-red-600/50 transition-transform ${expandedSummaryCities.has(`neg-${city.city}`) ? 'rotate-180' : ''}`} />
+                                </div>
+                              </div>
+                              {expandedSummaryCities.has(`neg-${city.city}`) && city.negativeUcs && (
+                                <div className="px-3 pb-3 pt-1 border-t border-red-100/30 bg-red-50/30">
+                                  <div className="space-y-1 mt-2">
+                                    {city.negativeUcs.map((u: any, i: number) => (
+                                      <div key={i} className="flex justify-between items-center text-xs">
+                                        <span className="text-sanesul-muted font-medium">UC {u.uc}</span>
+                                        <span className="font-mono text-red-600/80">
+                                          - R$ {Math.abs(u.economy).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        {monitoringResults.cityData.filter(c => c.negativeEconomy < 0).length === 0 && (
+                          <p className="text-sm text-sanesul-muted italic p-4">Nenhum prejuízo significativo identificado.</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3934,18 +4577,43 @@ export default function App() {
               </div>
             </div>
 
-            {uploadProgress && (
-              <div className="bg-white p-6 rounded-2xl border border-sanesul-primary/10 shadow-sm mb-8 animate-in fade-in slide-in-from-bottom-4">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-bold text-sanesul-primary">{uploadProgress.status}</span>
-                  <span className="text-sm font-bold text-sanesul-primary">{uploadProgress.percent}%</span>
-                </div>
-                <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                  <div 
-                    className="bg-sanesul-primary h-2.5 rounded-full transition-all duration-300 ease-out" 
-                    style={{ width: `${uploadProgress.percent}%` }}
-                  ></div>
-                </div>
+            {Object.keys(uploadProgress).length > 0 && (
+              <div className="mb-8 space-y-4">
+                {Object.entries(uploadProgress).map(([fileId, progress]: [string, { status: string, percent: number, fileName: string, fileSize: number, abortController: AbortController | null }]) => (
+                  <motion.div 
+                    key={fileId}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="bg-white p-6 rounded-2xl border border-sanesul-primary/10 shadow-sm flex items-center gap-4"
+                  >
+                    <div className="flex-1">
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold text-slate-900 truncate max-w-[200px]">{progress.fileName}</span>
+                          <span className="text-[10px] text-slate-500">{(progress.fileSize / 1024).toFixed(1)} KB</span>
+                        </div>
+                        <span className="text-sm font-bold text-sanesul-primary">{progress.percent}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                        <div 
+                          className="bg-sanesul-primary h-2.5 rounded-full transition-all duration-300 ease-out" 
+                          style={{ width: `${progress.percent}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-xs text-slate-500 mt-1 block">{progress.status}</span>
+                    </div>
+                    {progress.percent < 100 && progress.status !== 'Erro' && (
+                      <button 
+                        onClick={() => progress.abortController?.abort()} 
+                        className="text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-50 transition-colors"
+                        title="Cancelar upload"
+                      >
+                        <X size={20} />
+                      </button>
+                    )}
+                  </motion.div>
+                ))}
               </div>
             )}
 
@@ -4084,9 +4752,9 @@ export default function App() {
                   {Array.from(new Set(filteredRelatorioData.map(d => d.uc))).filter(Boolean).length} Unidades
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[600px]">
                 <table className="w-full text-left border-collapse">
-                  <thead>
+                  <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr className="bg-slate-50/50">
                       <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">UC</th>
                       <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">Cidade</th>
@@ -4449,7 +5117,7 @@ export default function App() {
                 
                 {/* Demanda */}
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Ponta (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Contratada P (kW)</label>
                   <input
                     type="text"
                     value={editingBill.demandaPontaKW || ''}
@@ -4458,7 +5126,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Fora Ponta (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Contratada FP (kW)</label>
                   <input
                     type="text"
                     value={editingBill.demandaForaPontaKW || ''}

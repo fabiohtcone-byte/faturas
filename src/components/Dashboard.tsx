@@ -185,20 +185,20 @@ export default function Dashboard({ data }: DashboardProps) {
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/50 text-slate-500 text-sm font-medium">
-                <th className="px-6 py-4 border-b border-slate-100">UC</th>
-                <th className="px-6 py-4 border-b border-slate-100">Cidade</th>
-                <th className="px-6 py-4 border-b border-slate-100 text-right">Consumo (kWh)</th>
-                <th className="px-6 py-4 border-b border-slate-100 text-right">Custo Total</th>
+              <tr className="bg-slate-50/50 text-slate-500 text-xs font-medium">
+                <th className="px-4 py-3 border-b border-slate-100">UC</th>
+                <th className="px-4 py-3 border-b border-slate-100">Cidade</th>
+                <th className="px-4 py-3 border-b border-slate-100 text-right">Consumo (kWh)</th>
+                <th className="px-4 py-3 border-b border-slate-100 text-right">Custo Total</th>
               </tr>
             </thead>
-            <tbody className="text-slate-700 text-sm">
+            <tbody className="text-slate-700 text-xs">
               {ucData.map((uc, i) => (
                 <tr key={i} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-4 border-b border-slate-50 font-medium">{uc.uc}</td>
-                  <td className="px-6 py-4 border-b border-slate-50">{uc.cidade}</td>
-                  <td className="px-6 py-4 border-b border-slate-50 text-right">{formatNumber(uc.consumo)}</td>
-                  <td className="px-6 py-4 border-b border-slate-50 text-right font-medium text-slate-900">{formatCurrency(uc.gasto)}</td>
+                  <td className="px-4 py-3 border-b border-slate-50 font-medium">{uc.uc}</td>
+                  <td className="px-4 py-3 border-b border-slate-50">{uc.cidade}</td>
+                  <td className="px-4 py-3 border-b border-slate-50 text-right">{formatNumber(uc.consumo)}</td>
+                  <td className="px-4 py-3 border-b border-slate-50 text-right font-medium text-slate-900">{formatCurrency(uc.gasto)}</td>
                 </tr>
               ))}
             </tbody>
