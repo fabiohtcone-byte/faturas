@@ -120,48 +120,48 @@ interface BillData {
 const EXTRACTION_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    uc: { type: Type.STRING, description: "Código da Unidade Consumidora (UC). Extraia apenas o número central do 'Código do Cliente' (ex: em 10/9000076-1, a UC é 9000076). Não use o Código da Instalação (W...)." },
-    demandaPontaKW: { type: Type.STRING, description: "Demanda ponta - kW (Grandezas Contratadas)" },
-    demandaForaPontaKW: { type: Type.STRING, description: "Demanda fora ponta - kW (Grandezas Contratadas)" },
-    demandaPotenciaMedidaPonta: { type: Type.STRING, description: "Demanda de Potência Medida - Ponta (Itens da Fatura)" },
-    demandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Demanda de Potência Medida - Fora Ponta (Itens da Fatura)" },
-    anoLeitura: { type: Type.STRING, description: "Ano de referência da leitura" },
-    mesReferencia: { type: Type.STRING, description: "Mês de referência da leitura" },
-    consumoKwhPonta: { type: Type.STRING, description: "Consumo em kWh - Ponta" },
-    valorConsumoKwhPonta: { type: Type.STRING, description: "Valor (R$) - Consumo em kWh - Ponta" },
-    consumoKwhForaPonta: { type: Type.STRING, description: "Consumo em kWh - Fora Ponta" },
-    valorConsumoKwhForaPonta: { type: Type.STRING, description: "Valor (R$) - Consumo em kWh - Fora Ponta" },
-    valorTotal: { type: Type.STRING, description: "Valor total a pagar (R$)" },
-    cidade: { type: Type.STRING, description: "Cidade da unidade consumidora" },
-    demandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Demanda Potência Não Consumida - Ponta" },
-    demandaPotenciaNaoConsumidaFPonta: { type: Type.STRING, description: "Demanda Potência Não Consumida - F Ponta" },
-    demandaPotenciaAtivaUltrapPonta: { type: Type.STRING, description: "Demanda Potência Ativa - Ultrap - Ponta" },
-    demandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Demanda Potência Ativa - Ultrap - F Ponta" },
-    energiaReativaExcedPonta: { type: Type.STRING, description: "Energia Reativa Exced em KWh - Ponta" },
-    energiaReativaExcedFPonta: { type: Type.STRING, description: "Energia Reativa Exced em KWh - Fponta" },
-    energiaInjetadaKwh: { type: Type.STRING, description: "Energia Injetada em kWh (Geração Distribuída / Solar)" },
-    energiaCompensadaKwh: { type: Type.STRING, description: "Energia Compensada em kWh (Geração Distribuída / Solar)" },
-    valorDemandaPotenciaMedidaPonta: { type: Type.STRING, description: "Valor (R$) - Demanda de Potência Medida - Ponta" },
-    valorDemandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Valor (R$) - Demanda de Potência Medida - Fora Ponta" },
-    valorDemandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Não Consumida - Ponta" },
-    valorDemandaPotenciaNaoConsumidaFPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Não Consumida - F Ponta" },
-    valorDemandaPotenciaAtivaUltrapPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Ativa - Ultrap - Ponta" },
-    valorDemandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Valor (R$) - Demanda Potência Ativa - Ultrap - F Ponta" },
-    valorEnergiaReativaExcedPonta: { type: Type.STRING, description: "Valor (R$) - Energia Reativa Exced em KWh - Ponta" },
-    valorEnergiaReativaExcedFPonta: { type: Type.STRING, description: "Valor (R$) - Energia Reativa Exced em KWh - Fponta" },
-    energiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Energia Atv Injetada GDI oUC em kWh" },
-    valorEnergiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Valor (R$) - Energia Atv Injetada GDI oUC" },
-    energiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Energia Atv Injetada GDI mUC em kWh" },
-    valorEnergiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Valor (R$) - Energia Atv Injetada GDI mUC" },
-    cip: { type: Type.STRING, description: "Valor (R$) da Contribuição de Iluminação Pública (CIP/COSIP)" },
-    outrosEncargos: { type: Type.STRING, description: "Valor (R$) de outros encargos ou adicionais (ex: Adicional Bandeira Amarela/Vermelha)" },
-    pis: { type: Type.STRING, description: "Valor (R$) do PIS" },
-    cofins: { type: Type.STRING, description: "Valor (R$) do COFINS" },
-    icms: { type: Type.STRING, description: "Valor (R$) do ICMS" },
-    concessionaria: { type: Type.STRING, description: "Nome da concessionária (ex: ENERGISA, ELEKTRO)" },
-    numeroNotaFiscal: { type: Type.STRING, description: "Número da Nota Fiscal (NF)" },
-    modalidadeTarifaria: { type: Type.STRING, description: "Modalidade Tarifária (ex: AZUL, VERDE, BRANCA, CONVENCIONAL)" },
-    subgrupo: { type: Type.STRING, description: "Subgrupo tarifário (ex: A4, B1, B3)" }
+    uc: { type: Type.STRING, description: "Código da Unidade Consumidora (UC). Procure por 'CÓDIGO DO CLIENTE'. Extraia apenas o número central (ex: em 10/9000076-1, a UC é 9000076). Ignore prefixos e o dígito após o hífen." },
+    demandaPontaKW: { type: Type.STRING, description: "Demanda contratada na Ponta em kW. Geralmente encontrada na seção 'Grandezas Contratadas' ou 'Dados da Unidade Consumidora'." },
+    demandaForaPontaKW: { type: Type.STRING, description: "Demanda contratada Fora Ponta em kW. Geralmente encontrada na seção 'Grandezas Contratadas'." },
+    demandaPotenciaMedidaPonta: { type: Type.STRING, description: "Demanda de Potência Medida no horário de Ponta (kW). Procure na tabela de 'Itens da Fatura'." },
+    demandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Demanda de Potência Medida no horário Fora Ponta (kW). Procure na tabela de 'Itens da Fatura'." },
+    anoLeitura: { type: Type.STRING, description: "Ano de referência da fatura (ex: 2026)" },
+    mesReferencia: { type: Type.STRING, description: "Mês de referência da fatura (ex: 02 ou Fevereiro)" },
+    consumoKwhPonta: { type: Type.STRING, description: "Quantidade de consumo em kWh no horário de Ponta. Procure por 'Consumo Ponta' ou 'Consumo Ativo Ponta'." },
+    valorConsumoKwhPonta: { type: Type.STRING, description: "Valor total em R$ do consumo no horário de Ponta." },
+    consumoKwhForaPonta: { type: Type.STRING, description: "Quantidade de consumo em kWh no horário Fora Ponta. Procure por 'Consumo Fora Ponta' ou 'Consumo Ativo Fora Ponta'." },
+    valorConsumoKwhForaPonta: { type: Type.STRING, description: "Valor total em R$ do consumo no horário Fora Ponta." },
+    valorTotal: { type: Type.STRING, description: "Valor total da fatura a pagar (R$). Geralmente em destaque." },
+    cidade: { type: Type.STRING, description: "Cidade onde se localiza a Unidade Consumidora." },
+    demandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Demanda de Potência Não Consumida - Ponta (kW)." },
+    demandaPotenciaNaoConsumidaFPonta: { type: Type.STRING, description: "Demanda de Potência Não Consumida - Fora Ponta (kW)." },
+    demandaPotenciaAtivaUltrapPonta: { type: Type.STRING, description: "Demanda de Potência Ativa - Ultrapassagem - Ponta (kW)." },
+    demandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Demanda de Potência Ativa - Ultrapassagem - Fora Ponta (kW)." },
+    energiaReativaExcedPonta: { type: Type.STRING, description: "Energia Reativa Excedente - Ponta (kVArh)." },
+    energiaReativaExcedFPonta: { type: Type.STRING, description: "Energia Reativa Excedente - Fora Ponta (kVArh)." },
+    energiaInjetadaKwh: { type: Type.STRING, description: "Energia Injetada em kWh (Geração Distribuída). Procure por 'Energia Injetada' ou 'GD'." },
+    energiaCompensadaKwh: { type: Type.STRING, description: "Energia Compensada em kWh (Geração Distribuída). Procure por 'Energia Compensada' ou 'Consumo Reaturado'." },
+    valorDemandaPotenciaMedidaPonta: { type: Type.STRING, description: "Valor em R$ da Demanda de Potência Medida - Ponta." },
+    valorDemandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Valor em R$ da Demanda de Potência Medida - Fora Ponta." },
+    valorDemandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Valor em R$ da Demanda Potência Não Consumida - Ponta." },
+    valorDemandaPotenciaNaoConsumidaFPonta: { type: Type.STRING, description: "Valor em R$ da Demanda Potência Não Consumida - Fora Ponta." },
+    valorDemandaPotenciaAtivaUltrapPonta: { type: Type.STRING, description: "Valor em R$ da Demanda Potência Ativa - Ultrapassagem - Ponta." },
+    valorDemandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Valor em R$ da Demanda Potência Ativa - Ultrapassagem - Fora Ponta." },
+    valorEnergiaReativaExcedPonta: { type: Type.STRING, description: "Valor em R$ da Energia Reativa Excedente - Ponta." },
+    valorEnergiaReativaExcedFPonta: { type: Type.STRING, description: "Valor em R$ da Energia Reativa Excedente - Fora Ponta." },
+    energiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Energia Ativa Injetada GDI oUC (kWh)." },
+    valorEnergiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Valor em R$ da Energia Ativa Injetada GDI oUC." },
+    energiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Energia Ativa Injetada GDI mUC (kWh)." },
+    valorEnergiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Valor em R$ da Energia Ativa Injetada GDI mUC." },
+    cip: { type: Type.STRING, description: "Valor em R$ da Contribuição de Iluminação Pública (CIP ou COSIP)." },
+    outrosEncargos: { type: Type.STRING, description: "Soma de outros encargos, multas, juros ou adicionais de bandeira tarifária." },
+    pis: { type: Type.STRING, description: "Valor em R$ do PIS." },
+    cofins: { type: Type.STRING, description: "Valor em R$ do COFINS." },
+    icms: { type: Type.STRING, description: "Valor em R$ do ICMS." },
+    concessionaria: { type: Type.STRING, description: "Nome da empresa concessionária (ex: ENERGISA, ELEKTRO, CPFL)." },
+    numeroNotaFiscal: { type: Type.STRING, description: "Número da Nota Fiscal ou Número da Fatura." },
+    modalidadeTarifaria: { type: Type.STRING, description: "Modalidade Tarifária (ex: AZUL, VERDE, BRANCA, CONVENCIONAL)." },
+    subgrupo: { type: Type.STRING, description: "Subgrupo tarifário (ex: A4, B1, B3)." }
   },
   required: ["uc", "anoLeitura", "mesReferencia"],
 };
@@ -256,14 +256,13 @@ const generateContentWithRetry = async (
       errorCode === 429 || 
       errorStatus === 'RESOURCE_EXHAUSTED' ||
       errorStr.includes('429') || 
-      errorStr.includes('RESOURCE_EXHAUSTED') ||
-      errorStr.includes('quota');
+      errorStr.includes('RESOURCE_EXHAUSTED');
 
     const isTimeout = errorStr.includes('TIMEOUT_API');
     const isLockError = errorStr.includes('Lock broken by another request');
-    const isQuota = errorStr.includes('quota') || errorStr.includes('spending cap') || errorStr.includes('limit reached');
-    const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID');
-    const isNotFound = errorStr.includes('Requested entity was not found');
+    const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('limit reached');
+    const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('invalid');
+    const isNotFound = errorStr.includes('Requested entity was not found') || errorStr.includes('API key not found');
 
     if (isNotFound) {
       if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
@@ -271,7 +270,7 @@ const generateContentWithRetry = async (
       }
       const msg = window.aistudio 
         ? 'Chave de API não encontrada ou inválida. Por favor, selecione uma chave válida.'
-        : 'Chave de API não encontrada ou inválida. Verifique a variável de ambiente GEMINI_API_KEY ou API_KEY no seu painel de controle (ex: Vercel).';
+        : 'Chave de API não encontrada ou não configurada. Verifique a variável de ambiente GEMINI_API_KEY ou API_KEY no seu painel de controle (ex: Vercel).';
       throw new Error(msg);
     }
 
@@ -285,17 +284,17 @@ const generateContentWithRetry = async (
       throw new Error(msg);
     }
 
-    if (retries > 0 && (isRateLimit || isTimeout || isLockError) && !isQuota) {
+    if (retries > 0 && (isRateLimit || isTimeout || isLockError) && !isHardQuota) {
       console.warn(`${isTimeout ? 'Timeout' : isLockError ? 'Lock error' : 'Rate limit'} hit, retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return generateContentWithRetry(ai, params, retries - 1, delay * 2);
     }
     
     // If it's a quota error or we're out of retries, throw
-    if (isQuota) {
+    if (isHardQuota || isRateLimit) {
       const msg = errorStr.includes('spending cap') 
         ? "O limite de gastos do seu projeto foi atingido. Verifique sua conta do Google Cloud (https://ai.google.dev/gemini-api/docs/billing)."
-        : "Cota da API excedida. Verifique seu plano e detalhes de faturamento no Google AI Studio (https://ai.google.dev/gemini-api/docs/billing). " + errorStr;
+        : "Cota da API excedida ou limite de taxa atingido. Verifique seu plano e detalhes de faturamento no Google AI Studio (https://ai.google.dev/gemini-api/docs/billing). " + errorStr;
       const quotaError = new Error(msg);
       (quotaError as any).isQuotaError = true;
       throw quotaError;
@@ -698,7 +697,21 @@ export default function App() {
     const saved = localStorage.getItem('sanesul_bills');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        // One-time fix for Elektro UC from localStorage
+        if (Array.isArray(parsed)) {
+          return parsed.map(b => {
+            const isElektro = (b.concessionaria || '').toUpperCase().includes('ELEKTRO');
+            if (isElektro && b.status === 'completed') {
+              const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
+              if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
+                return { ...b, uc: fileNameNumbers };
+              }
+            }
+            return b;
+          });
+        }
+        return parsed;
       } catch (e) {
         return [];
       }
@@ -748,7 +761,35 @@ export default function App() {
 
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
-          setBills(mappedBills);
+          
+          // Apply Elektro UC fix to data from Supabase
+          let hasChanges = false;
+          const updatedBills = mappedBills.map(b => {
+            const isElektro = (b.concessionaria || '').toUpperCase().includes('ELEKTRO');
+            if (isElektro && b.status === 'completed') {
+              const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
+              if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
+                hasChanges = true;
+                return { ...b, uc: fileNameNumbers };
+              }
+            }
+            return b;
+          });
+
+          setBills(updatedBills);
+
+          // If changes were made, update Supabase sequentially to avoid locking
+          if (hasChanges) {
+            const changedBills = updatedBills.filter((b, i) => b.uc !== mappedBills[i].uc);
+            for (const billToSave of changedBills) {
+              try {
+                const dbData = mapBillDataToDb(billToSave, user.id);
+                await supabase.from('bills').update(dbData).eq('id', billToSave.id);
+              } catch (err) {
+                console.error('Erro ao atualizar UC no Supabase:', err);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error('Erro inesperado ao buscar faturas:', err);
@@ -1239,12 +1280,12 @@ export default function App() {
 
       const base64Data = await base64Promise;
 
-      let prompt = "Extraia os dados desta Fatura Agrupadora. Identifique a concessionária (ELEKTRO ou ENERGISA), valor total, mês de referência, vencimento, número da nota fiscal (AGP... ou número do documento), e valores de impostos (PIS, COFINS, ICMS, CIP). Para Energisa, atente-se aos campos 'Imp. Fed.' (PIS/COFINS) e 'ICMS' no resumo. Se algum valor não for encontrado, retorne 0 ou string vazia.";
+      let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: 02/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.";
       let selectedModel = "gemini-3-flash-preview";
 
       if (reportType === 'detailed') {
         selectedModel = "gemini-3.1-pro-preview";
-        prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado. O objetivo é CALCULAR O TOTAL DA 'COBRANCA ILUM PUBLICA'. \n\nINSTRUÇÕES:\n1. Percorra TODAS as páginas do documento.\n2. Em cada página, procure na tabela de itens faturados pela descrição exata: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n3. Extraia o valor monetário associado a essa linha em cada ocorrência.\n4. SOMA: Some todos os valores encontrados em todas as páginas.\n5. RETORNO: Retorne o JSON preenchendo APENAS o campo 'cip' com o resultado dessa soma. Os campos 'valorTotal', 'pis', 'cofins', 'icms' DEVEM ser 0.\n6. Identifique também a 'concessionaria' (ELEKTRO) e o 'mesReferencia'.";
+        prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA EM FATURAS DE ENERGIA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado para consolidar o valor da CIP.\n\nINSTRUÇÕES DETALHADAS:\n1. Percorra TODAS as páginas do documento, sem exceção.\n2. Em cada página, localize a tabela de itens faturados.\n3. Procure pelas descrições: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n4. Extraia o valor monetário associado a cada uma dessas linhas.\n5. SOMA TOTAL: Você deve somar TODOS os valores encontrados em todas as páginas para obter o total da CIP do grupo.\n6. RETORNO: Retorne o JSON preenchendo o campo 'cip' com a soma total calculada. Os campos 'valorTotal', 'pis', 'cofins', 'icms' devem ser preenchidos como 0, a menos que você encontre um valor consolidado claro para eles no documento.\n7. Identifique a 'concessionaria' e o 'mesReferencia'.";
       }
 
       if (abortController.signal.aborted) throw new Error('Upload cancelado');
@@ -1266,19 +1307,20 @@ export default function App() {
           contents: [
             {
               parts: [
-                { text: prompt },
                 {
                   inlineData: {
                     mimeType: file.type || 'application/pdf',
                     data: base64Data
                   }
-                }
+                },
+                { text: "Extraia os dados desta fatura seguindo as instruções do sistema." }
               ]
             }
           ],
           config: {
             responseMimeType: "application/json",
             responseSchema: AGRUPADORA_SCHEMA,
+            systemInstruction: prompt
           }
         });
       } finally {
@@ -1420,15 +1462,30 @@ export default function App() {
     const completedBills = bills.filter(b => b.status === 'completed');
     if (completedBills.length === 0) return;
 
-    const parsedData = completedBills.map(b => ({
-      mes: b.mesReferencia || 'N/A',
-      ano: b.anoLeitura || '',
-      uc: b.uc || 'N/A',
-      dcp: parseValue(b.demandaPontaKW),
-      dmp: parseValue(b.demandaPotenciaMedidaPonta),
-      dcfp: parseValue(b.demandaForaPontaKW),
-      dmfp: parseValue(b.demandaPotenciaMedidaForaPonta)
-    })).filter(d => d.dcp > 0 || d.dcfp > 0);
+    const parsedData = completedBills.map(b => {
+      let dmp = parseValue(b.demandaPotenciaMedidaPonta);
+      
+      // Correção manual para UC 3401807 em Dezembro/2025 conforme solicitado pelo usuário
+      // O usuário informou que houve uma leitura incorreta da demanda medida ponta neste mês.
+      const isUC3401807 = String(b.uc) === '3401807';
+      const isDec2025 = (b.mesReferencia?.toLowerCase() === 'dezembro' || b.mesReferencia === '12' || b.mesReferencia === '12/2025') && b.anoLeitura === '2025';
+      
+      if (isUC3401807 && isDec2025) {
+        // Se a leitura foi incorreta (provavelmente um pico errôneo), ajustamos para 0 
+        // para que não influencie o cálculo da demanda ideal (que usa o máximo do período).
+        dmp = 0;
+      }
+
+      return {
+        mes: b.mesReferencia || 'N/A',
+        ano: b.anoLeitura || '',
+        uc: b.uc || 'N/A',
+        dcp: parseValue(b.demandaPontaKW),
+        dmp: dmp,
+        dcfp: parseValue(b.demandaForaPontaKW),
+        dmfp: parseValue(b.demandaPotenciaMedidaForaPonta)
+      };
+    }).filter(d => d.dcp > 0 || d.dcfp > 0);
 
     // 2. Calculate Optimal Fixed Demand (Resolução 1000)
     // The optimal fixed demand is the one that minimizes the total cost over the period.
@@ -1438,6 +1495,10 @@ export default function App() {
 
     ucs.forEach(uc => {
       const ucData = parsedData.filter(d => d.uc === uc);
+      // Verifica se a UC tem contrato de ponta (ex: Tarifa Azul)
+      // Se dcp for 0 em todos os meses, não sugerimos valor para ponta (ex: Tarifa Verde)
+      const hasPontaContract = ucData.some(d => d.dcp > 0);
+      
       const maxDmp = Math.max(...ucData.map(d => d.dmp));
       const maxDmfp = Math.max(...ucData.map(d => d.dmfp));
       
@@ -1447,7 +1508,7 @@ export default function App() {
       };
 
       optimalDemands[String(uc)] = {
-        ponta: roundDemand(maxDmp),
+        ponta: hasPontaContract ? roundDemand(maxDmp) : 0,
         foraPonta: Math.max(30, roundDemand(maxDmfp))
       };
     });
@@ -1463,23 +1524,28 @@ export default function App() {
       if (!opt) return [];
 
       // Current Cost
-      const costPonta = dmp > dcp * 1.05 ? (dcp * tp) + ((dmp - dcp) * tp * 2) : (Math.max(dmp, dcp) * tp);
+      // Se dcp for 0, não analisamos a ponta (conforme pedido do usuário)
+      const costPonta = dcp > 0 
+        ? (dmp > dcp * 1.05 ? (dcp * tp) + ((dmp - dcp) * tp * 2) : (Math.max(dmp, dcp) * tp))
+        : 0;
       const costForaPonta = dmfp > dcfp * 1.05 ? (dcfp * tfp) + ((dmfp - dcfp) * tfp * 2) : (Math.max(dmfp, dcfp) * tfp);
       const currentTotal = costPonta + costForaPonta;
 
       // Optimized Cost (using the FIXED optimal demand)
-      const optCostPonta = dmp > opt.ponta * 1.05 ? (opt.ponta * tp) + ((dmp - opt.ponta) * tp * 2) : (Math.max(dmp, opt.ponta) * tp);
+      const optCostPonta = (dcp > 0 && opt.ponta > 0)
+        ? (dmp > opt.ponta * 1.05 ? (opt.ponta * tp) + ((dmp - opt.ponta) * tp * 2) : (Math.max(dmp, opt.ponta) * tp))
+        : 0;
       const optCostForaPonta = dmfp > opt.foraPonta * 1.05 ? (opt.foraPonta * tfp) + ((dmfp - opt.foraPonta) * tfp * 2) : (Math.max(dmfp, opt.foraPonta) * tfp);
       const optimizedTotal = optCostPonta + optCostForaPonta;
       
       const economy = currentTotal - optimizedTotal;
 
       // Ultrapassagem
-      const overrunPonta = dmp > dcp * 1.05 ? dmp - dcp : 0;
+      const overrunPonta = (dcp > 0 && dmp > dcp * 1.05) ? dmp - dcp : 0;
       const overrunForaPonta = dmfp > dcfp * 1.05 ? dmfp - dcfp : 0;
 
       // Subutilização
-      const subPonta = dmp < dcp ? dcp - dmp : 0;
+      const subPonta = (dcp > 0 && dmp < dcp) ? dcp - dmp : 0;
       const subForaPonta = dmfp < dcfp ? dcfp - dmfp : 0;
 
       return [{
@@ -1793,7 +1859,7 @@ export default function App() {
           contents: [
             {
               parts: [
-                { text: "Extraia os dados solicitados desta fatura de energia. IMPORTANTE: A Unidade Consumidora (UC) deve ser extraída do campo 'CÓDIGO DO CLIENTE' (apenas os números entre a barra e o hífen, ex: 9000076). NÃO inclua o hífen nem os números após ele. NÃO use o 'CÓDIGO DA INSTALAÇÃO' que começa com W. ATENÇÃO: Verifique com muito cuidado os valores de Demanda Medida Ponta e Fora Ponta. Certifique-se de extrair todos os dígitos antes da vírgula (ex: 410,93 e não 40,93). Se um valor não for encontrado, deixe em branco." },
+                { text: "Você é um especialista em análise de faturas de energia elétrica. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS CRÍTICAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para faturas da ENERGISA: Procure pelo campo 'CÓDIGO DO CLIENTE'. A UC são os números centrais (ex: em 10/9000076-1, a UC é 9000076). Ignore o dígito após o hífen e o prefixo antes da barra.\n   - Para faturas da ELEKTRO: A UC é o mesmo número do 'Código da Instalação'. Se o arquivo for 41554175.pdf, a UC é 41554175. Extraia apenas os números.\n2. VALORES NUMÉRICOS: Extraia os valores exatamente como aparecem, mas certifique-se de capturar todos os dígitos antes e depois da vírgula. Erros comuns incluem ignorar o primeiro dígito de valores altos (ex: capturar 10,00 em vez de 410,00).\n3. DEMANDA (kW): Diferencie claramente entre 'Demanda Contratada' (geralmente em 'Grandezas Contratadas') e 'Demanda Medida' (geralmente em 'Itens da Fatura').\n4. CONSUMO (kWh): Procure na tabela de itens da fatura. Extraia o consumo Ponta e Fora Ponta separadamente.\n5. GERAÇÃO DISTRIBUÍDA (GD): Procure por termos como 'Energia Injetada', 'Energia Compensada', 'GDI', 'GD III', 'Saldo Anterior'.\n6. TRIBUTOS: Extraia PIS, COFINS e ICMS. Nas faturas da ELEKTRO, procure pela tabela 'Demonstrativo de Tributos' ou 'Base de Cálculo'. Extraia os valores totais de cada tributo.\n7. CIP/COSIP: Procure pelo valor da Contribuição de Iluminação Pública. Pode estar como 'CIP', 'COSIP' ou 'Contrib. Ilum. Pública'.\n8. CONCESSIONÁRIA: Identifique claramente se é ELEKTRO ou ENERGISA.\n\nSe um campo não estiver presente ou for impossível de ler, deixe em branco. NÃO invente dados." },
                 {
                   inlineData: {
                     mimeType: bill.file?.type || 'application/pdf',
@@ -1806,6 +1872,7 @@ export default function App() {
           config: {
             responseMimeType: "application/json",
             responseSchema: EXTRACTION_SCHEMA,
+            systemInstruction: "Você é um especialista em análise de faturas de energia elétrica. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS CRÍTICAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para faturas da ENERGISA: Procure pelo campo 'CÓDIGO DO CLIENTE'. A UC são os números centrais (ex: em 10/9000076-1, a UC é 9000076). Ignore o dígito após o hífen e o prefixo antes da barra.\n   - Para faturas da ELEKTRO: A UC é o mesmo número do 'Código da Instalação'. Se o arquivo for 41554175.pdf, a UC é 41554175. Extraia apenas os números.\n2. VALORES NUMÉRICOS: Extraia os valores exatamente como aparecem, mas certifique-se de capturar todos os dígitos antes e depois da vírgula. Erros comuns incluem ignorar o primeiro dígito de valores altos (ex: capturar 10,00 em vez de 410,00).\n3. DEMANDA (kW): Diferencie claramente entre 'Demanda Contratada' (geralmente em 'Grandezas Contratadas') e 'Demanda Medida' (geralmente em 'Itens da Fatura').\n4. CONSUMO (kWh): Procure na tabela de itens da fatura. Extraia o consumo Ponta e Fora Ponta separadamente.\n5. GERAÇÃO DISTRIBUÍDA (GD): Procure por termos como 'Energia Injetada', 'Energia Compensada', 'GDI', 'GD III', 'Saldo Anterior'.\n6. TRIBUTOS: Extraia PIS, COFINS e ICMS. Nas faturas da ELEKTRO, procure pela tabela 'Demonstrativo de Tributos' ou 'Base de Cálculo'. Extraia os valores totais de cada tributo.\n7. CIP/COSIP: Procure pelo valor da Contribuição de Iluminação Pública. Pode estar como 'CIP', 'COSIP' ou 'Contrib. Ilum. Pública'.\n8. CONCESSIONÁRIA: Identifique claramente se é ELEKTRO ou ENERGISA.\n\nSe um campo não estiver presente ou for impossível de ler, deixe em branco. NÃO invente dados."
           }
         });
       } finally {
@@ -1823,8 +1890,17 @@ export default function App() {
           throw new Error('Falha ao interpretar a resposta da IA. O formato retornado não é um JSON válido.');
         }
         
+        // Force UC to be the filename numbers for Elektro as requested by the user
+        const concessionaria = (result.concessionaria || '').toUpperCase();
+        if (concessionaria.includes('ELEKTRO')) {
+          const fileNameNumbers = bill.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
+          if (fileNameNumbers.length >= 5) {
+            result.uc = fileNameNumbers;
+          }
+        }
+
         if (result.uc) {
-          result.uc = result.uc.split('-')[0].trim();
+          result.uc = result.uc.replace(/UC:?\s*/i, '').split('-')[0].trim();
         }
 
       const isDuplicate = bills.some(b => {
@@ -1951,7 +2027,10 @@ export default function App() {
     const maxConcurrency = 3;
     const initialWorkers = Math.min(maxConcurrency, queue.length);
 
-    const runWorker = async () => {
+    const runWorker = async (workerId: number) => {
+      // Add a small staggered start for workers to avoid simultaneous requests
+      await new Promise(resolve => setTimeout(resolve, workerId * 1000));
+      
       while (queue.length > 0) {
         const bill = queue.shift();
         if (!bill) break;
@@ -1961,18 +2040,18 @@ export default function App() {
         setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'processing', error: undefined, abortController, progress: 0 } : b));
         
         try {
-          console.log(`[Worker] Iniciando processamento de: ${bill.fileName} (Restam: ${queue.length})`);
+          console.log(`[Worker ${workerId}] Iniciando processamento de: ${bill.fileName} (Restam: ${queue.length})`);
           await processFile({ ...bill, abortController } as any);
-          console.log(`[Worker] Concluído processamento de: ${bill.fileName}`);
+          console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
         } catch (error) {
-          console.error(`[Worker] Erro crítico no processamento de ${bill.fileName}:`, error);
+          console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
         }
       }
     };
 
     const workers = [];
     for (let i = 0; i < initialWorkers; i++) {
-      workers.push(runWorker());
+      workers.push(runWorker(i));
     }
 
     await Promise.all(workers);
@@ -1987,6 +2066,7 @@ export default function App() {
   const [selectedBills, setSelectedBills] = useState<string[]>([]);
   const [monitoringResults, setMonitoringResults] = useState<any>(null);
   const [expandedUCs, setExpandedUCs] = useState<Set<string>>(new Set());
+  const [expandedAnalysisUCs, setExpandedAnalysisUCs] = useState<Set<string>>(new Set());
   const [expandedSummaryCities, setExpandedSummaryCities] = useState<Set<string>>(new Set());
 
   const toggleSummaryCity = (city: string) => {
@@ -2000,6 +2080,15 @@ export default function App() {
 
   const toggleUCExpansion = (uc: string) => {
     setExpandedUCs(prev => {
+      const next = new Set(prev);
+      if (next.has(uc)) next.delete(uc);
+      else next.add(uc);
+      return next;
+    });
+  };
+
+  const toggleAnalysisUCExpansion = (uc: string) => {
+    setExpandedAnalysisUCs(prev => {
       const next = new Set(prev);
       if (next.has(uc)) next.delete(uc);
       else next.add(uc);
@@ -2444,11 +2533,11 @@ export default function App() {
     const sum = (arr: any[], field: string) => arr.reduce((acc, curr) => acc + (curr[field] || 0), 0);
 
     const energisaData = agrupadoraFiles['ENERGISA'] ? {
-      total: agrupadoraFiles['ENERGISA'].valorTotal,
-      pis: agrupadoraFiles['ENERGISA'].pis,
-      cofins: agrupadoraFiles['ENERGISA'].cofins,
-      icms: agrupadoraFiles['ENERGISA'].icms,
-      cip: agrupadoraFiles['ENERGISA'].cip,
+      total: agrupadoraFiles['ENERGISA'].valorTotal || 0,
+      pis: agrupadoraFiles['ENERGISA'].pis || 0,
+      cofins: agrupadoraFiles['ENERGISA'].cofins || 0,
+      icms: agrupadoraFiles['ENERGISA'].icms || 0,
+      cip: agrupadoraFiles['ENERGISA'].cip || 0,
       nf: agrupadoraFiles['ENERGISA'].numeroNotaFiscal,
       mesRef: agrupadoraFiles['ENERGISA'].mesReferencia
     } : {
@@ -2462,11 +2551,11 @@ export default function App() {
     };
 
     const elektroData = agrupadoraFiles['ELEKTRO'] ? {
-      total: agrupadoraFiles['ELEKTRO'].valorTotal,
-      pis: agrupadoraFiles['ELEKTRO'].pis,
-      cofins: agrupadoraFiles['ELEKTRO'].cofins,
-      icms: agrupadoraFiles['ELEKTRO'].icms,
-      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || agrupadoraFiles['ELEKTRO'].cip,
+      total: agrupadoraFiles['ELEKTRO'].valorTotal || 0,
+      pis: agrupadoraFiles['ELEKTRO'].pis || 0,
+      cofins: agrupadoraFiles['ELEKTRO'].cofins || 0,
+      icms: agrupadoraFiles['ELEKTRO'].icms || 0,
+      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || agrupadoraFiles['ELEKTRO'].cip || 0,
       nf: agrupadoraFiles['ELEKTRO'].numeroNotaFiscal,
       mesRef: agrupadoraFiles['ELEKTRO'].mesReferencia
     } : {
@@ -2474,7 +2563,7 @@ export default function App() {
       pis: sum(elektro, 'pis'),
       cofins: sum(elektro, 'cofins'),
       icms: sum(elektro, 'icms'),
-      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || sum(elektro, 'cip'),
+      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || sum(elektro, 'cip') || 0,
       nf: elektro.map(e => e.numeroNotaFiscal).filter(Boolean).join(', ') || '-',
       mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
     };
@@ -4015,77 +4104,99 @@ export default function App() {
                     <table className="w-full border-collapse bg-white text-left">
                       <thead>
                         <tr className="bg-slate-50">
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 w-10"></th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">UC</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">Mês/Ano</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Contratada (P/FP)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Medida (P/FP)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-red-600 border-b border-sanesul-primary/5 text-right">Ultrapassagem</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-orange-600 border-b border-sanesul-primary/5 text-right">Subutilização</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Demanda Ideal</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Meses Analisados</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {analysisResults.map((result: any, idx: number) => (
-                          <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="font-bold text-sanesul-primary text-xs">{result.uc}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="font-bold text-slate-700 text-xs">{result.mes} {result.ano ? `/ ${result.ano}` : ''}</div>
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="text-xs font-mono text-slate-600">{result.dcp.toFixed(2)} / {result.dcfp.toFixed(2)} kW</div>
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="text-xs font-mono font-bold text-sanesul-primary">{result.dmp.toFixed(2)} / {result.dmfp.toFixed(2)} kW</div>
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              {result.isOverrun ? (
-                                <div className="flex flex-col items-end gap-1">
-                                  {result.overrunPonta > 0 && (
-                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold">
-                                      <AlertCircle size={10} />
-                                      P: +{result.overrunPonta.toFixed(2)} kW
-                                    </div>
-                                  )}
-                                  {result.overrunForaPonta > 0 && (
-                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold">
-                                      <AlertCircle size={10} />
-                                      FP: +{result.overrunForaPonta.toFixed(2)} kW
-                                    </div>
-                                  )}
+                        {Object.values(analysisResults.reduce((acc: any, curr: any) => {
+                          if (!acc[curr.uc]) {
+                            acc[curr.uc] = {
+                              uc: curr.uc,
+                              months: [],
+                              optimizedPonta: curr.optimizedPonta,
+                              optimizedForaPonta: curr.optimizedForaPonta,
+                              dcp: curr.dcp,
+                              dcfp: curr.dcfp
+                            };
+                          }
+                          acc[curr.uc].months.push(curr);
+                          return acc;
+                        }, {})).map((group: any, idx: number) => (
+                          <React.Fragment key={idx}>
+                            <tr 
+                              className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${expandedAnalysisUCs.has(group.uc) ? 'bg-slate-50/80' : ''}`}
+                              onClick={() => toggleAnalysisUCExpansion(group.uc)}
+                            >
+                              <td className="px-6 py-4 text-center">
+                                <ChevronRight size={16} className={`text-sanesul-muted transition-transform ${expandedAnalysisUCs.has(group.uc) ? 'rotate-90' : ''}`} />
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="font-bold text-sanesul-primary text-xs">{group.uc}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-xs font-mono text-slate-600">{group.dcp > 0 ? group.dcp.toFixed(2) : '-'} / {group.dcfp.toFixed(2)} kW</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-xs font-mono font-bold text-green-600">
+                                  {group.optimizedPonta > 0 ? group.optimizedPonta.toFixed(2) : '-'} / {group.optimizedForaPonta.toFixed(2)} kW
                                 </div>
-                              ) : (
-                                <span className="text-slate-300 text-[10px]">-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              {result.isSub ? (
-                                <div className="flex flex-col items-end gap-1">
-                                  {result.subPonta > 0 && (
-                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 rounded text-[10px] font-bold">
-                                      <TrendingDown size={10} />
-                                      P: -{result.subPonta.toFixed(2)} kW
-                                    </div>
-                                  )}
-                                  {result.subForaPonta > 0 && (
-                                    <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 rounded text-[10px] font-bold">
-                                      <TrendingDown size={10} />
-                                      FP: -{result.subForaPonta.toFixed(2)} kW
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-slate-300 text-[10px]">-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="text-xs font-mono font-bold text-green-600">
-                                {result.optimizedPonta.toFixed(2)} / {result.optimizedForaPonta.toFixed(2)} kW
-                              </div>
-                              <div className="text-[9px] text-green-500 uppercase font-bold tracking-tighter">Ideal Fixo (1 Ano)</div>
-                            </td>
-                          </tr>
+                                <div className="text-[9px] text-green-500 uppercase font-bold tracking-tighter">Ideal Fixo (1 Ano)</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-xs font-bold text-slate-500">{group.months.length} meses</div>
+                              </td>
+                            </tr>
+                            {expandedAnalysisUCs.has(group.uc) && (
+                              <tr>
+                                <td colSpan={5} className="px-10 py-4 bg-slate-50/30">
+                                  <div className="overflow-hidden rounded-xl border border-slate-200 shadow-inner">
+                                    <table className="w-full text-left border-collapse bg-white">
+                                      <thead>
+                                        <tr className="bg-slate-100/50">
+                                          <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-500">Mês/Ano</th>
+                                          <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-500 text-right">Medida (P/FP)</th>
+                                          <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-red-600 text-right">Ultrapassagem</th>
+                                          <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-orange-600 text-right">Subutilização</th>
+                                          <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-green-600 text-right">Economia</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {group.months.map((month: any, mIdx: number) => (
+                                          <tr key={mIdx} className="hover:bg-slate-50/30 transition-colors">
+                                            <td className="px-4 py-2 text-xs font-bold text-slate-700">{month.mes} {month.ano ? `/ ${month.ano}` : ''}</td>
+                                            <td className="px-4 py-2 text-right text-xs font-mono font-bold text-sanesul-primary">{month.dcp > 0 ? month.dmp.toFixed(2) : '-'} / {month.dmfp.toFixed(2)} kW</td>
+                                            <td className="px-4 py-2 text-right">
+                                              {month.isOverrun ? (
+                                                <div className="flex flex-col items-end gap-0.5">
+                                                  {month.overrunPonta > 0 && <span className="text-[9px] font-bold text-red-600">P: +{month.overrunPonta.toFixed(2)}</span>}
+                                                  {month.overrunForaPonta > 0 && <span className="text-[9px] font-bold text-red-600">FP: +{month.overrunForaPonta.toFixed(2)}</span>}
+                                                </div>
+                                              ) : <span className="text-slate-300 text-[9px]">-</span>}
+                                            </td>
+                                            <td className="px-4 py-2 text-right">
+                                              {month.isSub ? (
+                                                <div className="flex flex-col items-end gap-0.5">
+                                                  {month.subPonta > 0 && <span className="text-[9px] font-bold text-orange-600">P: -{month.subPonta.toFixed(2)}</span>}
+                                                  {month.subForaPonta > 0 && <span className="text-[9px] font-bold text-orange-600">FP: -{month.subForaPonta.toFixed(2)}</span>}
+                                                </div>
+                                              ) : <span className="text-slate-300 text-[9px]">-</span>}
+                                            </td>
+                                            <td className="px-4 py-2 text-right text-xs font-mono font-bold text-green-600">
+                                              R$ {month.economy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>
@@ -4710,19 +4821,19 @@ export default function App() {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">PIS</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.pis, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.energisa.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">COFINS</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.cofins, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.energisa.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">ICMS</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.icms, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.energisa.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between items-center p-4 bg-sanesul-primary/5 rounded-2xl border border-sanesul-primary/10">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-primary">CIP MUNICIPAL</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ENERGISA')).reduce((acc, curr) => acc + curr.cip, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.energisa.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>
@@ -4735,19 +4846,19 @@ export default function App() {
                 <div className="space-y-6">
                   <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">PIS</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.pis, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.elektro.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">COFINS</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.cofins, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.elektro.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-muted">ICMS</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.icms, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.elektro.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between items-center p-4 bg-sanesul-primary/5 rounded-2xl border border-sanesul-primary/10">
                     <span className="text-xs font-bold uppercase tracking-wider text-sanesul-primary">CIP MUNICIPAL</span>
-                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {filteredRelatorioData.filter(d => d.concessionaria?.toUpperCase().includes('ELEKTRO')).reduce((acc, curr) => acc + curr.cip, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-xl font-display font-bold text-sanesul-primary">R$ {memoData.elektro.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>
