@@ -126,7 +126,7 @@ const EXTRACTION_SCHEMA = {
     demandaPotenciaMedidaPonta: { type: Type.STRING, description: "Demanda de Potência Medida no horário de Ponta (kW). Procure na tabela de 'Itens da Fatura'." },
     demandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Demanda de Potência Medida no horário Fora Ponta (kW). Procure na tabela de 'Itens da Fatura'." },
     anoLeitura: { type: Type.STRING, description: "Ano de referência da fatura (ex: 2026)" },
-    mesReferencia: { type: Type.STRING, description: "Mês de referência da fatura (ex: 02 ou Fevereiro)" },
+    mesReferencia: { type: Type.STRING, description: "Mês de referência da fatura (ex: Fevereiro)" },
     consumoKwhPonta: { type: Type.STRING, description: "Quantidade de consumo em kWh no horário de Ponta. Procure por 'Consumo Ponta' ou 'Consumo Ativo Ponta'." },
     valorConsumoKwhPonta: { type: Type.STRING, description: "Valor total em R$ do consumo no horário de Ponta." },
     consumoKwhForaPonta: { type: Type.STRING, description: "Quantidade de consumo em kWh no horário Fora Ponta. Procure por 'Consumo Fora Ponta' ou 'Consumo Ativo Fora Ponta'." },
@@ -171,7 +171,7 @@ const AGRUPADORA_SCHEMA = {
   properties: {
     concessionaria: { type: Type.STRING, description: "Nome da concessionária (ex: ELEKTRO, ENERGISA)" },
     valorTotal: { type: Type.STRING, description: "Valor total da fatura (R$)" },
-    mesReferencia: { type: Type.STRING, description: "Mês/Ano de referência (ex: 02/2026)" },
+    mesReferencia: { type: Type.STRING, description: "Mês/Ano de referência (ex: Fevereiro/2026)" },
     vencimento: { type: Type.STRING, description: "Data de vencimento" },
     numeroNotaFiscal: { type: Type.STRING, description: "Número da Nota Fiscal ou Fatura (ex: AGP-01...)" },
     pis: { type: Type.STRING, description: "Valor do PIS (R$)" },
@@ -327,6 +327,50 @@ const parseValue = (val: string | number) => {
   
   const parsed = parseFloat(str);
   return isNaN(parsed) ? 0 : parsed;
+};
+
+const formatMonth = (month: string) => {
+  if (!month) return '';
+  const monthMap: Record<string, string> = {
+    '01': 'Janeiro', '1': 'Janeiro', 'janeiro': 'Janeiro',
+    '02': 'Fevereiro', '2': 'Fevereiro', 'fevereiro': 'Fevereiro',
+    '03': 'Março', '3': 'Março', 'março': 'Março', 'marco': 'Março',
+    '04': 'Abril', '4': 'Abril', 'abril': 'Abril',
+    '05': 'Maio', '5': 'Maio', 'maio': 'Maio',
+    '06': 'Junho', '6': 'Junho', 'junho': 'Junho',
+    '07': 'Julho', '7': 'Julho', 'julho': 'Julho',
+    '08': 'Agosto', '8': 'Agosto', 'agosto': 'Agosto',
+    '09': 'Setembro', '9': 'Setembro', 'setembro': 'Setembro',
+    '10': 'Outubro', 'outubro': 'Outubro',
+    '11': 'Novembro', 'novembro': 'Novembro',
+    '12': 'Dezembro', 'dezembro': 'Dezembro'
+  };
+  const normalized = month.toString().toLowerCase().trim();
+  return monthMap[normalized] || month;
+};
+
+const getMonthNumber = (month: string) => {
+  if (!month) return 0;
+  const monthOrder: Record<string, number> = {
+    'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
+    'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
+    'outubro': 10, 'novembro': 11, 'dezembro': 12,
+    '01': 1, '02': 2, '03': 3, '04': 4, '05': 5, '06': 6,
+    '07': 7, '08': 8, '09': 9, '10': 10, '11': 11, '12': 12,
+    '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9
+  };
+  return monthOrder[month.toLowerCase().trim()] || 0;
+};
+
+const formatReference = (ref: string) => {
+  if (!ref) return '';
+  if (ref.includes('/')) {
+    const parts = ref.split('/');
+    if (parts.length === 2) {
+      return `${formatMonth(parts[0])}/${parts[1]}`;
+    }
+  }
+  return formatMonth(ref);
 };
 
 const mapDbToBillData = (dbBill: any): BillData => ({
@@ -1072,26 +1116,21 @@ export default function App() {
     const refs = new Set<string>();
     bills.forEach(b => {
       if (b.mesReferencia && b.anoLeitura) {
-        refs.add(`${b.mesReferencia}/${b.anoLeitura}`);
+        refs.add(`${formatMonth(b.mesReferencia)}/${b.anoLeitura}`);
       }
     });
     return Array.from(refs).sort((a, b) => {
       const [mA, yA] = a.split('/');
       const [mB, yB] = b.split('/');
-      const monthOrder: Record<string, number> = {
-        'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
-        'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
-        'outubro': 10, 'novembro': 11, 'dezembro': 12
-      };
       if (yA !== yB) return parseInt(yB) - parseInt(yA);
-      return (monthOrder[mB.toLowerCase()] || 0) - (monthOrder[mA.toLowerCase()] || 0);
+      return getMonthNumber(mB) - getMonthNumber(mA);
     });
   }, [bills]);
 
   const sortedBills = React.useMemo(() => {
     let filtered = [...bills];
     if (filterReference !== 'all') {
-      filtered = filtered.filter(b => `${b.mesReferencia}/${b.anoLeitura}` === filterReference);
+      filtered = filtered.filter(b => `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` === filterReference);
     }
     let sortableBills = filtered;
     
@@ -1111,12 +1150,6 @@ export default function App() {
       }
 
       if (sortConfig !== null) {
-        const monthOrder: Record<string, number> = {
-          'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
-          'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
-          'outubro': 10, 'novembro': 11, 'dezembro': 12
-        };
-
         const extractNumericValue = (str: string | number) => {
           const s = String(str);
           const matches = s.match(/\d+/g);
@@ -1127,8 +1160,8 @@ export default function App() {
         let bValue: any;
 
         if (sortConfig.key === 'referencia') {
-          const monthA = monthOrder[a.mesReferencia?.toLowerCase()] || 0;
-          const monthB = monthOrder[b.mesReferencia?.toLowerCase()] || 0;
+          const monthA = getMonthNumber(a.mesReferencia);
+          const monthB = getMonthNumber(b.mesReferencia);
           aValue = parseInt(a.anoLeitura || '0', 10) * 100 + monthA;
           bValue = parseInt(b.anoLeitura || '0', 10) * 100 + monthB;
         } else if (sortConfig.key === 'uc') {
@@ -1160,6 +1193,7 @@ export default function App() {
   const [financialSubTab, setFinancialSubTab] = useState<'despesas' | 'multa_ultrapassagem' | 'multa_reativa' | 'tarifa_media' | 'energia_solar'>('despesas');
   const [selectedUC, setSelectedUC] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedConcessionaria, setSelectedConcessionaria] = useState<string>('all');
   const [selectedRelatorioMonth, setSelectedRelatorioMonth] = useState<string>('all');
   const [dashboardSort, setDashboardSort] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'name', direction: 'desc' });
   const [showMemo, setShowMemo] = useState(false);
@@ -1280,7 +1314,7 @@ export default function App() {
 
       const base64Data = await base64Promise;
 
-      let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: 02/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.";
+      let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: Fevereiro/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.";
       let selectedModel = "gemini-3-flash-preview";
 
       if (reportType === 'detailed') {
@@ -1591,13 +1625,6 @@ export default function App() {
     const tp = 15.00; 
     const tfp = 10.00;
 
-    const monthOrder: Record<string, number> = {
-      'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
-      'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
-      'outubro': 10, 'novembro': 11, 'dezembro': 12
-    };
-
-    const getMonthNumber = (month: string) => monthOrder[month.toLowerCase()] || 0;
     const getYear = (year: string) => parseInt(year || '0', 10);
 
     // Get all unique UCs
@@ -2385,7 +2412,7 @@ export default function App() {
 
 
   const dashboardData = completedBills.map(b => ({
-    name: `${b.mesReferencia}/${b.anoLeitura}`,
+    name: `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`,
     uc: b.uc,
     consumoPonta: parseValue(b.consumoKwhPonta),
     valorConsumoPonta: parseValue(b.valorConsumoKwhPonta),
@@ -2430,14 +2457,15 @@ export default function App() {
     const [mA, yA] = String(a).split('/');
     const [mB, yB] = String(b).split('/');
     if (yA !== yB) return Number(yA) - Number(yB);
-    return Number(mA) - Number(mB);
+    return getMonthNumber(mA) - getMonthNumber(mB);
   });
 
   const filteredDashboardData = dashboardData.filter(d => {
     const matchesUC = !selectedUC || selectedUC === 'all' || d.uc.toString().includes(selectedUC);
     const matchesMonth = selectedMonth === 'all' || d.name === selectedMonth;
+    const matchesConcessionaria = selectedConcessionaria === 'all' || d.concessionaria === selectedConcessionaria;
     
-    if (!matchesUC || !matchesMonth) return false;
+    if (!matchesUC || !matchesMonth || !matchesConcessionaria) return false;
 
     if (dashboardSubTab === 'financeiro' && financialSubTab === 'energia_solar') {
       const totalCreditos = Math.abs(d.valorSolarOUC + d.valorSolarMUC);
@@ -2475,7 +2503,8 @@ export default function App() {
   const generalFilteredData = dashboardData.filter(d => {
     const matchesUC = !selectedUC || selectedUC === 'all' || d.uc.toString().includes(selectedUC);
     const matchesMonth = selectedMonth === 'all' || d.name === selectedMonth;
-    return matchesUC && matchesMonth;
+    const matchesConcessionaria = selectedConcessionaria === 'all' || d.concessionaria === selectedConcessionaria;
+    return matchesUC && matchesMonth && matchesConcessionaria;
   });
 
   const filteredRelatorioData = dashboardData.filter(d => {
@@ -2493,8 +2522,8 @@ export default function App() {
         case 'name':
           const [mA, yA] = a.name.split('/');
           const [mB, yB] = b.name.split('/');
-          aValue = Number(yA) * 12 + Number(mA);
-          bValue = Number(yB) * 12 + Number(mB);
+          aValue = Number(yA) * 12 + getMonthNumber(mA);
+          bValue = Number(yB) * 12 + getMonthNumber(mB);
           break;
         case 'uc':
           aValue = a.uc;
@@ -2539,7 +2568,7 @@ export default function App() {
       icms: agrupadoraFiles['ENERGISA'].icms || 0,
       cip: agrupadoraFiles['ENERGISA'].cip || 0,
       nf: agrupadoraFiles['ENERGISA'].numeroNotaFiscal,
-      mesRef: agrupadoraFiles['ENERGISA'].mesReferencia
+      mesRef: formatReference(agrupadoraFiles['ENERGISA'].mesReferencia)
     } : {
       total: sum(energisa, 'valorTotal'),
       pis: sum(energisa, 'pis'),
@@ -2557,7 +2586,7 @@ export default function App() {
       icms: agrupadoraFiles['ELEKTRO'].icms || 0,
       cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || agrupadoraFiles['ELEKTRO'].cip || 0,
       nf: agrupadoraFiles['ELEKTRO'].numeroNotaFiscal,
-      mesRef: agrupadoraFiles['ELEKTRO'].mesReferencia
+      mesRef: formatReference(agrupadoraFiles['ELEKTRO'].mesReferencia)
     } : {
       total: sum(elektro, 'valorTotal'),
       pis: sum(elektro, 'pis'),
@@ -2804,7 +2833,7 @@ export default function App() {
                   status: 'completed',
                   tipo: 'OPERACIONAL',
                   concessionaria: 'ENERGISA',
-                  mesReferencia: new Date().toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' }),
+                  mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, '0'))}/${new Date().getFullYear()}`,
                   anoLeitura: new Date().getFullYear().toString()
                 });
                 setIsBillModalOpen(true);
@@ -3170,7 +3199,7 @@ export default function App() {
                                 <span className="text-xs font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
                                 {bill.uc && bills.filter(b => 
                                   String(b.uc).trim() === String(bill.uc).trim() && 
-                                  `${String(b.mesReferencia).trim()}/${String(b.anoLeitura).trim()}` === `${String(bill.mesReferencia).trim()}/${String(bill.anoLeitura).trim()}`
+                                  `${formatMonth(b.mesReferencia)}/${String(b.anoLeitura).trim()}` === `${formatMonth(bill.mesReferencia)}/${String(bill.anoLeitura).trim()}`
                                 ).length > 1 && (
                                   <span className="text-[9px] text-red-500 font-bold flex items-center gap-1 mt-1">
                                     <AlertCircle size={10} /> DUPLICADA
@@ -3191,7 +3220,7 @@ export default function App() {
                             </td>
                             <td className="px-4 py-3">
                               <span className="text-xs text-slate-600">
-                                {bill.mesReferencia && bill.anoLeitura ? `${bill.mesReferencia}/${bill.anoLeitura}` : '---'}
+                                {bill.mesReferencia && bill.anoLeitura ? `${formatMonth(bill.mesReferencia)}/${bill.anoLeitura}` : '---'}
                               </span>
                             </td>
                             <td className="px-4 py-3">
@@ -3419,6 +3448,18 @@ export default function App() {
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-sanesul-primary/10 shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted ml-2">Concessionária:</span>
+                    <select 
+                      value={selectedConcessionaria}
+                      onChange={(e) => setSelectedConcessionaria(e.target.value)}
+                      className="bg-sanesul-bg border-none px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
+                    >
+                      <option value="all">Todas</option>
+                      <option value="ENERGISA">Energisa</option>
+                      <option value="ELEKTRO">Elektro</option>
+                    </select>
+                  </div>
                   <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-sanesul-primary/10 shadow-sm">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted ml-2">Mês:</span>
                     <select 
@@ -4765,7 +4806,7 @@ export default function App() {
                       <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                         <div className="flex flex-col">
                           <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Mês Ref</span>
-                          <span className="font-mono font-bold text-slate-700 text-sm">{data.mesReferencia || '-'}</span>
+                          <span className="font-mono font-bold text-slate-700 text-sm">{formatReference(data.mesReferencia) || '-'}</span>
                         </div>
                         {!isDetailed && (
                           <div className="flex flex-col">
