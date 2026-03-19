@@ -555,26 +555,26 @@ const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
   const isGeral = (d: any) => isGrupoB(d) && !isConsumoMinimo(d) && !isPPP(d) && !isUsina(d);
 
   return (
-    <div className="space-y-10 py-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+    <div className="space-y-6 py-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Análise de Insumo de Energia Elétrica - SANESUL</h2>
-          <p className="text-sanesul-muted">Visão geral consolidada de custos e consumos por grupos tarifários.</p>
+          <h2 className="text-2xl font-display font-bold text-sanesul-primary mb-1">Análise de Insumo de Energia Elétrica - SANESUL</h2>
+          <p className="text-sm text-sanesul-muted">Visão geral consolidada de custos e consumos por grupos tarifários.</p>
         </div>
       </div>
 
       {data.length === 0 ? (
-        <div className="p-24 text-center bg-white rounded-3xl border border-sanesul-primary/10 shadow-xl">
-          <div className="w-16 h-16 bg-sanesul-primary/5 rounded-full flex items-center justify-center mx-auto mb-6">
-            <AlertCircle size={32} className="text-sanesul-primary/30" />
+        <div className="p-12 text-center bg-white rounded-2xl border border-sanesul-primary/10 shadow-lg">
+          <div className="w-12 h-12 bg-sanesul-primary/5 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle size={24} className="text-sanesul-primary/30" />
           </div>
-          <p className="text-xl font-display font-semibold text-sanesul-primary">Nenhum dado disponível</p>
-          <p className="text-sanesul-muted mt-2">Processe algumas faturas para visualizar a análise de insumos.</p>
+          <p className="text-lg font-display font-semibold text-sanesul-primary">Nenhum dado disponível</p>
+          <p className="text-sm text-sanesul-muted mt-1">Processe algumas faturas para visualizar a análise de insumos.</p>
         </div>
       ) : (
-        <div className="space-y-12">
+        <div className="space-y-6">
           {/* Referência */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-3">
               <MetricCard 
                 title="Referência (Total Geral)" 
@@ -586,7 +586,7 @@ const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
                     <select 
                       value={selectedMonth}
                       onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
+                      className="bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
                     >
                       <option value="all">Todos</option>
                       {availableMonths.map(month => (
@@ -1239,6 +1239,8 @@ export default function App() {
   const [selectedConcessionaria, setSelectedConcessionaria] = useState<string>('all');
   const [selectedRelatorioMonth, setSelectedRelatorioMonth] = useState<string>('all');
   const [selectedReactiveMonth, setSelectedReactiveMonth] = useState<string>('all');
+  const [reactiveSortField, setReactiveSortField] = useState<string>('totalGeral');
+  const [reactiveSortDirection, setReactiveSortDirection] = useState<'asc' | 'desc'>('desc');
   const [dashboardSort, setDashboardSort] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'name', direction: 'desc' });
   const [showMemo, setShowMemo] = useState(false);
   const [showMemoNumberPrompt, setShowMemoNumberPrompt] = useState(false);
@@ -2185,6 +2187,15 @@ export default function App() {
     if (newSet.has(uc)) newSet.delete(uc);
     else newSet.add(uc);
     setExpandedReactiveUcs(newSet);
+  };
+
+  const handleReactiveSort = (field: string) => {
+    if (reactiveSortField === field) {
+      setReactiveSortDirection(reactiveSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setReactiveSortField(field);
+      setReactiveSortDirection('desc');
+    }
   };
 
   const toggleSummaryCity = (city: string) => {
@@ -4786,7 +4797,8 @@ export default function App() {
               const reactiveBills = bills.filter(b => {
                 if (b.status !== 'completed') return false;
                 if (selectedReactiveMonth !== 'all' && `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth) return false;
-                return parseValue(b.valorEnergiaReativaExcedPonta) > 0 || parseValue(b.valorEnergiaReativaExcedFPonta) > 0;
+                const totalReativo = parseValue(b.valorEnergiaReativaExcedPonta) + parseValue(b.valorEnergiaReativaExcedFPonta);
+                return totalReativo > 100;
               });
               
               const grouped = reactiveBills.reduce((acc, bill) => {
@@ -4799,7 +4811,35 @@ export default function App() {
                 return acc;
               }, {} as Record<string, { uc: string, cidade: string, totalPonta: number, totalFPonta: number, totalFatura: number, bills: typeof bills }>);
 
-              const reactiveData = (Object.values(grouped) as { uc: string, cidade: string, totalPonta: number, totalFPonta: number, totalFatura: number, bills: typeof bills }[]).sort((a, b) => (b.totalPonta + b.totalFPonta) - (a.totalPonta + a.totalFPonta));
+              const reactiveData = (Object.values(grouped) as { uc: string, cidade: string, totalPonta: number, totalFPonta: number, totalFatura: number, bills: typeof bills }[]).sort((a, b) => {
+                let valA: any = 0;
+                let valB: any = 0;
+                
+                if (reactiveSortField === 'uc') {
+                  valA = a.uc;
+                  valB = b.uc;
+                } else if (reactiveSortField === 'cidade') {
+                  valA = a.cidade;
+                  valB = b.cidade;
+                } else if (reactiveSortField === 'totalPonta') {
+                  valA = a.totalPonta;
+                  valB = b.totalPonta;
+                } else if (reactiveSortField === 'totalFPonta') {
+                  valA = a.totalFPonta;
+                  valB = b.totalFPonta;
+                } else if (reactiveSortField === 'totalGeral') {
+                  valA = a.totalPonta + a.totalFPonta;
+                  valB = b.totalPonta + b.totalFPonta;
+                } else if (reactiveSortField === 'percentual') {
+                  valA = a.totalFatura > 0 ? (a.totalPonta + a.totalFPonta) / a.totalFatura : 0;
+                  valB = b.totalFatura > 0 ? (b.totalPonta + b.totalFPonta) / b.totalFatura : 0;
+                }
+
+                if (typeof valA === 'string' && typeof valB === 'string') {
+                  return reactiveSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                }
+                return reactiveSortDirection === 'asc' ? (valA as number) - (valB as number) : (valB as number) - (valA as number);
+              });
               
               const totalGeral = reactiveData.reduce((acc, curr) => acc + curr.totalPonta + curr.totalFPonta, 0);
 
@@ -4822,12 +4862,54 @@ export default function App() {
                       <table className="w-full text-left border-collapse">
                       <thead>
                         <tr>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">UC</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Cidade</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Total Reativa Ponta (R$)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Total Reativa F. Ponta (R$)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Total Geral (R$)</th>
-                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">% da Fatura</th>
+                          <th 
+                            className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary transition-colors"
+                            onClick={() => handleReactiveSort('uc')}
+                          >
+                            <div className="flex items-center gap-1">
+                              UC {reactiveSortField === 'uc' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary transition-colors"
+                            onClick={() => handleReactiveSort('cidade')}
+                          >
+                            <div className="flex items-center gap-1">
+                              Cidade {reactiveSortField === 'cidade' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right cursor-pointer hover:text-sanesul-primary transition-colors"
+                            onClick={() => handleReactiveSort('totalPonta')}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              Total Reativa Ponta (R$) {reactiveSortField === 'totalPonta' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right cursor-pointer hover:text-sanesul-primary transition-colors"
+                            onClick={() => handleReactiveSort('totalFPonta')}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              Total Reativa F. Ponta (R$) {reactiveSortField === 'totalFPonta' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right cursor-pointer hover:text-sanesul-primary transition-colors"
+                            onClick={() => handleReactiveSort('totalGeral')}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              Total Geral (R$) {reactiveSortField === 'totalGeral' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right cursor-pointer hover:text-sanesul-primary transition-colors"
+                            onClick={() => handleReactiveSort('percentual')}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              % da Fatura {reactiveSortField === 'percentual' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
+                            </div>
+                          </th>
                           <th className="px-6 py-4 border-b border-sanesul-primary/5 w-10"></th>
                         </tr>
                       </thead>
@@ -5727,21 +5809,30 @@ export default function App() {
                         const dbData = mapBillDataToDb(billToSave, user.id);
                         if (isExisting) {
                           const { error } = await supabase.from('bills').update(dbData).eq('id', billToSave.id);
-                          if (error) console.error('Erro ao atualizar fatura no Supabase:', error);
+                          if (error) {
+                            console.error('Erro ao atualizar fatura no Supabase:', error);
+                            return;
+                          }
+                          setBills(bills.map(b => b.id === billToSave.id ? billToSave : b));
                         } else {
-                          const { error } = await supabase.from('bills').insert(dbData);
-                          if (error) console.error('Erro ao inserir fatura no Supabase:', error);
+                          const { data, error } = await supabase.from('bills').insert(dbData).select().single();
+                          if (error) {
+                            console.error('Erro ao inserir fatura no Supabase:', error);
+                            return;
+                          }
+                          setBills([...bills, mapDbToBillData(data)]);
                         }
                       }
                     } catch (err) {
                       console.error('Erro inesperado ao salvar fatura:', err);
+                      return;
                     }
-                  }
-
-                  if (isExisting) {
-                    setBills(bills.map(b => b.id === billToSave.id ? billToSave : b));
                   } else {
-                    setBills([...bills, billToSave]);
+                    if (isExisting) {
+                      setBills(bills.map(b => b.id === billToSave.id ? billToSave : b));
+                    } else {
+                      setBills([...bills, billToSave]);
+                    }
                   }
                   setIsBillModalOpen(false);
                 }}
@@ -5762,18 +5853,19 @@ export default function App() {
               <Zap className="w-4 h-4 text-sanesul-primary" />
             </div>
             <div>
-              <div className="text-xs font-bold text-sanesul-primary uppercase tracking-widest">Sanesul - Extrator de Faturas</div>
-              <div className="text-[10px] text-sanesul-muted mt-0.5">© 2024 Empresa de Saneamento de Mato Grosso do Sul</div>
+              <div className="text-xs font-bold text-sanesul-primary uppercase tracking-widest">Sanesul - Portal de Inteligência Energética</div>
+              <div className="text-[10px] text-sanesul-muted mt-0.5">© 1979 Empresa de Saneamento de Mato Grosso do Sul</div>
+              <div className="text-[10px] text-sanesul-muted mt-0.5">Developed by: Fabio Roberto alves da Silva</div>
             </div>
           </div>
           <div className="flex items-center gap-8">
             <div className="flex flex-col items-end">
               <span className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">COTAA</span>
-              <span className="text-[10px] text-sanesul-muted">Processamento via Gemini 3 Flash</span>
+              <span className="text-[10px] text-sanesul-muted">Coodenação: Alexandre Santos Andrade Monteiro</span>
             </div>
             <div className="flex flex-col items-end">
               <span className="text-[10px] font-bold text-sanesul-primary uppercase tracking-widest">GEDEO</span>
-              <span className="text-[10px] text-sanesul-muted">CSV UTF-8 / Excel</span>
+              <span className="text-[10px] text-sanesul-muted">Gerência: Elthon Santos Teixeira</span>
             </div>
           </div>
         </div>
