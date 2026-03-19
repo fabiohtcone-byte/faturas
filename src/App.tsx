@@ -329,24 +329,30 @@ const parseValue = (val: string | number) => {
   return isNaN(parsed) ? 0 : parsed;
 };
 
-const formatMonth = (month: string) => {
+const formatMonth = (month: string | number) => {
   if (!month) return '';
+  let normalized = month.toString().toLowerCase().trim();
+  
+  // Se vier no formato MM/YYYY, pega apenas o mês
+  if (normalized.includes('/')) {
+    normalized = normalized.split('/')[0];
+  }
+
   const monthMap: Record<string, string> = {
-    '01': 'Janeiro', '1': 'Janeiro', 'janeiro': 'Janeiro',
-    '02': 'Fevereiro', '2': 'Fevereiro', 'fevereiro': 'Fevereiro',
-    '03': 'Março', '3': 'Março', 'março': 'Março', 'marco': 'Março',
-    '04': 'Abril', '4': 'Abril', 'abril': 'Abril',
-    '05': 'Maio', '5': 'Maio', 'maio': 'Maio',
-    '06': 'Junho', '6': 'Junho', 'junho': 'Junho',
-    '07': 'Julho', '7': 'Julho', 'julho': 'Julho',
-    '08': 'Agosto', '8': 'Agosto', 'agosto': 'Agosto',
-    '09': 'Setembro', '9': 'Setembro', 'setembro': 'Setembro',
-    '10': 'Outubro', 'outubro': 'Outubro',
-    '11': 'Novembro', 'novembro': 'Novembro',
-    '12': 'Dezembro', 'dezembro': 'Dezembro'
+    '01': 'Janeiro', '1': 'Janeiro', 'janeiro': 'Janeiro', 'jan': 'Janeiro',
+    '02': 'Fevereiro', '2': 'Fevereiro', 'fevereiro': 'Fevereiro', 'fev': 'Fevereiro',
+    '03': 'Março', '3': 'Março', 'março': 'Março', 'marco': 'Março', 'mar': 'Março',
+    '04': 'Abril', '4': 'Abril', 'abril': 'Abril', 'abr': 'Abril',
+    '05': 'Maio', '5': 'Maio', 'maio': 'Maio', 'mai': 'Maio',
+    '06': 'Junho', '6': 'Junho', 'junho': 'Junho', 'jun': 'Junho',
+    '07': 'Julho', '7': 'Julho', 'julho': 'Julho', 'jul': 'Julho',
+    '08': 'Agosto', '8': 'Agosto', 'agosto': 'Agosto', 'ago': 'Agosto',
+    '09': 'Setembro', '9': 'Setembro', 'setembro': 'Setembro', 'set': 'Setembro',
+    '10': 'Outubro', 'outubro': 'Outubro', 'out': 'Outubro',
+    '11': 'Novembro', 'novembro': 'Novembro', 'nov': 'Novembro',
+    '12': 'Dezembro', 'dezembro': 'Dezembro', 'dez': 'Dezembro'
   };
-  const normalized = month.toString().toLowerCase().trim();
-  return monthMap[normalized] || month;
+  return monthMap[normalized] || month.toString();
 };
 
 const getMonthNumber = (month: string) => {
@@ -519,8 +525,8 @@ const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
   const availableMonths = Array.from(new Set(data.map(d => d.name))).filter(Boolean).sort((a, b) => {
     const [mA, yA] = String(a).split('/');
     const [mB, yB] = String(b).split('/');
-    if (yA !== yB) return Number(yA) - Number(yB);
-    return Number(mA) - Number(mB);
+    if (yA !== yB) return Number(yB) - Number(yA);
+    return getMonthNumber(mB) - getMonthNumber(mA);
   });
 
   const filteredData = selectedMonth === 'all' ? data : data.filter(d => d.name === selectedMonth);
@@ -859,11 +865,13 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [currentPage, setCurrentPage] = useState<'visao_geral' | 'sistema'>('visao_geral');
-  const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'relatorio'>('faturas');
+  const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'monitoramento_reativo' | 'relatorio'>('faturas');
   const [filterReference, setFilterReference] = useState<string>('all');
   const [sortConfig, setSortConfig] = useState<{ key: keyof BillData | 'referencia', direction: 'asc' | 'desc' } | null>(null);
   const [analysisData, setAnalysisData] = useState<any[]>([]);
   const [memoNumber, setMemoNumber] = useState(`001447/${new Date().getFullYear()}/GEDEO/DCO`);
+  const [memoNfEnergisa, setMemoNfEnergisa] = useState('');
+  const [memoNfElektro, setMemoNfElektro] = useState('');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const handleDownloadPDF = async () => {
@@ -922,182 +930,217 @@ export default function App() {
   };
 
   const handleDownloadDocx = async () => {
-    let sanesulLogoBuffer = null;
-    let msLogoBuffer = null;
-
     try {
-      const sanesulRes = await fetch("https://www.sanesul.ms.gov.br/images/logo_sanesul.png");
-      if (sanesulRes.ok) sanesulLogoBuffer = await sanesulRes.arrayBuffer();
-    } catch (e) { console.error("Não foi possível buscar o logo da Sanesul", e); }
-
-    try {
-      const msRes = await fetch("https://www.ms.gov.br/wp-content/uploads/2023/01/logo-governo-ms.png");
-      if (msRes.ok) msLogoBuffer = await msRes.arrayBuffer();
-    } catch (e) { console.error("Não foi possível buscar o logo do MS", e); }
-
-    const headerParagraphs = [];
-    
-    if (sanesulLogoBuffer && msLogoBuffer) {
-      headerParagraphs.push(
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
+      const doc = new Document({
+        sections: [{
+          properties: {},
           children: [
-            new ImageRun({
-              data: sanesulLogoBuffer,
-              transformation: { width: 150, height: 50 },
-              type: "png"
+            // Header Text (Safe fallback instead of images to prevent corruption)
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ text: "EMPRESA DE SANEAMENTO DE MATO GROSSO DO SUL S.A.", bold: true, size: 24, color: "0070C0" }),
+              ]
             }),
-            new TextRun({ text: "        " }), // Spacing
-            new ImageRun({
-              data: msLogoBuffer,
-              transformation: { width: 150, height: 50 },
-              type: "png"
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ text: "DIRETORIA DA PRESIDÊNCIA", bold: true, size: 20, color: "0070C0" }),
+              ]
+            }),
+            new Paragraph({}),
+            new Paragraph({}),
+            
+            // Memo Number
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [new TextRun({ text: `MEMO Nº ${memoNumber || "-"}`, bold: true, size: 24 })],
+            }),
+            new Paragraph({}),
+            
+            // Date
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [new TextRun({ text: `Campo Grande, ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(new Date())}.`, size: 24 })],
+            }),
+            new Paragraph({}),
+            
+            // To/From/Subject
+            new Paragraph({ children: [new TextRun({ text: "DE: ", bold: true, size: 24 }), new TextRun({ text: "GEDEO - Gerência de Desenvolvimento Operacional", size: 24 })] }),
+            new Paragraph({}),
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [new TextRun({ text: "PARA: ", bold: true, size: 24 }), new TextRun({ text: "GEFI - Gerência Financeira e Gestão de Recursos", size: 24 })]
+            }),
+            new Paragraph({}),
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [new TextRun({ text: "ASSUNTO: ", bold: true, size: 24 }), new TextRun({ text: `Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — ${selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}.`, size: 24 })]
+            }),
+            new Paragraph({}),
+            
+            // Body
+            new Paragraph({ children: [new TextRun({ text: "        Prezado(a),", size: 24 })] }),
+            new Paragraph({}),
+            new Paragraph({ 
+              alignment: AlignmentType.JUSTIFIED,
+              children: [
+                new TextRun({ text: "        Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da concessionária Elektro — todas referentes ao mês de ", size: 24 }),
+                new TextRun({ text: selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth, bold: true, color: "0070C0", size: 24 }),
+                new TextRun({ text: " e correspondentes às unidades operacionais da SANESUL.", size: 24 })
+              ] 
+            }),
+            new Paragraph({}),
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Na Tabela 1 são especificadas as faturas anexas.", size: 24 })] }),
+            new Paragraph({}),
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Tabela 1 - Faturas Anexas", bold: true, size: 24 })] }),
+            
+            // Table
+            new Table({
+              width: { size: 10000, type: WidthType.DXA },
+              columnWidths: [4000, 2000, 2000, 2000],
+              borders: {
+                top: { style: BorderStyle.SINGLE, size: 4 },
+                bottom: { style: BorderStyle.SINGLE, size: 4 },
+                left: { style: BorderStyle.SINGLE, size: 4 },
+                right: { style: BorderStyle.SINGLE, size: 4 },
+                insideHorizontal: { style: BorderStyle.SINGLE, size: 4 },
+                insideVertical: { style: BorderStyle.SINGLE, size: 4 },
+              },
+              rows: [
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "LOCALIDADE", bold: true })] })], shading: { fill: "E0E0E0", type: ShadingType.CLEAR, color: "auto" } }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "VALOR (R$)", bold: true })] })], shading: { fill: "E0E0E0", type: ShadingType.CLEAR, color: "auto" } }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "NOTA FISCAL", bold: true })] })], shading: { fill: "E0E0E0", type: ShadingType.CLEAR, color: "auto" } }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "REF: MÊS / ANO", bold: true })] })], shading: { fill: "E0E0E0", type: ShadingType.CLEAR, color: "auto" } }),
+                  ],
+                }),
+                // Energisa Main Row
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Agrupadora Energisa Operacional", bold: true, color: "0070C0" })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `R$ ${(memoData?.energisa?.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` })] })] }),
+                    new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData?.energisa?.nf || "-" })] })] }),
+                    new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData?.energisa?.mesRef || "-", bold: true, color: "0070C0" })] })] }),
+                  ],
+                }),
+                // Energisa Details
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "PIS", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.energisa?.pis || 0) > 0 ? `R$ ${(memoData?.energisa?.pis || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "COFINS", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.energisa?.cofins || 0) > 0 ? `R$ ${(memoData?.energisa?.cofins || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "ICMS", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.energisa?.icms || 0) > 0 ? `R$ ${(memoData?.energisa?.icms || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Tarifa de Iluminação Pública", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.energisa?.cip || 0) > 0 ? `R$ ${(memoData?.energisa?.cip || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                // Elektro Main Row
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Agrupadora Elektro", bold: true, color: "ED7D31" })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `R$ ${(memoData?.elektro?.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` })] })] }),
+                    new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData?.elektro?.nf || "-" })] })] }),
+                    new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData?.elektro?.mesRef || "-", bold: true, color: "ED7D31" })] })] }),
+                  ],
+                }),
+                // Elektro Details
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "PIS", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.elektro?.pis || 0) > 0 ? `R$ ${(memoData?.elektro?.pis || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "COFINS", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.elektro?.cofins || 0) > 0 ? `R$ ${(memoData?.elektro?.cofins || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "ICMS", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.elektro?.icms || 0) > 0 ? `R$ ${(memoData?.elektro?.icms || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Tarifa de Iluminação Pública", size: 20 })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: (memoData?.elektro?.cip || 0) > 0 ? `R$ ${(memoData?.elektro?.cip || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
+                  ],
+                }),
+                // Total Row
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "TOTAL ( Agrupadora ENERGISA + ELEKTRO)", bold: true, italics: true })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `R$ ${((memoData?.energisa?.total || 0) + (memoData?.elektro?.total || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "-------------------" })] })] }),
+                    new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "-------------------" })] })] }),
+                  ],
+                }),
+              ],
+            }),
+            new Paragraph({}),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ text: "Proc. N.º 694/2018    Nota Orçamentária Nº 003/2019", italics: true, size: 20 }),
+              ],
+            }),
+            new Paragraph({
+              pageBreakBefore: true,
+              alignment: AlignmentType.JUSTIFIED,
+              children: [
+                new TextRun({ text: "        A planilha contendo a estratificação dos dados apresentados neste memorando está disponível em \\\\srv-fs-01\\DADOS\\DCO\\GEDEO\\OPERACAO_AGUA\\COTAA\\ENERGIA\\FATURAS.", size: 24 }),
+              ],
+            }),
+            new Paragraph({}),
+            new Paragraph({}),
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [
+                new TextRun({ text: "Atenciosamente,", size: 24 }),
+              ],
+            }),
+            new Paragraph({}),
+            new Paragraph({}),
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [
+                new TextRun({ text: "Fabio Roberto Alves da Silva", bold: true, size: 24 }),
+              ],
+            }),
+            new Paragraph({
+              alignment: AlignmentType.LEFT,
+              children: [
+                new TextRun({ text: "Engenheiro Eletricista/GEDEO/Gerência de Desenvolvimento Operacional", size: 24 }),
+              ],
             }),
           ],
-        })
-      );
+        }],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, `memorando_faturamento_${new Date().getTime()}.docx`);
+    } catch (error) {
+      console.error("Erro ao gerar DOCX:", error);
+      showAlert('Erro', 'Ocorreu um erro ao gerar o arquivo DOCX. Verifique o console para mais detalhes.');
     }
-
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          ...headerParagraphs,
-          new Paragraph({ children: [new TextRun({ text: "" })] }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "Empresa de Saneamento de Mato Grosso do Sul S.A.", bold: true, size: 20 }),
-            ],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({ text: "Diretoria da Presidência", size: 16 }),
-            ],
-          }),
-          new Paragraph({ children: [new TextRun({ text: "" })] }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: `MEMO Nº ${memoNumber}`, bold: true, size: 28 })],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: `Campo Grande, ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(new Date())}.` })],
-          }),
-          new Paragraph({ children: [new TextRun({ text: "" })] }),
-          new Paragraph({ children: [new TextRun({ text: "DE: GEDEO - Gerência de Desenvolvimento Operacional", bold: true })] }),
-          new Paragraph({ children: [new TextRun({ text: "PARA: GEFI - Gerência Financeira e Gestão de Recursos", bold: true })] }),
-          new Paragraph({ children: [new TextRun({ text: `ASSUNTO: Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — ${selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}.`, bold: true })] }),
-          new Paragraph({ children: [new TextRun({ text: "" })] }),
-          new Paragraph({ children: [new TextRun({ text: "Prezado(a)," })] }),
-          new Paragraph({ children: [new TextRun({ text: `Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da Elektro — todas referentes ao mês de ${selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth} e correspondentes às unidades operacionais da SANESUL.` })] }),
-          new Paragraph({ children: [new TextRun({ text: "" })] }),
-          new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Tabela 1 - Faturas Anexas", bold: true, size: 20 })] }),
-          new Paragraph({ children: [new TextRun({ text: "" })] }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            borders: {
-              top: { style: BorderStyle.SINGLE, size: 1 },
-              bottom: { style: BorderStyle.SINGLE, size: 1 },
-              left: { style: BorderStyle.SINGLE, size: 1 },
-              right: { style: BorderStyle.SINGLE, size: 1 },
-              insideHorizontal: { style: BorderStyle.SINGLE, size: 1 },
-              insideVertical: { style: BorderStyle.SINGLE, size: 1 },
-            },
-            rows: [
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "LOCALIDADE", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "VALOR (R$)", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "NOTA FISCAL", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "REF: MÊS / ANO", bold: true })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                ],
-              }),
-              // Energisa Main Row
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Agrupadora Energisa Operacional", bold: true })] })], shading: { fill: "E0F2FE", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `R$ ${memoData.energisa.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, bold: true })] })], shading: { fill: "E0F2FE", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.energisa.nf })] })] }),
-                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.energisa.mesRef, bold: true })] })] }),
-                ],
-              }),
-              // Energisa Details
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    PIS" })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.pis > 0 ? `R$ ${memoData.energisa.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    COFINS" })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.cofins > 0 ? `R$ ${memoData.energisa.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    ICMS" })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.icms > 0 ? `R$ ${memoData.energisa.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    Tarifa de Iluminação Pública", italics: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.energisa.cip > 0 ? `R$ ${memoData.energisa.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              // Elektro Main Row
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Agrupadora Elektro", bold: true })] })], shading: { fill: "FEF3C7", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `R$ ${memoData.elektro.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, bold: true })] })], shading: { fill: "FEF3C7", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.elektro.nf })] })] }),
-                  new TableCell({ rowSpan: 5, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: memoData.elektro.mesRef, bold: true })] })] }),
-                ],
-              }),
-              // Elektro Details
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    PIS" })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.pis > 0 ? `R$ ${memoData.elektro.pis.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    COFINS" })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.cofins > 0 ? `R$ ${memoData.elektro.cofins.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    ICMS" })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.icms > 0 ? `R$ ${memoData.elektro.icms.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "    Tarifa de Iluminação Pública", italics: true })] })] }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: memoData.elektro.cip > 0 ? `R$ ${memoData.elektro.cip.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-' })] })] }),
-                ],
-              }),
-              // Total Row
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "TOTAL GERAL", bold: true, size: 24 })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `R$ ${(memoData.energisa.total + memoData.elektro.total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, bold: true, size: 24 })] })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                  new TableCell({ columnSpan: 2, children: [new Paragraph({ text: "" })], shading: { fill: "F5F5F5", type: ShadingType.CLEAR, color: "auto" } }),
-                ],
-              }),
-            ],
-          }),
-        ],
-      }],
-    });
-
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, `memorando_faturamento_${new Date().getTime()}.docx`);
   };
 
   const requestSort = (key: keyof BillData | 'referencia') => {
@@ -1195,10 +1238,13 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedConcessionaria, setSelectedConcessionaria] = useState<string>('all');
   const [selectedRelatorioMonth, setSelectedRelatorioMonth] = useState<string>('all');
+  const [selectedReactiveMonth, setSelectedReactiveMonth] = useState<string>('all');
   const [dashboardSort, setDashboardSort] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'name', direction: 'desc' });
   const [showMemo, setShowMemo] = useState(false);
   const [showMemoNumberPrompt, setShowMemoNumberPrompt] = useState(false);
   const [tempMemoNumber, setTempMemoNumber] = useState('');
+  const [tempMemoNfEnergisa, setTempMemoNfEnergisa] = useState('');
+  const [tempMemoNfElektro, setTempMemoNfElektro] = useState('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, { 
     status: string, 
     percent: number, 
@@ -1384,7 +1430,7 @@ export default function App() {
             [detailedKey]: {
               cip: typeof result.cip === 'string' ? parseValue(result.cip) : result.cip,
               concessionaria: `${concessionariaRaw} (DETALHADO)`,
-              mesReferencia: result.mesReferencia || '',
+              mesReferencia: formatMonth(result.mesReferencia || ''),
               valorTotal: 0,
               vencimento: '',
               numeroNotaFiscal: '',
@@ -1398,7 +1444,7 @@ export default function App() {
           const newData: AgrupadoraData = {
             concessionaria: concessionariaRaw,
             valorTotal: typeof result.valorTotal === 'string' ? parseValue(result.valorTotal) : result.valorTotal,
-            mesReferencia: result.mesReferencia || '',
+            mesReferencia: formatMonth(result.mesReferencia || ''),
             vencimento: result.vencimento || '',
             numeroNotaFiscal: result.numeroNotaFiscal || '',
             pis: typeof result.pis === 'string' ? parseValue(result.pis) : result.pis,
@@ -1517,7 +1563,15 @@ export default function App() {
         dcp: parseValue(b.demandaPontaKW),
         dmp: dmp,
         dcfp: parseValue(b.demandaForaPontaKW),
-        dmfp: parseValue(b.demandaPotenciaMedidaForaPonta)
+        dmfp: parseValue(b.demandaPotenciaMedidaForaPonta),
+        modalidade: (b.modalidadeTarifaria || '').toUpperCase(),
+        // Valores financeiros para o Gasto Real
+        vDmpP: parseValue(b.valorDemandaPotenciaMedidaPonta),
+        vDmfpFP: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
+        vUltrapP: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
+        vUltrapFP: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
+        vNaoConsP: parseValue(b.valorDemandaPotenciaNaoConsumidaPonta),
+        vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta)
       };
     }).filter(d => d.dcp > 0 || d.dcfp > 0);
 
@@ -1531,7 +1585,9 @@ export default function App() {
       const ucData = parsedData.filter(d => d.uc === uc);
       // Verifica se a UC tem contrato de ponta (ex: Tarifa Azul)
       // Se dcp for 0 em todos os meses, não sugerimos valor para ponta (ex: Tarifa Verde)
-      const hasPontaContract = ucData.some(d => d.dcp > 0);
+      // NOVO: Se a modalidade for VERDE, forçamos hasPontaContract para false
+      const isVerde = ucData.some(d => d.modalidade.includes('VERDE'));
+      const hasPontaContract = !isVerde && ucData.some(d => d.dcp > 0);
       
       const maxDmp = Math.max(...ucData.map(d => d.dmp));
       const maxDmfp = Math.max(...ucData.map(d => d.dmfp));
@@ -1552,26 +1608,41 @@ export default function App() {
     const tfp = 10.00;
 
     const results = parsedData.flatMap(row => {
-      const { mes, ano, uc, dcp, dmp, dcfp, dmfp } = row;
+      const { mes, ano, uc, dcp, dmp, dcfp, dmfp, vDmpP, vDmfpFP, vUltrapP, vUltrapFP, vNaoConsP, vNaoConsFP, modalidade } = row;
       const opt = optimalDemands[String(uc)];
       
       if (!opt) return [];
 
-      // Current Cost
-      // Se dcp for 0, não analisamos a ponta (conforme pedido do usuário)
-      const costPonta = dcp > 0 
-        ? (dmp > dcp * 1.05 ? (dcp * tp) + ((dmp - dcp) * tp * 2) : (Math.max(dmp, dcp) * tp))
-        : 0;
-      const costForaPonta = dmfp > dcfp * 1.05 ? (dcfp * tfp) + ((dmfp - dcfp) * tfp * 2) : (Math.max(dmfp, dcfp) * tfp);
-      const currentTotal = costPonta + costForaPonta;
+      // Gasto Real conforme solicitado: Soma dos valores financeiros da fatura
+      const currentTotal = vDmpP + vDmfpFP + vUltrapP + vUltrapFP + vNaoConsP + vNaoConsFP;
+      
+      // Para o cálculo da economia, precisamos dos custos base (Ponta e Fora Ponta)
+      // que compõem esse Gasto Real.
+      const costPonta = vDmpP + vUltrapP + vNaoConsP;
+      const costForaPonta = vDmfpFP + vUltrapFP + vNaoConsFP;
 
-      // Optimized Cost (using the FIXED optimal demand)
-      const optCostPonta = (dcp > 0 && opt.ponta > 0)
-        ? (dmp > opt.ponta * 1.05 ? (opt.ponta * tp) + ((dmp - opt.ponta) * tp * 2) : (Math.max(dmp, opt.ponta) * tp))
-        : 0;
-      const optCostForaPonta = dmfp > opt.foraPonta * 1.05 ? (opt.foraPonta * tfp) + ((dmfp - opt.foraPonta) * tfp * 2) : (Math.max(dmfp, opt.foraPonta) * tfp);
+      // Definir tarifas ideais com base na modalidade (Valores solicitados pelo usuário)
+      const isAzul = modalidade.includes('AZUL');
+      const isVerde = modalidade.includes('VERDE');
+      
+      const tp_ideal = isAzul ? 91.115690 : 0;
+      const tfp_ideal = isAzul ? 45.702760 : (isVerde ? 43.177150 : 10.00);
+
+      // Optimized Cost (using the FIXED optimal demand and specific rates)
+      // O cálculo continua considerando ultrapassagem para uma comparação justa com o Gasto Real
+      // Para a modalidade VERDE, o usuário solicitou somar o valor real da "Demanda de Potência Medida - Ponta"
+      const optCostPonta = isVerde 
+        ? vDmpP 
+        : ((dcp > 0 && opt.ponta > 0 && tp_ideal > 0)
+            ? (dmp > opt.ponta * 1.05 ? (opt.ponta * tp_ideal) + ((dmp - opt.ponta) * tp_ideal * 2) : (Math.max(dmp, opt.ponta) * tp_ideal))
+            : 0);
+      const optCostForaPonta = dmfp > opt.foraPonta * 1.05 
+        ? (opt.foraPonta * tfp_ideal) + ((dmfp - opt.foraPonta) * tfp_ideal * 2) 
+        : (Math.max(dmfp, opt.foraPonta) * tfp_ideal);
+      
       const optimizedTotal = optCostPonta + optCostForaPonta;
       
+      // O usuário solicitou que o valor economizado seja exatamente a diferença entre o Gasto Real e o Gasto Ideal simulado
       const economy = currentTotal - optimizedTotal;
 
       // Ultrapassagem
@@ -1592,6 +1663,8 @@ export default function App() {
         dmfp,
         optimizedPonta: opt.ponta,
         optimizedForaPonta: opt.foraPonta,
+        currentTotal,
+        optimizedTotal,
         economy,
         overrunPonta,
         overrunForaPonta,
@@ -1646,7 +1719,10 @@ export default function App() {
       });
 
       // Calculate optimal demand (Ideal) based on all history (Max measured)
-      const maxDmp = Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaPonta)));
+      // NOVO: Se a modalidade for VERDE, não consideramos a demanda ponta para o cálculo da demanda ideal
+      const isVerde = ucBills.some(b => (b.modalidadeTarifaria || '').toUpperCase().includes('VERDE'));
+      
+      const maxDmp = isVerde ? 0 : Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaPonta)));
       const maxDmfp = Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaForaPonta)));
       
       const roundDemand = (val: number) => {
@@ -1654,7 +1730,7 @@ export default function App() {
         return Math.ceil(minRequired * 2) / 2;
       };
 
-      const optPonta = roundDemand(maxDmp);
+      const optPonta = (maxDmp > 0 && !isVerde) ? roundDemand(maxDmp) : 0;
       const optForaPonta = Math.max(30, roundDemand(maxDmfp));
 
       // 1st Pass: Calculate Current Total for ALL bills first
@@ -1725,7 +1801,10 @@ export default function App() {
 
         if (previousContractAverageCost > 0) {
             referenceTotal = previousContractAverageCost;
+            
+            // Cálculo da Economia para Monitoramento: (Ref. Anterior - Gasto Real)
             economyFromChange = referenceTotal - b.currentTotal;
+            
             accumulatedEconomy += economyFromChange;
         }
 
@@ -1930,6 +2009,10 @@ export default function App() {
           result.uc = result.uc.replace(/UC:?\s*/i, '').split('-')[0].trim();
         }
 
+        if (result.mesReferencia) {
+          result.mesReferencia = formatMonth(result.mesReferencia);
+        }
+
       const isDuplicate = bills.some(b => {
         if (b.id === bill.id || b.status !== 'completed') return false;
         
@@ -2095,6 +2178,14 @@ export default function App() {
   const [expandedUCs, setExpandedUCs] = useState<Set<string>>(new Set());
   const [expandedAnalysisUCs, setExpandedAnalysisUCs] = useState<Set<string>>(new Set());
   const [expandedSummaryCities, setExpandedSummaryCities] = useState<Set<string>>(new Set());
+  const [expandedReactiveUcs, setExpandedReactiveUcs] = useState<Set<string>>(new Set());
+
+  const toggleReactiveUc = (uc: string) => {
+    const newSet = new Set(expandedReactiveUcs);
+    if (newSet.has(uc)) newSet.delete(uc);
+    else newSet.add(uc);
+    setExpandedReactiveUcs(newSet);
+  };
 
   const toggleSummaryCity = (city: string) => {
     setExpandedSummaryCities(prev => {
@@ -2237,7 +2328,7 @@ export default function App() {
 
     const headers = [
       "UC", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
-      "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Economia (R$)", "Status",
+      "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Gasto Real (R$)", "Economia (R$)", "Status",
       "Grupo Tarifário", "Tarifa Branca", "Optante B"
     ];
 
@@ -2253,7 +2344,9 @@ export default function App() {
 
       return [
         r.uc, r.ano, r.mes, r.dmp, r.dmfp,
-        r.opt.ponta, r.opt.foraPonta, String(r.economy.toFixed(2)).replace('.', ','),
+        r.optimizedPonta, r.optimizedForaPonta, 
+        String((r.currentTotal || 0).toFixed(2)).replace('.', ','),
+        String((r.economy || 0).toFixed(2)).replace('.', ','),
         r.isOverrun ? 'Ultrapassagem' : (r.isSub ? 'Subutilização' : 'OK'),
         grupo, tarifaBranca, optanteB
       ];
@@ -2456,8 +2549,8 @@ export default function App() {
   const availableMonths = Array.from(new Set(dashboardData.map(d => d.name))).filter(Boolean).sort((a, b) => {
     const [mA, yA] = String(a).split('/');
     const [mB, yB] = String(b).split('/');
-    if (yA !== yB) return Number(yA) - Number(yB);
-    return getMonthNumber(mA) - getMonthNumber(mB);
+    if (yA !== yB) return Number(yB) - Number(yA);
+    return getMonthNumber(mB) - getMonthNumber(mA);
   });
 
   const filteredDashboardData = dashboardData.filter(d => {
@@ -2567,7 +2660,7 @@ export default function App() {
       cofins: agrupadoraFiles['ENERGISA'].cofins || 0,
       icms: agrupadoraFiles['ENERGISA'].icms || 0,
       cip: agrupadoraFiles['ENERGISA'].cip || 0,
-      nf: agrupadoraFiles['ENERGISA'].numeroNotaFiscal,
+      nf: memoNfEnergisa || '-',
       mesRef: formatReference(agrupadoraFiles['ENERGISA'].mesReferencia)
     } : {
       total: sum(energisa, 'valorTotal'),
@@ -2575,7 +2668,7 @@ export default function App() {
       cofins: sum(energisa, 'cofins'),
       icms: sum(energisa, 'icms'),
       cip: sum(energisa, 'cip'),
-      nf: energisa.map(e => e.numeroNotaFiscal).filter(Boolean).join(', ') || '-',
+      nf: memoNfEnergisa || '-',
       mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
     };
 
@@ -2585,7 +2678,7 @@ export default function App() {
       cofins: agrupadoraFiles['ELEKTRO'].cofins || 0,
       icms: agrupadoraFiles['ELEKTRO'].icms || 0,
       cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || agrupadoraFiles['ELEKTRO'].cip || 0,
-      nf: agrupadoraFiles['ELEKTRO'].numeroNotaFiscal,
+      nf: memoNfElektro || '-',
       mesRef: formatReference(agrupadoraFiles['ELEKTRO'].mesReferencia)
     } : {
       total: sum(elektro, 'valorTotal'),
@@ -2593,7 +2686,7 @@ export default function App() {
       cofins: sum(elektro, 'cofins'),
       icms: sum(elektro, 'icms'),
       cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || sum(elektro, 'cip') || 0,
-      nf: elektro.map(e => e.numeroNotaFiscal).filter(Boolean).join(', ') || '-',
+      nf: memoNfElektro || '-',
       mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
     };
 
@@ -2601,7 +2694,7 @@ export default function App() {
       energisa: energisaData,
       elektro: elektroData
     };
-  }, [filteredRelatorioData, agrupadoraFiles]);
+  }, [filteredRelatorioData, agrupadoraFiles, memoNfEnergisa, memoNfElektro]);
 
   // Group by month/year for charts
   const timeSeriesData = Object.values(filteredDashboardData.reduce((acc: any, curr) => {
@@ -2751,14 +2844,6 @@ export default function App() {
             </div>
             <div className="flex flex-wrap gap-3">
               <button
-                onClick={() => window.aistudio?.openSelectKey?.()}
-                className="flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                title="Configurar ou trocar a chave da API Gemini"
-              >
-                <Zap size={16} />
-                Configurar API
-              </button>
-              <button
                 onClick={() => setCurrentPage('sistema')}
                 className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
               >
@@ -2808,14 +2893,6 @@ export default function App() {
             >
               <ArrowLeft size={16} />
               Voltar para Visão Geral
-            </button>
-            <button
-              onClick={() => window.aistudio?.openSelectKey?.()}
-              className="flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-              title="Configurar ou trocar a chave da API Gemini"
-            >
-              <Zap size={16} />
-              Configurar API
             </button>
             <button
               onClick={handleLogout}
@@ -2990,6 +3067,17 @@ export default function App() {
             Monitoramento de Despesas
           </button>
           <button 
+            onClick={() => setActiveTab('monitoramento_reativo')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'monitoramento_reativo' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <Zap size={14} />
+            Monitoramento Reativo
+          </button>
+          <button 
             onClick={() => setActiveTab('relatorio')}
             className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
               activeTab === 'relatorio' 
@@ -3000,15 +3088,6 @@ export default function App() {
             <FileText size={14} />
             Relatório Financeiro
           </button>
-
-          <button 
-            onClick={() => window.aistudio?.openSelectKey?.()}
-            className="flex items-center gap-2 px-6 py-3 transition-all rounded-xl text-[10px] font-bold uppercase tracking-wider text-sanesul-muted hover:text-sanesul-primary hover:bg-white border border-dashed border-sanesul-primary/20 ml-4"
-            title="Configurar Chave de API para aumentar limites"
-          >
-            <Plus size={12} />
-            Configurar Chave API
-          </button>
         </div>
       </header>
 
@@ -3018,15 +3097,9 @@ export default function App() {
             <AlertCircle size={20} />
             <p className="text-sm font-medium">
               <strong>Atenção:</strong> O limite de gastos ou cota da sua chave API foi atingido. 
-              Verifique seu faturamento no Google Cloud ou tente trocar a chave.
+              Verifique seu faturamento no Google Cloud.
             </p>
           </div>
-          <button
-            onClick={() => window.aistudio?.openSelectKey?.()}
-            className="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all whitespace-nowrap"
-          >
-            Trocar Chave API
-          </button>
         </div>
       )}
 
@@ -4108,11 +4181,15 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
                     <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                        <TrendingUp size={80} className="text-green-600" />
+                        {analysisResults.reduce((acc: any, curr: any) => acc + curr.economy, 0) >= 0 ? (
+                          <TrendingUp size={80} className="text-green-600" />
+                        ) : (
+                          <TrendingDown size={80} className="text-red-600" />
+                        )}
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Economia Potencial</p>
-                      <p className="text-4xl font-display font-bold text-green-600">
-                        R$ {analysisResults.reduce((acc: any, curr: any) => acc + (curr.economy > 0 ? curr.economy : 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      <p className={`text-4xl font-display font-bold ${analysisResults.reduce((acc: any, curr: any) => acc + curr.economy, 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        R$ {analysisResults.reduce((acc: any, curr: any) => acc + curr.economy, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                     </div>
                     <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
@@ -4149,6 +4226,8 @@ export default function App() {
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">UC</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Contratada (P/FP)</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Demanda Ideal</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Gasto Real</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Economia</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Meses Analisados</th>
                         </tr>
                       </thead>
@@ -4161,10 +4240,16 @@ export default function App() {
                               optimizedPonta: curr.optimizedPonta,
                               optimizedForaPonta: curr.optimizedForaPonta,
                               dcp: curr.dcp,
-                              dcfp: curr.dcfp
+                              dcfp: curr.dcfp,
+                              totalEconomy: 0,
+                              totalCurrent: 0,
+                              totalOptimized: 0
                             };
                           }
                           acc[curr.uc].months.push(curr);
+                          acc[curr.uc].totalEconomy += curr.economy;
+                          acc[curr.uc].totalCurrent += curr.currentTotal;
+                          acc[curr.uc].totalOptimized += curr.optimizedTotal;
                           return acc;
                         }, {})).map((group: any, idx: number) => (
                           <React.Fragment key={idx}>
@@ -4188,12 +4273,20 @@ export default function App() {
                                 <div className="text-[9px] text-green-500 uppercase font-bold tracking-tighter">Ideal Fixo (1 Ano)</div>
                               </td>
                               <td className="px-6 py-4 text-right">
+                                <div className="text-xs font-mono font-bold text-sanesul-primary">R$ {group.totalCurrent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className={`text-xs font-mono font-bold ${group.totalEconomy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  R$ {group.totalEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
                                 <div className="text-xs font-bold text-slate-500">{group.months.length} meses</div>
                               </td>
                             </tr>
                             {expandedAnalysisUCs.has(group.uc) && (
                               <tr>
-                                <td colSpan={5} className="px-10 py-4 bg-slate-50/30">
+                                <td colSpan={7} className="px-10 py-4 bg-slate-50/30">
                                   <div className="overflow-hidden rounded-xl border border-slate-200 shadow-inner">
                                     <table className="w-full text-left border-collapse bg-white">
                                       <thead>
@@ -4202,6 +4295,7 @@ export default function App() {
                                           <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-500 text-right">Medida (P/FP)</th>
                                           <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-red-600 text-right">Ultrapassagem</th>
                                           <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-orange-600 text-right">Subutilização</th>
+                                          <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-sanesul-primary text-right">Gasto Real</th>
                                           <th className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-green-600 text-right">Economia</th>
                                         </tr>
                                       </thead>
@@ -4225,6 +4319,9 @@ export default function App() {
                                                   {month.subForaPonta > 0 && <span className="text-[9px] font-bold text-orange-600">FP: -{month.subForaPonta.toFixed(2)}</span>}
                                                 </div>
                                               ) : <span className="text-slate-300 text-[9px]">-</span>}
+                                            </td>
+                                            <td className="px-4 py-2 text-right text-xs font-mono font-bold text-sanesul-primary">
+                                              R$ {month.currentTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                             </td>
                                             <td className="px-4 py-2 text-right text-xs font-mono font-bold text-green-600">
                                               R$ {month.economy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -4287,10 +4384,16 @@ export default function App() {
 
                   <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                     <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                      <TrendingUp size={80} className="text-green-600" />
+                      {monitoringResults.generalTotalEconomy >= 0 ? (
+                        <TrendingUp size={80} className="text-green-600" />
+                      ) : (
+                        <TrendingDown size={80} className="text-red-600" />
+                      )}
                     </div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Economia Geral Total</p>
-                    <p className="text-4xl font-display font-bold text-green-600">R$ {monitoringResults.generalTotalEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    <p className={`text-4xl font-display font-bold ${monitoringResults.generalTotalEconomy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      R$ {monitoringResults.generalTotalEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
                   </div>
 
                   <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
@@ -4523,7 +4626,7 @@ export default function App() {
                                           {uc.monthlyData.map((month: any, mIdx: number) => (
                                             <div key={mIdx} className={`grid grid-cols-6 gap-4 px-4 py-3 rounded-xl border transition-colors ${month.hasChanged ? 'bg-yellow-50 border-yellow-200' : 'bg-white border-slate-100 hover:border-sanesul-primary/20'}`}>
                                               <div className="flex flex-col">
-                                                <span className="text-xs font-bold text-slate-700">{month.mes}/{month.ano}</span>
+                                                <span className="text-xs font-bold text-slate-700">{formatMonth(month.mes)}/{month.ano}</span>
                                                 {month.hasChanged && <span className="text-[9px] font-bold text-yellow-600 uppercase tracking-wider mt-1">Alteração de Contrato</span>}
                                               </div>
                                               <div className="text-xs font-mono text-center text-slate-500">{month.dcp} / {month.dcfp} kW</div>
@@ -4632,7 +4735,7 @@ export default function App() {
                                         <div className="space-y-2">
                                           {uc.monthlyData.map((month: any, mIdx: number) => (
                                             <div key={mIdx} className="grid grid-cols-4 gap-4 px-4 py-3 bg-white rounded-xl border border-slate-100 hover:border-sanesul-primary/20 transition-colors">
-                                              <div className="text-xs font-bold text-slate-700">{month.mes}/{month.ano}</div>
+                                              <div className="text-xs font-bold text-slate-700">{formatMonth(month.mes)}/{month.ano}</div>
                                               <div className="text-xs font-mono text-center text-slate-500">{month.dcp} / {month.dcfp} kW</div>
                                               <div className="text-xs font-mono text-center text-slate-500">{month.dmp} / {month.dmfp} kW</div>
                                               <div className="text-xs font-mono text-right font-bold text-sanesul-primary">R$ {month.currentTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
@@ -4654,6 +4757,171 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        ) : activeTab === 'monitoramento_reativo' ? (
+          <div className="py-12 space-y-12">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div>
+                <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Monitoramento Reativo</h2>
+                <p className="text-sanesul-muted">Acompanhamento do Valor da Energia Reativa Excedente por UC.</p>
+              </div>
+              <div className="flex flex-wrap gap-4 items-center">
+                <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-sanesul-primary/10 shadow-sm">
+                  <Calendar size={16} className="text-sanesul-primary" />
+                  <select 
+                    value={selectedReactiveMonth}
+                    onChange={(e) => setSelectedReactiveMonth(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-sanesul-primary uppercase tracking-wider outline-none cursor-pointer"
+                  >
+                    <option value="all">Todos os Meses</option>
+                    {availableMonths.map(month => (
+                      <option key={month} value={month}>{month}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {(() => {
+              const reactiveBills = bills.filter(b => {
+                if (b.status !== 'completed') return false;
+                if (selectedReactiveMonth !== 'all' && `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth) return false;
+                return parseValue(b.valorEnergiaReativaExcedPonta) > 0 || parseValue(b.valorEnergiaReativaExcedFPonta) > 0;
+              });
+              
+              const grouped = reactiveBills.reduce((acc, bill) => {
+                const uc = String(bill.uc);
+                if (!acc[uc]) acc[uc] = { uc, cidade: bill.cidade || '', totalPonta: 0, totalFPonta: 0, totalFatura: 0, bills: [] };
+                acc[uc].totalPonta += parseValue(bill.valorEnergiaReativaExcedPonta);
+                acc[uc].totalFPonta += parseValue(bill.valorEnergiaReativaExcedFPonta);
+                acc[uc].totalFatura += parseValue(bill.valorTotal);
+                acc[uc].bills.push(bill);
+                return acc;
+              }, {} as Record<string, { uc: string, cidade: string, totalPonta: number, totalFPonta: number, totalFatura: number, bills: typeof bills }>);
+
+              const reactiveData = (Object.values(grouped) as { uc: string, cidade: string, totalPonta: number, totalFPonta: number, totalFatura: number, bills: typeof bills }[]).sort((a, b) => (b.totalPonta + b.totalFPonta) - (a.totalPonta + a.totalFPonta));
+              
+              const totalGeral = reactiveData.reduce((acc, curr) => acc + curr.totalPonta + curr.totalFPonta, 0);
+
+              return (
+                <div className="space-y-8">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                        <Zap size={80} className="text-red-600" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Multa Reativa</p>
+                      <p className="text-4xl font-display font-bold text-red-600">
+                        R$ {totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">UC</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Cidade</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Total Reativa Ponta (R$)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Total Reativa F. Ponta (R$)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">Total Geral (R$)</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">% da Fatura</th>
+                          <th className="px-6 py-4 border-b border-sanesul-primary/5 w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-sanesul-primary/5">
+                        {reactiveData.map((data, idx) => (
+                          <React.Fragment key={idx}>
+                            <tr 
+                              className="hover:bg-sanesul-primary/5 transition-colors cursor-pointer group"
+                              onClick={() => toggleReactiveUc(data.uc)}
+                            >
+                              <td className="px-6 py-4">
+                                <div className="font-bold text-sanesul-primary">{data.uc}</div>
+                                <div className="text-[10px] text-sanesul-muted uppercase tracking-wider mt-1">{data.bills.length} faturas</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="text-sm text-slate-600">{data.cidade}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-sm font-mono text-slate-600">R$ {data.totalPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-sm font-mono text-slate-600">R$ {data.totalFPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-sm font-bold text-red-600">R$ {(data.totalPonta + data.totalFPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="text-sm font-bold text-orange-500">
+                                  {data.totalFatura > 0 ? (((data.totalPonta + data.totalFPonta) / data.totalFatura) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00'}%
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <ChevronDown className={`w-5 h-5 text-sanesul-primary/40 transition-transform group-hover:text-sanesul-primary ${expandedReactiveUcs.has(data.uc) ? 'rotate-180' : ''}`} />
+                              </td>
+                            </tr>
+                            {expandedReactiveUcs.has(data.uc) && (
+                              <tr>
+                                <td colSpan={7} className="p-0 bg-slate-50/50">
+                                  <div className="px-12 py-6 border-t border-sanesul-primary/5 shadow-inner">
+                                    <table className="w-full text-left">
+                                      <thead>
+                                        <tr>
+                                          <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200">Mês/Ano</th>
+                                          <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">Valor Ponta (R$)</th>
+                                          <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">Valor F. Ponta (R$)</th>
+                                          <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">Total Mês (R$)</th>
+                                          <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">% da Fatura</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {data.bills
+                                          .sort((a, b) => {
+                                            const yearA = parseInt(a.anoLeitura || '0', 10);
+                                            const yearB = parseInt(b.anoLeitura || '0', 10);
+                                            if (yearA !== yearB) return yearB - yearA;
+                                            return getMonthNumber(b.mesReferencia) - getMonthNumber(a.mesReferencia);
+                                          })
+                                          .map((bill, bIdx) => {
+                                            const vPonta = parseValue(bill.valorEnergiaReativaExcedPonta);
+                                            const vFPonta = parseValue(bill.valorEnergiaReativaExcedFPonta);
+                                            const vFatura = parseValue(bill.valorTotal);
+                                            const percentual = vFatura > 0 ? ((vPonta + vFPonta) / vFatura) * 100 : 0;
+                                            return (
+                                              <tr key={bIdx} className="hover:bg-white transition-colors">
+                                                <td className="px-4 py-3 text-sm font-medium text-slate-600">{bill.mesReferencia}/{bill.anoLeitura}</td>
+                                                <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">R$ {vPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">R$ {vFPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-sm font-bold text-red-500 text-right">R$ {(vPonta + vFPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-sm font-bold text-orange-500 text-right">{percentual.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</td>
+                                              </tr>
+                                            );
+                                          })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                        {reactiveData.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-sanesul-muted">
+                              Nenhuma UC com energia reativa excedente encontrada.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              );
+            })()}
           </div>
         ) : activeTab === 'relatorio' ? (
           <div className="py-12 space-y-12">
@@ -4726,6 +4994,8 @@ export default function App() {
                     id="btn-gerar-relatorio"
                     onClick={() => {
                       setTempMemoNumber(memoNumber);
+                      setTempMemoNfEnergisa(memoNfEnergisa);
+                      setTempMemoNfElektro(memoNfElektro);
                       setShowMemoNumberPrompt(true);
                     }}
                     className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20"
@@ -4978,8 +5248,8 @@ export default function App() {
                 <FileText className="text-sanesul-primary" size={20} />
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-sanesul-primary">Número do Memorando</h3>
-                <p className="text-[10px] text-sanesul-muted uppercase tracking-widest font-bold">Identificação do Documento</p>
+                <h3 className="text-lg font-display font-bold text-sanesul-primary">Dados do Memorando</h3>
+                <p className="text-[10px] text-sanesul-muted uppercase tracking-widest font-bold">Identificação e Notas Fiscais</p>
               </div>
             </div>
             
@@ -4996,6 +5266,48 @@ export default function App() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       setMemoNumber(tempMemoNumber);
+                      setMemoNfEnergisa(tempMemoNfEnergisa);
+                      setMemoNfElektro(tempMemoNfElektro);
+                      setShowMemoNumberPrompt(false);
+                      setShowMemo(true);
+                    }
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-sanesul-muted uppercase tracking-widest mb-2 px-1">NF Energisa</label>
+                <input 
+                  type="text" 
+                  value={tempMemoNfEnergisa}
+                  onChange={(e) => setTempMemoNfEnergisa(e.target.value)}
+                  placeholder="Ex: 123456"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-sanesul-primary focus:outline-none focus:ring-2 focus:ring-sanesul-primary/20 focus:bg-white transition-all"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setMemoNumber(tempMemoNumber);
+                      setMemoNfEnergisa(tempMemoNfEnergisa);
+                      setMemoNfElektro(tempMemoNfElektro);
+                      setShowMemoNumberPrompt(false);
+                      setShowMemo(true);
+                    }
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-sanesul-muted uppercase tracking-widest mb-2 px-1">NF Elektro</label>
+                <input 
+                  type="text" 
+                  value={tempMemoNfElektro}
+                  onChange={(e) => setTempMemoNfElektro(e.target.value)}
+                  placeholder="Ex: 789012"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-sanesul-primary focus:outline-none focus:ring-2 focus:ring-sanesul-primary/20 focus:bg-white transition-all"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setMemoNumber(tempMemoNumber);
+                      setMemoNfEnergisa(tempMemoNfEnergisa);
+                      setMemoNfElektro(tempMemoNfElektro);
                       setShowMemoNumberPrompt(false);
                       setShowMemo(true);
                     }
@@ -5013,6 +5325,8 @@ export default function App() {
                 <button 
                   onClick={() => {
                     setMemoNumber(tempMemoNumber);
+                    setMemoNfEnergisa(tempMemoNfEnergisa);
+                    setMemoNfElektro(tempMemoNfElektro);
                     setShowMemoNumberPrompt(false);
                     setShowMemo(true);
                   }}
