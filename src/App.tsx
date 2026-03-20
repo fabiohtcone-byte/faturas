@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import domtoimage from 'dom-to-image-more';
 import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, ShadingType, ImageRun, VerticalAlign } from 'docx';
@@ -40,7 +40,18 @@ import {
   Save,
   ArrowLeft,
   Search,
-  ChevronDown
+  ChevronDown,
+  Calculator,
+  ArrowUp,
+  ArrowDown,
+  Menu,
+  User,
+  Home,
+  BarChart2,
+  GitCompare,
+  Activity,
+  Battery,
+  ZapOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -54,6 +65,9 @@ import {
   ResponsiveContainer, 
   LineChart, 
   Line,
+  AreaChart,
+  Area,
+  ComposedChart,
   PieChart,
   Pie,
   Cell,
@@ -329,6 +343,13 @@ const parseValue = (val: string | number) => {
   return isNaN(parsed) ? 0 : parsed;
 };
 
+const formatNumber = (val: number, isCurrency: boolean = false, precision: number = 2) => {
+  return val.toLocaleString('pt-BR', {
+    minimumFractionDigits: isCurrency ? precision : 0,
+    maximumFractionDigits: precision
+  });
+};
+
 const formatMonth = (month: string | number) => {
   if (!month) return '';
   let normalized = month.toString().toLowerCase().trim();
@@ -519,7 +540,7 @@ const UCS_USINA = new Set([
   "2400975", "1602335", "279006", "176817", "176812", "102690", "3211"
 ]);
 
-const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
+const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: { data: any[], setCurrentPage: (page: string) => void, handleLogout: () => void }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
 
   const availableMonths = Array.from(new Set(data.map(d => d.name))).filter(Boolean).sort((a, b) => {
@@ -535,7 +556,7 @@ const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
     const filtered = filteredData.filter(filterFn);
     const custo = filtered.reduce((acc, curr) => acc + curr.valorTotal, 0);
     const consumo = filtered.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0);
-    return { custo, consumo };
+    return { custo, consumo, tarifa: consumo > 0 ? custo / consumo : 0 };
   };
 
   const isGrupoA = (d: any) => d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
@@ -554,111 +575,516 @@ const VisaoGeralDashboard = ({ data }: { data: any[] }) => {
   const isUsina = (d: any) => isGrupoB(d) && UCS_USINA.has(String(d.uc));
   const isGeral = (d: any) => isGrupoB(d) && !isConsumoMinimo(d) && !isPPP(d) && !isUsina(d);
 
-  return (
-    <div className="space-y-6 py-4">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-display font-bold text-sanesul-primary mb-1">Análise de Insumo de Energia Elétrica - SANESUL</h2>
-          <p className="text-sm text-sanesul-muted">Visão geral consolidada de custos e consumos por grupos tarifários.</p>
+  const totalGeral = calc(() => true);
+  const grupoA = calc(isGrupoA);
+  const grupoB = calc(isGrupoB);
+
+  const acl = calc(d => isGrupoA(d) && isACL(d));
+  const aclAzul = calc(d => isGrupoA(d) && isACL(d) && isAzul(d));
+  const aclVerde = calc(d => isGrupoA(d) && isACL(d) && isVerde(d));
+
+  const cativo = calc(d => isGrupoA(d) && isCativo(d));
+  const cativoAzul = calc(d => isGrupoA(d) && isCativo(d) && isAzul(d));
+  const cativoVerde = calc(d => isGrupoA(d) && isCativo(d) && isVerde(d));
+  const cativoOutras = calc(d => isGrupoA(d) && isCativo(d) && isOutrosGrupoA(d));
+
+  const semCompensacao = calc(d => isGrupoB(d) && !hasCompensacao(d));
+  const geral = calc(isGeral);
+  const consumosMinimos = calc(isConsumoMinimo);
+
+  const comCompensacao = calc(d => isGrupoB(d) && hasCompensacao(d));
+  const ppp = calc(isPPP);
+  const usinas = calc(isUsina);
+
+  const monthlyData = useMemo(() => {
+    interface GroupedItem {
+      name: string;
+      month: number;
+      year: number;
+      consumo: number;
+      custo: number;
+    }
+
+    const grouped = data.reduce((acc, curr) => {
+      const name = curr.name; // e.g. "Janeiro/2026"
+      if (!acc[name]) {
+        const [month, year] = name.split('/');
+        acc[name] = { 
+          name, 
+          month: getMonthNumber(month), 
+          year: parseInt(year), 
+          consumo: 0, 
+          custo: 0 
+        };
+      }
+      acc[name].consumo += curr.consumoPonta + curr.consumoForaPonta;
+      acc[name].custo += curr.valorTotal;
+      return acc;
+    }, {} as Record<string, GroupedItem>);
+
+    const sorted = (Object.values(grouped) as GroupedItem[]).sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
+
+    const ptAbbr: Record<string, string> = {
+      'Janeiro': 'Jan', 'Fevereiro': 'Fev', 'Março': 'Mar', 'Abril': 'Abr',
+      'Maio': 'Mai', 'Junho': 'Jun', 'Julho': 'Jul', 'Agosto': 'Ago',
+      'Setembro': 'Set', 'Outubro': 'Out', 'Novembro': 'Nov', 'Dezembro': 'Dez'
+    };
+
+    return sorted.map(item => {
+      const [month] = item.name.split('/');
+      const fullMonth = formatMonth(month);
+      const abbr = ptAbbr[fullMonth] || month.substring(0, 3);
+      return {
+        name: abbr,
+        consumo: item.consumo,
+        custo: item.custo
+      };
+    });
+  }, [data]);
+
+  const sparklineDataAzul = monthlyData.map(m => ({ value: m.custo * 0.6 })); // Mock data for sparkline
+  const sparklineDataVerde = monthlyData.map(m => ({ value: m.custo * 0.4 })); // Mock data for sparkline
+
+  const MetricRow = ({ icon: Icon, label, value, unit, isCurrency }: { icon: any, label: string, value: number, unit?: string, isCurrency?: boolean }) => (
+    <div className="flex items-center justify-between border-b border-slate-100 pb-1 mb-2 group/row">
+      <div className="flex items-center gap-2">
+        <Icon size={14} className="text-slate-400 group-hover/row:text-blue-500 transition-colors" />
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{label}</span>
+      </div>
+      <div className="text-right flex items-baseline gap-1">
+        {isCurrency && <span className="text-[10px] text-slate-400 font-bold">R$</span>}
+        <span className="text-lg font-black text-slate-900 tracking-tight">
+          {formatNumber(value, isCurrency, isCurrency ? 2 : 0)}
+        </span>
+        {unit && <span className="text-[10px] text-slate-400 font-bold ml-1">{unit}</span>}
+      </div>
+    </div>
+  );
+
+  const SummaryCard = ({ title, data, icon: Icon, color = "blue", className = "" }: { title: string, data: any, icon: any, color?: "blue" | "indigo" | "sky", className?: string }) => {
+    const colorStyles = {
+      blue: { icon: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100" },
+      indigo: { icon: "text-indigo-600", bg: "bg-indigo-50", border: "border-indigo-100" },
+      sky: { icon: "text-sky-600", bg: "bg-sky-50", border: "border-sky-100" },
+    }[color];
+
+    return (
+      <div className={`rounded-[2rem] p-5 relative overflow-hidden bg-white text-slate-900 border border-slate-200 group transition-all duration-500 hover:shadow-xl shadow-sm ${className}`}>
+        <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 rounded-full -translate-y-1/2 translate-x-1/2 opacity-30 group-hover:scale-110 transition-transform duration-700 blur-3xl"></div>
+        
+        <div className="flex justify-between items-center mb-4 relative z-10">
+          <div className="flex items-center gap-4">
+            <div className={`p-2.5 ${colorStyles.bg} rounded-xl border ${colorStyles.border} shadow-sm group-hover:bg-white transition-colors duration-300`}>
+              <Icon size={20} className={colorStyles.icon} />
+            </div>
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-800">{title}</h3>
+          </div>
+        </div>
+        
+        <div className="space-y-1 relative z-10">
+          <MetricRow icon={DollarSign} label="Custo Total" value={data.custo} isCurrency />
+          <MetricRow icon={Zap} label="Consumo Total" value={data.consumo} unit="kWh" />
+          <MetricRow icon={Calculator} label="Tarifa Média" value={data.tarifa} isCurrency />
         </div>
       </div>
+    );
+  };
 
-      {data.length === 0 ? (
-        <div className="p-12 text-center bg-white rounded-2xl border border-sanesul-primary/10 shadow-lg">
-          <div className="w-12 h-12 bg-sanesul-primary/5 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle size={24} className="text-sanesul-primary/30" />
-          </div>
-          <p className="text-lg font-display font-semibold text-sanesul-primary">Nenhum dado disponível</p>
-          <p className="text-sm text-sanesul-muted mt-1">Processe algumas faturas para visualizar a análise de insumos.</p>
+  const DetailCard = ({ title, data, color = "blue", icon: Icon }: { title: string, data: any, color?: "blue" | "green" | "slate" | "indigo", icon?: any }) => {
+    const colorStyles = {
+      blue: { text: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100", iconBg: "bg-blue-100", iconText: "text-blue-600", hover: "hover:border-blue-200 hover:bg-blue-100/50", valueText: "text-slate-900" },
+      green: { text: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100", iconBg: "bg-emerald-100", iconText: "text-emerald-600", hover: "hover:border-emerald-200 hover:bg-emerald-100/50", valueText: "text-slate-900" },
+      slate: { text: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200", iconBg: "bg-slate-100", iconText: "text-slate-600", hover: "hover:border-slate-300 hover:bg-slate-100/50", valueText: "text-slate-900" },
+      indigo: { text: "text-indigo-600", bg: "bg-indigo-50", border: "border-indigo-100", iconBg: "bg-indigo-100", iconText: "text-indigo-600", hover: "hover:border-indigo-200 hover:bg-indigo-100/50", valueText: "text-slate-900" },
+    }[color];
+    
+    return (
+      <div className={`rounded-2xl p-3.5 border ${colorStyles.border} ${colorStyles.bg} flex-1 transition-all duration-300 ${colorStyles.hover} group relative overflow-hidden shadow-sm`}>
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/50 rounded-full -translate-y-1/2 translate-x-1/2 opacity-40 group-hover:scale-110 transition-transform duration-500 blur-xl"></div>
+        <div className="flex items-center gap-3 mb-3 relative z-10">
+          {Icon && (
+            <div className={`p-2 rounded-xl ${colorStyles.iconBg} ${colorStyles.iconText} group-hover:scale-110 transition-transform shadow-sm border border-white`}>
+              <Icon size={16} />
+            </div>
+          )}
+          <h4 className={`text-xs font-bold uppercase tracking-wider ${colorStyles.text}`}>{title}</h4>
         </div>
-      ) : (
-        <div className="space-y-6">
-          {/* Referência */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-3">
-              <MetricCard 
-                title="Referência (Total Geral)" 
-                {...calc(() => true)} 
-                isReference={true} 
-                rightElement={
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-sanesul-muted">Mês:</span>
-                    <select 
-                      value={selectedMonth}
-                      onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-sanesul-primary outline-none focus:ring-2 focus:ring-sanesul-primary/20 transition-all cursor-pointer"
-                    >
-                      <option value="all">Todos</option>
-                      {availableMonths.map(month => (
-                        <option key={month} value={month}>{month}</option>
-                      ))}
-                    </select>
+        <div className="space-y-2 relative z-10">
+          <div className="flex justify-between items-end bg-white/50 p-1.5 rounded-xl border border-slate-100">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Custo</span>
+            <span className={`text-sm font-bold ${colorStyles.valueText}`}>R$ {formatNumber(data.custo, true)}</span>
+          </div>
+          <div className="flex justify-between items-end bg-white/50 p-1.5 rounded-xl border border-slate-100">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Consumo</span>
+            <span className={`text-sm font-bold ${colorStyles.valueText}`}>{formatNumber(data.consumo, false, 0)} <span className="text-[10px] text-slate-400 font-medium">kWh</span></span>
+          </div>
+          <div className="flex justify-between items-end pt-2 border-t border-slate-100">
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${colorStyles.text}`}>Tarifa Média</span>
+            <span className={`text-sm font-bold ${colorStyles.text}`}>R$ {formatNumber(data.tarifa, true)}</span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const SparklineCard = ({ title, data, color = "blue", sparklineData }: { title: string, data: any, color?: "blue" | "green", sparklineData: any[] }) => {
+    const colorHex = color === "blue" ? "#3b82f6" : "#10b981";
+    const bgClass = color === "blue" ? "bg-blue-50" : "bg-emerald-50";
+    const textClass = color === "blue" ? "text-blue-600" : "text-emerald-600";
+    const valueTextClass = "text-slate-900";
+    const borderClass = color === "blue" ? "border-blue-100" : "border-emerald-100";
+    const hoverBorderClass = color === "blue" ? "hover:border-blue-200 hover:bg-blue-100/50" : "hover:border-emerald-200 hover:bg-emerald-100/50";
+    const iconBgClass = color === "blue" ? "bg-blue-100" : "bg-emerald-100";
+    
+    return (
+      <div className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex items-center justify-between mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-hidden shadow-sm`}>
+        <div className="absolute top-0 right-0 w-24 h-24 bg-white/50 rounded-full -translate-y-1/2 translate-x-1/2 opacity-40 group-hover:scale-110 transition-transform duration-500 blur-xl"></div>
+        <div className="flex items-center gap-4 relative z-10">
+          <div className={`w-10 h-10 rounded-xl ${iconBgClass} flex items-center justify-center shadow-sm border border-white group-hover:scale-110 transition-transform`}>
+            <TrendingUp size={20} className={textClass} />
+          </div>
+          <div>
+            <h4 className={`text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1`}>{title}</h4>
+            <p className={`text-lg font-bold ${valueTextClass}`}>R$ {formatNumber(data.custo, true)}</p>
+          </div>
+        </div>
+        <div className="w-24 h-12 opacity-80 relative z-10 group-hover:opacity-100 transition-opacity">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={sparklineData}>
+              <Line type="monotone" dataKey="value" stroke={colorHex} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f8fafc] pb-8 text-slate-600 selection:bg-blue-500/30">
+      {/* Header */}
+      <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg">
+            <Zap className="text-white" size={20} />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 leading-tight">Sanesul Energy</h1>
+            <p className="text-[9px] text-blue-600 uppercase tracking-widest font-bold">Portal de Inteligência Energética</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setCurrentPage('sistema')}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 transition-all rounded-xl text-xs font-bold tracking-wider shadow-md active:scale-95"
+          >
+            <LayoutDashboard size={16} />
+            Acessar Sistema
+          </button>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+            title="Sair"
+          >
+            <LogOut size={16} />
+            Sair
+          </button>
+          <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden border-2 border-white shadow-sm ml-2">
+            <img src="https://i.pravatar.cc/150?img=11" alt="User" className="w-full h-full object-cover" />
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-[1600px] mx-auto px-6 py-8 space-y-8">
+        {/* Title Section */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center border border-blue-100">
+              <Activity className="text-blue-600" size={24} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Análise de Insumo de Energia Elétrica</h2>
+              <p className="text-sm text-slate-500 font-medium">Visão geral consolidada de custos e consumos por grupos tarifários.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 bg-slate-50 px-5 py-3 rounded-2xl border border-slate-200 shadow-inner">
+            <Calendar size={18} className="text-blue-600" />
+            <select 
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer appearance-none pr-4"
+            >
+              <option value="all">Período Completo</option>
+              {availableMonths.map(month => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Main Chart */}
+        <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-200 relative overflow-hidden group hover:shadow-md transition-all duration-500">
+          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700 blur-3xl"></div>
+          
+          <div className="flex justify-between items-center mb-6 relative z-10">
+            <div className="flex items-center gap-5">
+              <div className="w-3 h-10 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-sm"></div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 uppercase tracking-widest">Evolução de Consumo e Custo</h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">Histórico Mensal Consolidado</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-6 bg-slate-50 px-5 py-3 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-[#0ea5e9]"></div>
+                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Consumo (kWh)</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-[#6366f1]"></div>
+                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Custo (R$)</span>
+              </div>
+            </div>
+          </div>
+          <div className="h-[165px] w-full relative z-10">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={monthlyData} margin={{ top: 20, right: 80, bottom: 10, left: 80 }}>
+                <defs>
+                  <linearGradient id="colorConsumo" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorCusto" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={true} stroke="#e2e8f0" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} dy={10} padding={{ left: 10, right: 10 }} />
+                <YAxis 
+                  yAxisId="left" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} 
+                  dx={-10} 
+                  tickFormatter={(val) => formatNumber(val, false, 0)}
+                  label={{ value: 'Consumo (kWh)', angle: -90, position: 'insideLeft', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
+                />
+                <YAxis 
+                  yAxisId="right" 
+                  orientation="right" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} 
+                  dx={10} 
+                  tickFormatter={(val) => formatNumber(val, false, 0)}
+                  label={{ value: 'Custo (R$)', angle: 90, position: 'insideRight', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
+                />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '20px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '16px 20px', fontWeight: 'bold', backgroundColor: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(12px)' }}
+                  formatter={(value: number, name: string) => [
+                    name === 'consumo' ? formatNumber(value, false, 0) + ' kWh' : formatNumber(value, true),
+                    name === 'consumo' ? 'Consumo' : 'Custo'
+                  ]}
+                  labelStyle={{ color: '#64748b', marginBottom: '8px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
+                  itemStyle={{ color: '#1e293b' }}
+                />
+                <Area 
+                  yAxisId="left" 
+                  type="monotone" 
+                  dataKey="consumo" 
+                  stroke="#0ea5e9" 
+                  strokeWidth={4} 
+                  fillOpacity={1} 
+                  fill="url(#colorConsumo)" 
+                  dot={{ r: 4, fill: '#fff', strokeWidth: 2, stroke: '#0ea5e9' }} 
+                  activeDot={{ r: 6, strokeWidth: 0, fill: '#0ea5e9' }} 
+                />
+                <Area 
+                  yAxisId="right" 
+                  type="monotone" 
+                  dataKey="custo" 
+                  stroke="#6366f1" 
+                  strokeWidth={4} 
+                  fillOpacity={1} 
+                  fill="url(#colorCusto)" 
+                  dot={{ r: 4, fill: '#fff', strokeWidth: 2, stroke: '#6366f1' }} 
+                  activeDot={{ r: 6, strokeWidth: 0, fill: '#6366f1' }} 
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="md:col-span-2">
+            <SummaryCard title="TOTAL GERAL" data={totalGeral} icon={DollarSign} color="indigo" />
+          </div>
+          <SummaryCard title="GRUPO A (MT/AT)" data={grupoA} icon={Zap} color="blue" />
+          <SummaryCard title="GRUPO B (BT)" data={grupoB} icon={Battery} color="sky" />
+        </div>
+
+        {/* Detalhamento Section */}
+        <div className="space-y-12">
+          
+          {/* Grupo A Section */}
+          <div className="space-y-8">
+            <div className="flex items-center justify-between px-2 bg-white/50 py-3 rounded-2xl border border-slate-100 backdrop-blur-sm">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-500/30 border border-blue-400/20">
+                  <Zap size={24} className="text-white" />
+                </div>
+                Detalhamento Grupo A
+              </h2>
+              <span className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg uppercase tracking-wider border border-blue-100">Alta Tensão</span>
+            </div>
+            
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+              {/* ACL Card */}
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
+                <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+                
+                <div className="flex justify-between items-center mb-8 relative z-10">
+                  <div className="flex items-center gap-5">
+                    <div className="w-3 h-12 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-md"></div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">ACL - Mercado Livre</h3>
+                      <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Livre</p>
+                    </div>
                   </div>
-                }
-              />
+                  <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                    <Activity size={24} className="text-blue-600" />
+                  </div>
+                </div>
+                
+                <div className="space-y-1 relative z-10 mb-8">
+                  <MetricRow icon={DollarSign} label="Custo Total" value={acl.custo} isCurrency />
+                  <MetricRow icon={Zap} label="Consumo Total" value={acl.consumo} unit="kWh" />
+                  <MetricRow icon={Calculator} label="Tarifa Média" value={acl.tarifa} isCurrency />
+                </div>
+
+                <div className="space-y-6 relative z-10">
+                  <div className="grid grid-cols-2 gap-6">
+                    <DetailCard title="Faturas Azul" data={aclAzul} color="blue" icon={Zap} />
+                    <DetailCard title="Faturas Verde" data={aclVerde} color="green" icon={Zap} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
+                    <SparklineCard title="Evolução Azul" data={aclAzul} color="blue" sparklineData={sparklineDataAzul} />
+                    <SparklineCard title="Evolução Verde" data={aclVerde} color="green" sparklineData={sparklineDataVerde} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Cativo Card */}
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
+                <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-slate-100 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+                
+                <div className="flex justify-between items-center mb-8 relative z-10">
+                  <div className="flex items-center gap-5">
+                    <div className="w-3 h-12 bg-gradient-to-b from-slate-400 to-slate-600 rounded-full shadow-md"></div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">Consumidor Cativo</h3>
+                      <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Regulada</p>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                    <ZapOff size={24} className="text-slate-600" />
+                  </div>
+                </div>
+                
+                <div className="space-y-1 relative z-10 mb-8">
+                  <MetricRow icon={DollarSign} label="Custo Total" value={cativo.custo} isCurrency />
+                  <MetricRow icon={Zap} label="Consumo Total" value={cativo.consumo} unit="kWh" />
+                  <MetricRow icon={Calculator} label="Tarifa Média" value={cativo.tarifa} isCurrency />
+                </div>
+
+                <div className="grid grid-cols-2 gap-6 relative z-10">
+                  <DetailCard title="Faturas Azul" data={cativoAzul} color="blue" icon={Zap} />
+                  <DetailCard title="Faturas Verde" data={cativoVerde} color="green" icon={Zap} />
+                  <div className="col-span-2">
+                    <DetailCard title="Outras Modalidades" data={cativoOutras} color="slate" icon={ZapOff} />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Grupos Principais */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <MetricCard title="GRUPO A (MT/AT)" {...calc(isGrupoA)} />
-            <MetricCard title="GRUPO B (BT)" {...calc(isGrupoB)} />
-          </div>
-
-          {/* Detalhamento Grupo A */}
-          <div className="space-y-6">
-            <h3 className="text-xl font-display font-bold text-sanesul-primary border-b border-sanesul-primary/10 pb-2">Detalhamento Grupo A</h3>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
-              {/* ACL */}
-              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
-                <MetricCard title="ACL - Mercado Livre" {...calc(d => isGrupoA(d) && isACL(d))} />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
-                  <MetricCard title="Faturas no ACL - Azul" titleColorClass="text-blue-600" {...calc(d => isGrupoA(d) && isACL(d) && isAzul(d))} />
-                  <MetricCard title="Faturas no ACL - Verde" titleColorClass="text-emerald-600" {...calc(d => isGrupoA(d) && isACL(d) && isVerde(d))} />
+          {/* Grupo B Section */}
+          <div className="space-y-8">
+            <div className="flex items-center justify-between px-2 bg-white/50 py-3 rounded-2xl border border-slate-100 backdrop-blur-sm">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-sky-700 flex items-center justify-center shadow-lg shadow-sky-500/30 border border-sky-400/20">
+                  <Battery size={24} className="text-white" />
                 </div>
-              </div>
-
-              {/* Cativo */}
-              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
-                <MetricCard title="Consumidor Cativo" {...calc(d => isGrupoA(d) && isCativo(d))} />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
-                  <MetricCard title="Faturas Cativo - Azul" titleColorClass="text-blue-600" {...calc(d => isGrupoA(d) && isCativo(d) && isAzul(d))} />
-                  <MetricCard title="Faturas Cativo - Verde" titleColorClass="text-emerald-600" {...calc(d => isGrupoA(d) && isCativo(d) && isVerde(d))} />
-                  <MetricCard title="Faturas Cativo - Outras" titleColorClass="text-slate-600" {...calc(d => isGrupoA(d) && isCativo(d) && isOutrosGrupoA(d))} />
-                </div>
-              </div>
-
+                Detalhamento Grupo B
+              </h2>
+              <span className="text-xs font-bold text-sky-600 bg-sky-50 px-3 py-1.5 rounded-lg uppercase tracking-wider border border-sky-100">Baixa Tensão</span>
             </div>
-          </div>
+            
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+              {/* Sem Compensação Card */}
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
+                <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-slate-100 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+                
+                <div className="flex justify-between items-center mb-8 relative z-10">
+                  <div className="flex items-center gap-5">
+                    <div className="w-3 h-12 bg-gradient-to-b from-slate-400 to-slate-600 rounded-full shadow-md"></div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">UC's Sem Compensação</h3>
+                      <p className="text-xs text-slate-500 font-medium mt-1">Consumo Padrão da Rede</p>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                    <Activity size={24} className="text-slate-600" />
+                  </div>
+                </div>
+                
+                <div className="space-y-1 relative z-10 mb-8">
+                  <MetricRow icon={DollarSign} label="Custo Total" value={semCompensacao.custo} isCurrency />
+                  <MetricRow icon={Zap} label="Consumo Total" value={semCompensacao.consumo} unit="kWh" />
+                  <MetricRow icon={Calculator} label="Tarifa Média" value={semCompensacao.tarifa} isCurrency />
+                </div>
 
-          {/* Detalhamento Grupo B */}
-          <div className="space-y-6">
-            <h3 className="text-xl font-display font-bold text-sanesul-primary border-b border-sanesul-primary/10 pb-2">Detalhamento Grupo B</h3>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
-              {/* Sem Compensação */}
-              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
-                <MetricCard title="UC's sem Compensação" {...calc(d => isGrupoB(d) && !hasCompensacao(d))} />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
-                  <MetricCard title="Geral" {...calc(isGeral)} />
-                  <MetricCard title="Consumos Mínimos" {...calc(isConsumoMinimo)} />
+                <div className="grid grid-cols-2 gap-6 relative z-10">
+                  <DetailCard title="Consumo Geral" data={geral} color="slate" icon={Activity} />
+                  <DetailCard title="Consumos Mínimos" data={consumosMinimos} color="indigo" icon={ArrowDown} />
                 </div>
               </div>
 
-              {/* Com Compensação */}
-              <div className="space-y-4 bg-slate-50/50 p-6 rounded-3xl border border-sanesul-primary/5">
-                <MetricCard title="UC's com Compensação" {...calc(d => isGrupoB(d) && hasCompensacao(d))} />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-4 md:pl-8 border-l-2 border-sanesul-primary/20">
-                  <MetricCard title="PPP Fotovoltaica" {...calc(isPPP)} />
-                  <MetricCard title="Usinas SANESUL" {...calc(isUsina)} />
+              {/* Com Compensação Card */}
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
+                <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-emerald-100 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+                
+                <div className="flex justify-between items-center mb-8 relative z-10">
+                  <div className="flex items-center gap-5">
+                    <div className="w-3 h-12 bg-gradient-to-b from-emerald-400 to-emerald-600 rounded-full shadow-md"></div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">UC's Com Compensação</h3>
+                      <p className="text-xs text-slate-500 font-medium mt-1">Geração Distribuída e Sustentável</p>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                    <Zap size={24} className="text-emerald-600" />
+                  </div>
+                </div>
+                
+                <div className="space-y-1 relative z-10 mb-8">
+                  <MetricRow icon={DollarSign} label="Custo Total" value={comCompensacao.custo} isCurrency />
+                  <MetricRow icon={Zap} label="Consumo Total" value={comCompensacao.consumo} unit="kWh" />
+                  <MetricRow icon={Calculator} label="Tarifa Média" value={comCompensacao.tarifa} isCurrency />
+                </div>
+
+                <div className="grid grid-cols-2 gap-6 relative z-10">
+                  <DetailCard title="PPP Fotovoltaica" data={ppp} color="green" icon={Zap} />
+                  <DetailCard title="Usinas Sanesul" data={usinas} color="blue" icon={Activity} />
                 </div>
               </div>
-
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -2836,53 +3262,13 @@ export default function App() {
   }
 
   if (currentPage === 'visao_geral') {
-    return (
-      <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
-        <header className="max-w-7xl mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-sanesul-primary rounded-xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20">
-                <Zap className="text-white" size={24} />
-              </div>
-              <div>
-                <h1 className="text-3xl md:text-4xl font-display font-bold tracking-tight text-sanesul-primary">
-                  Sanesul <span className="text-sanesul-secondary">Energy</span>
-                </h1>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-sanesul-muted font-bold">
-                  Portal de Inteligência Energética
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setCurrentPage('sistema')}
-                className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
-              >
-                <LayoutDashboard size={16} />
-                Acessar Sistema
-              </button>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 px-4 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                title="Sair"
-              >
-                <LogOut size={16} />
-                Sair
-              </button>
-            </div>
-          </div>
-        </header>
-        <main className="max-w-7xl mx-auto">
-          <VisaoGeralDashboard data={dashboardData} />
-        </main>
-      </div>
-    );
+    return <VisaoGeralDashboard data={dashboardData} setCurrentPage={setCurrentPage} handleLogout={handleLogout} />;
   }
 
   return (
     <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
       {/* Header */}
-      <header className="max-w-7xl mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
+      <header className="max-w-[1600px] mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-sanesul-primary rounded-xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20">
@@ -3103,7 +3489,7 @@ export default function App() {
       </header>
 
       {bills.some(b => b.error?.includes('limite de gastos') || b.error?.includes('Cota')) && (
-        <div className="max-w-7xl mx-auto mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="max-w-[1600px] mx-auto mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-red-700">
             <AlertCircle size={20} />
             <p className="text-sm font-medium">
@@ -3115,7 +3501,7 @@ export default function App() {
       )}
 
       <main 
-        className="max-w-7xl mx-auto"
+        className="max-w-[1600px] mx-auto"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -3598,25 +3984,25 @@ export default function App() {
                                 <FileText size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total de Faturas</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">{filteredDashboardData.length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <Zap size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Consumo Total</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">{Math.round(filteredDashboardData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Grupo A</p>
                               <div className="space-y-2">
-                                <p className="text-lg font-bold text-sanesul-primary flex justify-between">
+                                <p className="text-lg font-bold text-green-600 flex justify-between">
                                   <span>Verde:</span> 
-                                  <span>{filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('VERDE')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                  <span>{Math.round(filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('VERDE')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
                                 </p>
                                 <p className="text-lg font-bold text-sanesul-primary flex justify-between">
                                   <span>Azul:</span> 
-                                  <span>{filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('AZUL')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                  <span>{Math.round(filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('AZUL')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
                                 </p>
                               </div>
                             </div>
@@ -3625,23 +4011,23 @@ export default function App() {
                               <div className="space-y-2">
                                 <p className="text-lg font-bold text-sanesul-primary flex justify-between">
                                   <span>Solar:</span> 
-                                  <span>{filteredDashboardData.filter(d => (d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                  <span>{Math.round(filteredDashboardData.filter(d => (d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
                                 </p>
                                 <p className="text-lg font-bold text-sanesul-primary flex justify-between">
                                   <span>Não Solar:</span> 
-                                  <span>{filteredDashboardData.filter(d => !(d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0) && (d.consumoPonta + d.consumoForaPonta > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} kWh</span>
+                                  <span>{Math.round(filteredDashboardData.filter(d => !(d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0) && (d.consumoPonta + d.consumoForaPonta > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
                                 </p>
                               </div>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Tarifa Branca</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">
                                 {filteredDashboardData.filter(d => d.modalidadeTarifaria.includes('BRANCA')).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span>
                               </p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Optante B</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">
                                 {filteredDashboardData.filter(d => d.subgrupo.startsWith('B') && d.demandaContratadaPonta > 0).length} <span className="text-base font-sans font-medium opacity-40">Faturas</span>
                               </p>
                             </div>
@@ -3654,21 +4040,21 @@ export default function App() {
                                 <AlertCircle size={80} className="text-red-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Ultrapassagem</p>
-                              <p className="text-5xl font-display font-bold text-red-600">{filteredDashboardData.reduce((acc, curr) => acc + curr.ultrapassagemPonta + curr.ultrapassagemForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kW</span></p>
+                              <p className="text-4xl font-display font-bold text-red-600">{filteredDashboardData.reduce((acc, curr) => acc + curr.ultrapassagemPonta + curr.ultrapassagemForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kW</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <FileText size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Ocorrências</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">{new Set(filteredDashboardData.filter(d => d.ultrapassagemPonta > 0 || d.ultrapassagemForaPonta > 0).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">{new Set(filteredDashboardData.filter(d => d.ultrapassagemPonta > 0 || d.ultrapassagemForaPonta > 0).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-red-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Desvio</p>
-                              <p className="text-5xl font-display font-bold text-red-600">{Math.max(...filteredDashboardData.map(d => d.ultrapassagemPonta + d.ultrapassagemForaPonta), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kW</span></p>
+                              <p className="text-4xl font-display font-bold text-red-600">{Math.max(...filteredDashboardData.map(d => d.ultrapassagemPonta + d.ultrapassagemForaPonta), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kW</span></p>
                             </div>
                           </>
                         )}
@@ -3679,7 +4065,7 @@ export default function App() {
                                 <TrendingUp size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Utilização</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">
                                 {((filteredDashboardData.reduce((acc, curr) => acc + (curr.demandaMedidaPonta / (curr.demandaContratadaPonta || 1)), 0) / filteredDashboardData.length || 0) * 100).toFixed(1)}%
                               </p>
                             </div>
@@ -3688,14 +4074,14 @@ export default function App() {
                                 <AlertCircle size={80} className="text-orange-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Subutilizados (&lt;80%)</p>
-                              <p className="text-5xl font-display font-bold text-orange-600">{new Set(filteredDashboardData.filter(d => d.demandaMedidaPonta < (d.demandaContratadaPonta * 0.8)).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
+                              <p className="text-4xl font-display font-bold text-orange-600">{new Set(filteredDashboardData.filter(d => d.demandaMedidaPonta < (d.demandaContratadaPonta * 0.8)).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-orange-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Mínima Utilização</p>
-                              <p className="text-5xl font-display font-bold text-orange-600">{Math.min(...filteredDashboardData.map(d => (d.demandaMedidaPonta / (d.demandaContratadaPonta || 1)) * 100), 100).toFixed(1)}%</p>
+                              <p className="text-4xl font-display font-bold text-orange-600">{Math.min(...filteredDashboardData.map(d => (d.demandaMedidaPonta / (d.demandaContratadaPonta || 1)) * 100), 100).toFixed(1)}%</p>
                             </div>
                           </>
                         )}
@@ -3706,21 +4092,21 @@ export default function App() {
                                 <Zap size={80} className="text-purple-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Excedente</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">{filteredDashboardData.reduce((acc, curr) => acc + curr.reativaPonta + curr.reativaForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kVArh</span></p>
+                              <p className="text-4xl font-display font-bold text-purple-600">{filteredDashboardData.reduce((acc, curr) => acc + curr.reativaPonta + curr.reativaForaPonta, 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kVArh</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <FileText size={80} className="text-purple-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Unidades com Excesso</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">{new Set(filteredDashboardData.filter(d => d.reativaPonta > 0 || d.reativaForaPonta > 0).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
+                              <p className="text-4xl font-display font-bold text-purple-600">{new Set(filteredDashboardData.filter(d => d.reativaPonta > 0 || d.reativaForaPonta > 0).map(d => d.uc)).size} <span className="text-base font-sans font-medium opacity-40">Unidades</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-purple-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Excedente</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">{(filteredDashboardData.reduce((acc, curr) => acc + curr.reativaPonta + curr.reativaForaPonta, 0) / timeSeriesData.length || 0).toFixed(1)} <span className="text-base font-sans font-medium opacity-40">kVArh</span></p>
+                              <p className="text-4xl font-display font-bold text-purple-600">{(filteredDashboardData.reduce((acc, curr) => acc + curr.reativaPonta + curr.reativaForaPonta, 0) / timeSeriesData.length || 0).toFixed(1)} <span className="text-base font-sans font-medium opacity-40">kVArh</span></p>
                             </div>
                           </>
                         )}
@@ -3731,21 +4117,21 @@ export default function App() {
                                 <Zap size={80} className="text-sanesul-secondary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Consumo em kWh</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-secondary">{filteredDashboardData.reduce((acc, curr) => acc + (curr.consumoPonta + curr.consumoForaPonta), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-secondary">{filteredDashboardData.reduce((acc, curr) => acc + (curr.consumoPonta + curr.consumoForaPonta), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <Zap size={80} className="text-green-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Injetada</p>
-                              <p className="text-5xl font-display font-bold text-green-600">{filteredDashboardData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC + curr.solarInjetadaMUC), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                              <p className="text-4xl font-display font-bold text-green-600">{filteredDashboardData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC + curr.solarInjetadaMUC), 0).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-green-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Saldo Energia</p>
-                              <p className="text-5xl font-display font-bold text-green-600">{(filteredDashboardData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC + curr.solarInjetadaMUC) - (curr.consumoPonta + curr.consumoForaPonta), 0)).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
+                              <p className="text-4xl font-display font-bold text-green-600">{(filteredDashboardData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC + curr.solarInjetadaMUC) - (curr.consumoPonta + curr.consumoForaPonta), 0)).toLocaleString('pt-BR')} <span className="text-base font-sans font-medium opacity-40">kWh</span></p>
                             </div>
                           </>
                         )}
@@ -3759,28 +4145,28 @@ export default function App() {
                                 <FileText size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total de Faturas</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredDashboardData.length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">{filteredDashboardData.length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <DollarSign size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Gasto Acumulado</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Mensal</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <LayoutDashboard size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Unidades Ativas</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">{filteredUcs.length} <span className="text-base font-sans font-medium opacity-40">UCs</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">{filteredUcs.length} <span className="text-base font-sans font-medium opacity-40">UCs</span></p>
                             </div>
                           </>
                         )}
@@ -3791,21 +4177,21 @@ export default function App() {
                                 <AlertCircle size={80} className="text-red-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Multas</p>
-                              <p className="text-5xl font-display font-bold text-red-600">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorUltrapassagemPonta + curr.valorUltrapassagemForaPonta, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-red-600">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorUltrapassagemPonta + curr.valorUltrapassagemForaPonta, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-red-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Mensal</p>
-                              <p className="text-5xl font-display font-bold text-red-600">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorUltrapassagemPonta + curr.valorUltrapassagemForaPonta, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-red-600">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorUltrapassagemPonta + curr.valorUltrapassagemForaPonta, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <DollarSign size={80} className="text-red-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Penalidade</p>
-                              <p className="text-5xl font-display font-bold text-red-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorUltrapassagemPonta + d.valorUltrapassagemForaPonta), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-red-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorUltrapassagemPonta + d.valorUltrapassagemForaPonta), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                           </>
                         )}
@@ -3816,21 +4202,21 @@ export default function App() {
                                 <Zap size={80} className="text-purple-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Multas</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorReativaPonta + curr.valorReativaForaPonta, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-purple-600">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorReativaPonta + curr.valorReativaForaPonta, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-purple-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Média Mensal</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorReativaPonta + curr.valorReativaForaPonta, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-purple-600">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorReativaPonta + curr.valorReativaForaPonta, 0) / timeSeriesData.length || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <DollarSign size={80} className="text-purple-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Penalidade</p>
-                              <p className="text-5xl font-display font-bold text-purple-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorReativaPonta + d.valorReativaForaPonta), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-purple-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorReativaPonta + d.valorReativaForaPonta), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                           </>
                         )}
@@ -3841,21 +4227,21 @@ export default function App() {
                                 <TrendingUp size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Tarifa Média</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0) / (filteredDashboardData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0) || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 3 })} <span className="text-base font-sans font-medium opacity-40">/kWh</span></p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">R$ {(filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0) / (filteredDashboardData.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0) || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 3 })} <span className="text-base font-sans font-medium opacity-40">/kWh</span></p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-green-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Menor Tarifa</p>
-                              <p className="text-5xl font-display font-bold text-green-600">R$ {Math.min(...filteredDashboardData.map(d => d.valorTotal / (d.consumoPonta + d.consumoForaPonta || 1)), 100).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</p>
+                              <p className="text-4xl font-display font-bold text-green-600">R$ {Math.min(...filteredDashboardData.map(d => d.valorTotal / (d.consumoPonta + d.consumoForaPonta || 1)), 100).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-red-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Maior Tarifa</p>
-                              <p className="text-5xl font-display font-bold text-red-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorTotal / (d.consumoPonta + d.consumoForaPonta || 1)), 0).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</p>
+                              <p className="text-4xl font-display font-bold text-red-600">R$ {Math.max(...filteredDashboardData.map(d => d.valorTotal / (d.consumoPonta + d.consumoForaPonta || 1)), 0).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</p>
                             </div>
                           </>
                         )}
@@ -3866,21 +4252,21 @@ export default function App() {
                                 <Zap size={80} className="text-sanesul-primary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Consumo (R$)</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-primary">R$ {filteredDashboardData.reduce((acc, curr) => acc + Math.abs(curr.valorSolarOUC + curr.valorSolarMUC) + (curr.valorTotal - curr.cip - curr.outrosEncargos), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-sanesul-primary">R$ {filteredDashboardData.reduce((acc, curr) => acc + Math.abs(curr.valorSolarOUC + curr.valorSolarMUC) + (curr.valorTotal - curr.cip - curr.outrosEncargos), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <TrendingUp size={80} className="text-green-600" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Total Créditos</p>
-                              <p className="text-5xl font-display font-bold text-green-600">R$ {Math.abs(filteredDashboardData.reduce((acc, curr) => acc + curr.valorSolarOUC + curr.valorSolarMUC, 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-green-600">R$ {Math.abs(filteredDashboardData.reduce((acc, curr) => acc + curr.valorSolarOUC + curr.valorSolarMUC, 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                               <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                                 <DollarSign size={80} className="text-sanesul-secondary" />
                               </div>
                               <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Valor Total da Fatura</p>
-                              <p className="text-5xl font-display font-bold text-sanesul-secondary">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                              <p className="text-4xl font-display font-bold text-sanesul-secondary">R$ {filteredDashboardData.reduce((acc, curr) => acc + curr.valorTotal, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                             </div>
                           </>
                         )}
@@ -4208,21 +4594,21 @@ export default function App() {
                         <AlertCircle size={80} className="text-red-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Ultrapassagens</p>
-                      <p className="text-5xl font-display font-bold text-red-600">{analysisResults.filter((r: any) => r.isOverrun).length}</p>
+                      <p className="text-4xl font-display font-bold text-red-600">{analysisResults.filter((r: any) => r.isOverrun).length}</p>
                     </div>
                     <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                         <TrendingDown size={80} className="text-orange-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Subutilizações</p>
-                      <p className="text-5xl font-display font-bold text-orange-600">{analysisResults.filter((r: any) => r.isSub).length}</p>
+                      <p className="text-4xl font-display font-bold text-orange-600">{analysisResults.filter((r: any) => r.isSub).length}</p>
                     </div>
                     <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                         <Zap size={80} className="text-green-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Eficiência</p>
-                      <p className="text-5xl font-display font-bold text-green-600">
+                      <p className="text-4xl font-display font-bold text-green-600">
                         {Math.round((analysisResults.filter((r: any) => !r.isOverrun && !r.isSub).length / analysisResults.length) * 100)}%
                       </p>
                     </div>
@@ -4420,7 +4806,7 @@ export default function App() {
                       <Zap size={80} className="text-sanesul-secondary" />
                     </div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Potencial de Redução</p>
-                    <p className="text-5xl font-display font-bold text-sanesul-secondary">
+                    <p className="text-4xl font-display font-bold text-sanesul-secondary">
                       {((monitoringResults.generalTotalEconomy / monitoringResults.generalTotalCurrent) * 100).toFixed(1)}%
                     </p>
                   </div>
@@ -5846,7 +6232,7 @@ export default function App() {
         </div>
       )}
 
-      <footer className="max-w-7xl mx-auto mt-24 pb-12 px-8">
+      <footer className="max-w-[1600px] mx-auto mt-24 pb-12 px-8">
         <div className="pt-8 border-t border-sanesul-primary/10 flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="flex items-center gap-4">
             <div className="w-8 h-8 rounded-lg bg-sanesul-primary/10 flex items-center justify-center">
