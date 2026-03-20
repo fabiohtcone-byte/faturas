@@ -13,7 +13,8 @@ import {
   BarChart2, 
   GitCompare, 
   LayoutDashboard, 
-  LogOut 
+  LogOut,
+  Leaf
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -68,7 +69,8 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   const isConsumoMinimo = (d: any) => isGrupoB(d) && (d.consumoPonta + d.consumoForaPonta) <= 100 && d.valorTotal < 150;
   const isPPP = (d: any) => isGrupoB(d) && UCS_PPP.has(String(d.uc));
   const isUsina = (d: any) => isGrupoB(d) && UCS_USINA.has(String(d.uc));
-  const isGeral = (d: any) => isGrupoB(d) && !isConsumoMinimo(d) && !isPPP(d) && !isUsina(d);
+  const isOptanteB = (d: any) => isGrupoB(d) && (d.modalidadeTarifaria || '').toUpperCase().includes('OPTANTE');
+  const isGeral = (d: any) => isGrupoB(d) && !isConsumoMinimo(d) && !isPPP(d) && !isUsina(d) && !isOptanteB(d);
 
   const totalGeral = calc(() => true);
   const grupoA = calc(isGrupoA);
@@ -86,10 +88,14 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   const semCompensacao = calc(d => isGrupoB(d) && !hasCompensacao(d));
   const geral = calc(isGeral);
   const consumosMinimos = calc(isConsumoMinimo);
+  const optanteB = calc(isOptanteB);
 
   const comCompensacao = calc(d => isGrupoB(d) && hasCompensacao(d));
   const ppp = calc(isPPP);
   const usinas = calc(isUsina);
+
+  const totalSolarInjetada = filteredData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC || 0) + (curr.solarInjetadaMUC || 0), 0);
+  const emissoesEvitadas = totalSolarInjetada * 0.0426; // Fator médio do SIN
 
   const monthlyData = useMemo(() => {
     interface GroupedItem {
@@ -139,6 +145,13 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
       };
     });
   }, [data]);
+
+  const chartDomain = useMemo(() => {
+    const maxConsumo = Math.max(...monthlyData.map(d => d.consumo), 0);
+    const maxCusto = Math.max(...monthlyData.map(d => d.custo), 0);
+    const max = Math.max(maxConsumo, maxCusto);
+    return [0, Math.ceil(max * 1.1)];
+  }, [monthlyData]);
 
   const sparklineDataAzul = monthlyData.map(m => ({ value: m.custo * 0.6 })); 
   const sparklineDataVerde = monthlyData.map(m => ({ value: m.custo * 0.4 })); 
@@ -364,6 +377,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                   tickLine={false} 
                   tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} 
                   dx={-10} 
+                  domain={chartDomain}
                   tickFormatter={(val) => formatNumber(val, false, 0)}
                   label={{ value: 'Consumo (kWh)', angle: -90, position: 'insideLeft', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
                 />
@@ -374,6 +388,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                   tickLine={false} 
                   tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} 
                   dx={10} 
+                  domain={chartDomain}
                   tickFormatter={(val) => formatNumber(val, false, 0)}
                   label={{ value: 'Custo (R$)', angle: 90, position: 'insideRight', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
                 />
@@ -495,9 +510,6 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                 <div className="grid grid-cols-2 gap-6 relative z-10">
                   <DetailCard title="Faturas Azul" data={cativoAzul} color="blue" icon={Zap} />
                   <DetailCard title="Faturas Verde" data={cativoVerde} color="green" icon={Zap} />
-                  <div className="col-span-2">
-                    <DetailCard title="Outras Modalidades" data={cativoOutras} color="slate" icon={ZapOff} />
-                  </div>
                 </div>
               </div>
             </div>
@@ -537,9 +549,10 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                   <MetricRow icon={Calculator} label="Tarifa Média" value={semCompensacao.tarifa} isCurrency />
                 </div>
 
-                <div className="grid grid-cols-2 gap-6 relative z-10">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
                   <DetailCard title="Consumo Geral" data={geral} color="slate" icon={Activity} />
                   <DetailCard title="Consumos Mínimos" data={consumosMinimos} color="indigo" icon={ArrowDown} />
+                  <DetailCard title="Optante B" data={optanteB} color="blue" icon={Battery} />
                 </div>
               </div>
 
@@ -564,9 +577,33 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                   <MetricRow icon={Calculator} label="Tarifa Média" value={comCompensacao.tarifa} isCurrency />
                 </div>
 
-                <div className="grid grid-cols-2 gap-6 relative z-10">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
                   <DetailCard title="PPP Fotovoltaica" data={ppp} color="green" icon={Zap} />
                   <DetailCard title="Usinas Sanesul" data={usinas} color="blue" icon={Activity} />
+                  
+                  {/* Crédito de Carbono Card */}
+                  <div className="bg-emerald-50/50 rounded-2xl p-4 border border-emerald-100 relative overflow-hidden group flex flex-col justify-between shadow-sm">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-600 border border-white shadow-sm">
+                        <Leaf size={16} />
+                      </div>
+                      <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Crédito de Carbono</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center bg-white/60 p-1.5 rounded-lg border border-emerald-100/50">
+                        <span className="text-[9px] font-bold text-emerald-600/70 uppercase tracking-wider">Mês/Ano</span>
+                        <span className="text-xs font-bold text-emerald-900">{selectedMonth === 'all' ? 'Todos os Meses' : selectedMonth}</span>
+                      </div>
+                      <div className="flex justify-between items-center bg-white/60 p-1.5 rounded-lg border border-emerald-100/50">
+                        <span className="text-[9px] font-bold text-emerald-600/70 uppercase tracking-wider">Geração Solar</span>
+                        <span className="text-xs font-bold text-emerald-900">{formatNumber(totalSolarInjetada, false, 0)} <span className="text-[9px] text-emerald-600/70">kWh</span></span>
+                      </div>
+                      <div className="flex justify-between items-center bg-white/60 p-1.5 rounded-lg border border-emerald-100/50">
+                        <span className="text-[9px] font-bold text-emerald-600/70 uppercase tracking-wider">Emissões Evitadas</span>
+                        <span className="text-xs font-bold text-emerald-900">{formatNumber(emissoesEvitadas, false, 2)} <span className="text-[9px] text-emerald-600/70">KgCO₂</span></span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
