@@ -52,7 +52,8 @@ import {
   Activity,
   Battery,
   ZapOff,
-  Leaf
+  Leaf,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -212,6 +213,15 @@ interface AgrupadoraData {
 
 // --- Helper Functions ---
 
+const deduplicateBills = (bills: BillData[]) => {
+  const seen = new Set();
+  return bills.filter(bill => {
+    if (!bill.id || seen.has(bill.id)) return false;
+    seen.add(bill.id);
+    return true;
+  });
+};
+
 const ensureApiKey = async () => {
   if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
     try {
@@ -228,8 +238,8 @@ const ensureApiKey = async () => {
 const generateContentWithRetry = async (
   ai: GoogleGenAI,
   params: any,
-  retries = 3,
-  delay = 2000
+  retries = 5,
+  delay = 5000
 ): Promise<GenerateContentResponse> => {
   try {
     // Add a timeout of 60 seconds to the API call
@@ -288,26 +298,14 @@ const generateContentWithRetry = async (
     const isTimeout = errorStr.includes('TIMEOUT_API');
     const isLockError = errorStr.includes('Lock broken by another request');
     const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('limit reached');
-    const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('invalid');
+    const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('expired');
+    const isInvalid = errorStr.includes('invalid API key') || errorStr.includes('invalid key') || (errorCode === 401 && errorStr.includes('invalid'));
     const isNotFound = errorStr.includes('Requested entity was not found') || errorStr.includes('API key not found');
 
-    if (isNotFound) {
-      if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-        await window.aistudio.openSelectKey();
-      }
-      const msg = window.aistudio 
-        ? 'Chave de API não encontrada ou inválida. Por favor, selecione uma chave válida.'
-        : 'Chave de API não encontrada ou não configurada. Verifique a variável de ambiente GEMINI_API_KEY ou API_KEY no seu painel de controle (ex: Vercel).';
-      throw new Error(msg);
-    }
-
-    if (isExpired) {
-      if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-        await window.aistudio.openSelectKey();
-      }
-      const msg = window.aistudio 
-        ? 'A chave da API expirou ou é inválida. Por favor, selecione uma nova chave.'
-        : 'A chave da API expirou ou é inválida. Verifique se a variável de ambiente GEMINI_API_KEY ou API_KEY está correta e ativa no seu painel de controle (ex: Vercel).';
+    if (isNotFound || isExpired || isInvalid) {
+      const msg = isNotFound 
+        ? 'Chave de API não encontrada ou inválida. Por favor, use o botão "Trocar Conta" para selecionar uma chave válida.'
+        : 'A chave da API expirou ou é inválida. Por favor, use o botão "Trocar Conta" para selecionar uma nova chave.';
       throw new Error(msg);
     }
 
@@ -1232,20 +1230,20 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Deduplicate on load
+        const deduplicated = deduplicateBills(Array.isArray(parsed) ? parsed : []);
+        
         // One-time fix for Elektro UC from localStorage
-        if (Array.isArray(parsed)) {
-          return parsed.map(b => {
-            const isElektro = (b.concessionaria || '').toUpperCase().includes('ELEKTRO');
-            if (isElektro && b.status === 'completed') {
-              const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
-              if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
-                return { ...b, uc: fileNameNumbers };
-              }
+        return deduplicated.map(b => {
+          const isElektro = (b.concessionaria || '').toUpperCase().includes('ELEKTRO');
+          if (isElektro && b.status === 'completed') {
+            const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
+            if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
+              return { ...b, uc: fileNameNumbers };
             }
-            return b;
-          });
-        }
-        return parsed;
+          }
+          return b;
+        });
       } catch (e) {
         return [];
       }
@@ -1310,7 +1308,7 @@ export default function App() {
             return b;
           });
 
-          setBills(updatedBills);
+          setBills(deduplicateBills(updatedBills));
 
           // If changes were made, update Supabase sequentially to avoid locking
           if (hasChanges) {
@@ -1813,9 +1811,6 @@ export default function App() {
       [fileId]: { status: `Lendo ${statusPrefix}...`, percent: 0, fileName: file.name, fileSize: file.size, abortController }
     }));
     
-    // Ensure API key is selected if needed
-    await ensureApiKey();
-    
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
     const ai = new GoogleGenAI({ apiKey });
 
@@ -1980,7 +1975,7 @@ export default function App() {
 
   const addFiles = (files: FileList | File[], concessionaria?: string) => {
     const newBills: BillData[] = (Array.from(files) as File[]).map(file => ({
-      id: Math.random().toString(36).substring(7),
+      id: crypto.randomUUID(),
       fileName: file.name,
       concessionaria: concessionaria || '',
       uc: '',
@@ -2022,7 +2017,7 @@ export default function App() {
       file: file
     } as any));
 
-    setBills(prev => [...prev, ...newBills]);
+    setBills(prev => deduplicateBills([...prev, ...newBills]));
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>, concessionaria?: string) => {
@@ -2634,14 +2629,17 @@ export default function App() {
       const errorStatus = nestedError?.status || '';
       const msg = nestedError?.message || error?.message || '';
 
-      if (msg.includes('exceeded your current quota') || errorStr.includes('exceeded your current quota') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('Cota')) {
+      if (msg.includes('spending cap') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('monthly limit')) {
         isQuotaExhausted = true;
-      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED')) {
+      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
         isRateLimit = true;
         // Try to extract retry time from message
         const match = msg.match(/retry in ([\d.]+)s/);
         if (match && match[1]) {
           retryAfter = parseFloat(match[1]) * 1000;
+        } else {
+          // Default to a longer delay for quota issues
+          retryAfter = 10000;
         }
       } else if (errorStr.includes('Lock broken by another request')) {
         isLockError = true;
@@ -2663,19 +2661,19 @@ export default function App() {
       }
 
       if (isRateLimit || isLockError || isTransientError) {
-        // Limit max retries to 5 to avoid freezing the app for too long
-        if (retryCount < 5) {
-          // Use retryAfter if found, otherwise exponential backoff starting at 5s
+        // Limit max retries to 8 to avoid freezing the app for too long
+        if (retryCount < 8) {
+          // Use retryAfter if found, otherwise exponential backoff starting at 10s for rate limits
           const delay = retryAfter > 0 
-            ? retryAfter + 2000 // Adiciona 2s de margem
-            : Math.pow(1.5, retryCount) * 5000 + Math.random() * 2000;
+            ? retryAfter + 3000 // Adiciona 3s de margem
+            : Math.pow(2, retryCount) * 5000 + Math.random() * 2000;
           
-          console.log(`[Worker] ${isLockError ? 'Erro de trava' : isTransientError ? 'Erro temporário (' + errorCode + ')' : 'Limite de taxa'} atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/5)`);
+          console.log(`[Worker] ${isLockError ? 'Erro de trava' : isTransientError ? 'Erro temporário (' + errorCode + ')' : 'Limite de taxa/cota'} atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/8)`);
           
           setBills(prev => prev.map(b => b.id === bill.id ? {
             ...b,
             status: 'processing',
-            error: `Aguardando ${isLockError ? 'liberação' : isTransientError ? 'servidor' : 'limite'} da API... Tentativa ${retryCount + 1}/5 (${Math.round(delay/1000)}s)`
+            error: `Aguardando ${isLockError ? 'liberação' : isTransientError ? 'servidor' : 'limite de cota'} da API... Tentativa ${retryCount + 1}/8 (${Math.round(delay/1000)}s)`
           } : b));
 
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -2698,9 +2696,6 @@ export default function App() {
     
     const pendingBills = bills.filter(b => b.status === 'pending');
     if (pendingBills.length === 0) return;
-
-    // Ensure API key is selected once before starting workers
-    await ensureApiKey();
 
     setIsProcessing(true);
     isProcessingRef.current = true;
@@ -2727,10 +2722,10 @@ export default function App() {
           await processFile({ ...bill, abortController } as any);
           console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
           
-          // Add a 4.5s delay to stay within the 15 RPM free tier limit
+          // Add a 6s delay to stay within the 15 RPM free tier limit
           if (queue.length > 0 && isProcessingRef.current) {
-            console.log(`[Worker ${workerId}] Aguardando 4.5s para respeitar o limite da cota gratuita...`);
-            await new Promise(resolve => setTimeout(resolve, 4500));
+            console.log(`[Worker ${workerId}] Aguardando 6s para respeitar o limite da cota gratuita...`);
+            await new Promise(resolve => setTimeout(resolve, 6000));
           }
         } catch (error) {
           console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
@@ -3436,6 +3431,14 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => window.aistudio?.openSelectKey?.()}
+              className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+              title="Selecionar Conta/Chave de API"
+            >
+              <Key size={16} />
+              Trocar Conta
+            </button>
             <button
               onClick={() => setCurrentPage('visao_geral')}
               className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
