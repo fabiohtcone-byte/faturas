@@ -1355,7 +1355,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<'visao_geral' | 'sistema'>('visao_geral');
   const [activeTab, setActiveTab] = useState<'faturas' | 'multas' | 'dashboard' | 'analises' | 'monitoramento' | 'monitoramento_reativo' | 'relatorio'>('faturas');
   const [multasMonth, setMultasMonth] = useState<string>('all');
-  const [selectedMultaType, setSelectedMultaType] = useState<'ultrapassagem' | 'reativa' | 'subutilizacao'>('ultrapassagem');
+  const [selectedMultaType, setSelectedMultaType] = useState<'ultrapassagem' | 'reativa' | 'subutilizacao' | 'total'>('total');
   const [multasSortDirection, setMultasSortDirection] = useState<'asc' | 'desc'>('desc');
   const [filterReference, setFilterReference] = useState<string>('all');
   const [sortConfig, setSortConfig] = useState<{ key: keyof BillData | 'referencia', direction: 'asc' | 'desc' } | null>(null);
@@ -3094,36 +3094,41 @@ export default function App() {
     let ultrapassagem = 0;
     let reativa = 0;
     let subutilizacao = 0;
+    let total = 0;
     
-    const monthlyBreakdown: Record<string, { month: string, sortKey: string, ultrapassagem: number, reativa: number, subutilizacao: number }> = {};
-    const ucBreakdown: Record<string, { ultrapassagem: number, reativa: number, subutilizacao: number }> = {};
+    const monthlyBreakdown: Record<string, { month: string, sortKey: string, ultrapassagem: number, reativa: number, subutilizacao: number, total: number }> = {};
+    const ucBreakdown: Record<string, { ultrapassagem: number, reativa: number, subutilizacao: number, total: number }> = {};
 
     completedBills.forEach(b => {
       const u = parseValue(b.valorDemandaPotenciaAtivaUltrapPonta) + parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta);
       const r = parseValue(b.valorEnergiaReativaExcedPonta) + parseValue(b.valorEnergiaReativaExcedFPonta);
       const s = parseValue(b.valorDemandaPotenciaNaoConsumidaPonta) + parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta);
+      const t = u + r + s;
 
       ultrapassagem += u;
       reativa += r;
       subutilizacao += s;
+      total += t;
 
       const monthName = `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`;
       const sortKey = `${b.anoLeitura}${b.mesReferencia.padStart(2, '0')}`;
       
       if (!monthlyBreakdown[sortKey]) {
-        monthlyBreakdown[sortKey] = { month: monthName, sortKey, ultrapassagem: 0, reativa: 0, subutilizacao: 0 };
+        monthlyBreakdown[sortKey] = { month: monthName, sortKey, ultrapassagem: 0, reativa: 0, subutilizacao: 0, total: 0 };
       }
       monthlyBreakdown[sortKey].ultrapassagem += u;
       monthlyBreakdown[sortKey].reativa += r;
       monthlyBreakdown[sortKey].subutilizacao += s;
+      monthlyBreakdown[sortKey].total += t;
 
       if (multasMonth === 'all' || monthName === multasMonth) {
         if (!ucBreakdown[b.uc]) {
-          ucBreakdown[b.uc] = { ultrapassagem: 0, reativa: 0, subutilizacao: 0 };
+          ucBreakdown[b.uc] = { ultrapassagem: 0, reativa: 0, subutilizacao: 0, total: 0 };
         }
         ucBreakdown[b.uc].ultrapassagem += u;
         ucBreakdown[b.uc].reativa += r;
         ucBreakdown[b.uc].subutilizacao += s;
+        ucBreakdown[b.uc].total += t;
       }
     });
 
@@ -3142,7 +3147,7 @@ export default function App() {
       });
 
     return {
-      multasTotals: { ultrapassagem, reativa, subutilizacao },
+      multasTotals: { ultrapassagem, reativa, subutilizacao, total },
       multasMonthlyData: monthlyData,
       multasUcList: ucList
     };
@@ -4039,13 +4044,32 @@ export default function App() {
               {/* Chart Section */}
               <div className="bg-slate-50 rounded-3xl p-8 mb-10 border border-sanesul-primary/5">
                 <h3 className="text-lg font-bold text-sanesul-primary mb-6">
-                  {selectedMultaType === 'ultrapassagem' ? 'Evolução Mensal - Multa de Ultrapassagem' :
+                  {selectedMultaType === 'total' ? 'Evolução Mensal - Gasto Total' :
+                   selectedMultaType === 'ultrapassagem' ? 'Evolução Mensal - Multa de Ultrapassagem' :
                    selectedMultaType === 'reativa' ? 'Evolução Mensal - Multa Reativa' :
                    'Evolução Mensal - Subutilização'}
                 </h3>
-                <div className="h-80">
+                <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={multasMonthlyData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                    <AreaChart data={multasMonthlyData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorUltrapassagem" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorReativa" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorSubutilizacao" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                       <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} dy={10} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} tickFormatter={(value) => `R$ ${value.toLocaleString('pt-BR')}`} />
@@ -4054,21 +4078,43 @@ export default function App() {
                         contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)' }}
                         formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Valor']}
                       />
-                      <Line 
+                      <Area 
                         type="monotone"
                         dataKey={selectedMultaType} 
-                        stroke={selectedMultaType === 'ultrapassagem' ? '#ef4444' : selectedMultaType === 'reativa' ? '#f59e0b' : '#3b82f6'} 
+                        stroke={selectedMultaType === 'total' ? '#8b5cf6' : selectedMultaType === 'ultrapassagem' ? '#ef4444' : selectedMultaType === 'reativa' ? '#f59e0b' : '#3b82f6'} 
+                        fillOpacity={1}
+                        fill={`url(#color${selectedMultaType === 'total' ? 'Total' : selectedMultaType === 'ultrapassagem' ? 'Ultrapassagem' : selectedMultaType === 'reativa' ? 'Reativa' : 'Subutilizacao'})`}
                         strokeWidth={4}
                         dot={{ r: 4, strokeWidth: 2 }}
                         activeDot={{ r: 6, strokeWidth: 0 }}
                       />
-                    </LineChart>
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
               {/* Cards Section */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+                <div 
+                  onClick={() => setSelectedMultaType('total')}
+                  className={`p-8 rounded-3xl border cursor-pointer transition-all ${
+                    selectedMultaType === 'total' 
+                      ? 'bg-violet-50 border-violet-200 shadow-xl shadow-violet-100' 
+                      : 'bg-white border-slate-100 hover:border-violet-100 hover:bg-violet-50/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className={`p-3 rounded-xl ${selectedMultaType === 'total' ? 'bg-violet-100 text-violet-600' : 'bg-slate-50 text-slate-400'}`}>
+                      <Calculator size={24} />
+                    </div>
+                    <h3 className={`font-bold text-sm uppercase tracking-wider ${selectedMultaType === 'total' ? 'text-violet-900' : 'text-slate-500'}`}>
+                      Gasto Total
+                    </h3>
+                  </div>
+                  <p className={`text-3xl font-display font-bold ${selectedMultaType === 'total' ? 'text-violet-600' : 'text-slate-700'}`}>
+                    R$ {multasTotals.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
                 <div 
                   onClick={() => setSelectedMultaType('reativa')}
                   className={`p-8 rounded-3xl border cursor-pointer transition-all ${
@@ -4141,7 +4187,8 @@ export default function App() {
                       Detalhamento por Unidade Consumidora (UC)
                     </h3>
                     <p className="text-sm text-sanesul-muted mt-1">
-                      {selectedMultaType === 'ultrapassagem' ? 'UCs com multas de ultrapassagem no período.' :
+                      {selectedMultaType === 'total' ? 'UCs com gastos totais (ultrapassagem, reativa ou subutilização) no período.' :
+                       selectedMultaType === 'ultrapassagem' ? 'UCs com multas de ultrapassagem no período.' :
                        selectedMultaType === 'reativa' ? 'UCs com multas reativas no período.' :
                        'UCs com subutilização no período.'}
                     </p>
