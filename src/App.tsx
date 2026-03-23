@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import domtoimage from 'dom-to-image-more';
 import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, ShadingType, ImageRun, VerticalAlign } from 'docx';
 import { saveAs } from 'file-saver';
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse, ThinkingLevel } from "@google/genai";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { 
   Upload, 
@@ -135,13 +135,13 @@ interface BillData {
 const EXTRACTION_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    uc: { type: Type.STRING, description: "Código da Unidade Consumidora (UC). Procure por 'CÓDIGO DO CLIENTE'. Extraia apenas o número central (ex: em 10/9000076-1, a UC é 9000076). Ignore prefixos e o dígito após o hífen." },
+    uc: { type: Type.STRING, description: "Código da Unidade Consumidora (UC). Para ENERGISA, use o 'CÓDIGO DO CLIENTE' completo ou a 'MATRÍCULA'. Extraia apenas os números e caracteres identificadores (ex: 10/1069-4)." },
     demandaPontaKW: { type: Type.STRING, description: "Demanda contratada na Ponta em kW. Geralmente encontrada na seção 'Grandezas Contratadas' ou 'Dados da Unidade Consumidora'." },
     demandaForaPontaKW: { type: Type.STRING, description: "Demanda contratada Fora Ponta em kW. Geralmente encontrada na seção 'Grandezas Contratadas'." },
     demandaPotenciaMedidaPonta: { type: Type.STRING, description: "Demanda de Potência Medida no horário de Ponta (kW). Procure na tabela de 'Itens da Fatura'." },
     demandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Demanda de Potência Medida no horário Fora Ponta (kW). Procure na tabela de 'Itens da Fatura'." },
-    anoLeitura: { type: Type.STRING, description: "Ano de referência da fatura (ex: 2026)" },
-    mesReferencia: { type: Type.STRING, description: "Mês de referência da fatura (ex: Fevereiro)" },
+    anoLeitura: { type: Type.STRING, description: "Ano de referência da fatura (ex: 2025). Extraia apenas os 4 dígitos do ano." },
+    mesReferencia: { type: Type.STRING, description: "Mês de referência da fatura (ex: Agosto). Extraia apenas o nome do mês, sem o ano." },
     consumoKwhPonta: { type: Type.STRING, description: "Quantidade de consumo em kWh no horário de Ponta. Procure por 'Consumo Ponta' ou 'Consumo Ativo Ponta'." },
     valorConsumoKwhPonta: { type: Type.STRING, description: "Valor total em R$ do consumo no horário de Ponta." },
     consumoKwhForaPonta: { type: Type.STRING, description: "Quantidade de consumo em kWh no horário Fora Ponta. Procure por 'Consumo Fora Ponta' ou 'Consumo Ativo Fora Ponta'." },
@@ -267,11 +267,23 @@ const generateContentWithRetry = async (
       retries
     });
 
-    const isRateLimit = 
+    const isTransientError = 
       errorCode === 429 || 
+      errorCode === 500 || 
+      errorCode === 502 || 
+      errorCode === 503 || 
+      errorCode === 504 ||
       errorStatus === 'RESOURCE_EXHAUSTED' ||
+      errorStatus === 'INTERNAL' ||
+      errorStatus === 'UNAVAILABLE' ||
       errorStr.includes('429') || 
-      errorStr.includes('RESOURCE_EXHAUSTED');
+      errorStr.includes('500') ||
+      errorStr.includes('502') ||
+      errorStr.includes('503') ||
+      errorStr.includes('504') ||
+      errorStr.includes('RESOURCE_EXHAUSTED') ||
+      errorStr.includes('INTERNAL') ||
+      errorStr.includes('UNAVAILABLE');
 
     const isTimeout = errorStr.includes('TIMEOUT_API');
     const isLockError = errorStr.includes('Lock broken by another request');
@@ -299,20 +311,24 @@ const generateContentWithRetry = async (
       throw new Error(msg);
     }
 
-    if (retries > 0 && (isRateLimit || isTimeout || isLockError) && !isHardQuota) {
-      console.warn(`${isTimeout ? 'Timeout' : isLockError ? 'Lock error' : 'Rate limit'} hit, retrying in ${delay}ms... (${retries} retries left)`);
+    if (retries > 0 && (isTransientError || isTimeout || isLockError) && !isHardQuota) {
+      console.warn(`${isTimeout ? 'Timeout' : isLockError ? 'Lock error' : 'Transient error (' + errorCode + ')'} hit, retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return generateContentWithRetry(ai, params, retries - 1, delay * 2);
     }
     
     // If it's a quota error or we're out of retries, throw
-    if (isHardQuota || isRateLimit) {
-      const msg = errorStr.includes('spending cap') 
-        ? "O limite de gastos do seu projeto foi atingido. Verifique sua conta do Google Cloud (https://ai.google.dev/gemini-api/docs/billing)."
-        : "Cota da API excedida ou limite de taxa atingido. Verifique seu plano e detalhes de faturamento no Google AI Studio (https://ai.google.dev/gemini-api/docs/billing). " + errorStr;
-      const quotaError = new Error(msg);
-      (quotaError as any).isQuotaError = true;
-      throw quotaError;
+    if (isHardQuota || isTransientError) {
+      const isQuota = isHardQuota || errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
+      
+      if (isQuota) {
+        const msg = errorStr.includes('spending cap') 
+          ? "O limite de gastos do seu projeto foi atingido. Verifique sua conta do Google Cloud (https://ai.google.dev/gemini-api/docs/billing)."
+          : "Cota da API excedida ou limite de taxa atingido. Verifique seu plano e detalhes de faturamento no Google AI Studio (https://ai.google.dev/gemini-api/docs/billing). " + errorStr;
+        const quotaError = new Error(msg);
+        (quotaError as any).isQuotaError = true;
+        throw quotaError;
+      }
     }
     
     throw error;
@@ -1146,6 +1162,11 @@ export default function App() {
       }
     }).catch(err => {
       console.error('Erro ao buscar sessão do Supabase:', err);
+      if (err.message?.includes('Refresh Token Not Found') || err.message?.includes('invalid refresh token')) {
+        supabase.auth.signOut();
+        localStorage.removeItem('sanesul_auth');
+        setIsAuthenticated(false);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -1326,6 +1347,11 @@ export default function App() {
   }, [bills]);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
+
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
   const [isDragging, setIsDragging] = useState(false);
   const [currentPage, setCurrentPage] = useState<'visao_geral' | 'sistema'>('visao_geral');
   const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'monitoramento_reativo' | 'relatorio'>('faturas');
@@ -1829,7 +1855,7 @@ export default function App() {
       let selectedModel = "gemini-3-flash-preview";
 
       if (reportType === 'detailed') {
-        selectedModel = "gemini-3.1-pro-preview";
+        selectedModel = "gemini-3-flash-preview";
         prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA EM FATURAS DE ENERGIA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado para consolidar o valor da CIP.\n\nINSTRUÇÕES DETALHADAS:\n1. Percorra TODAS as páginas do documento, sem exceção.\n2. Em cada página, localize a tabela de itens faturados.\n3. Procure pelas descrições: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n4. Extraia o valor monetário associado a cada uma dessas linhas.\n5. SOMA TOTAL: Você deve somar TODOS os valores encontrados em todas as páginas para obter o total da CIP do grupo.\n6. RETORNO: Retorne o JSON preenchendo o campo 'cip' com a soma total calculada. Os campos 'valorTotal', 'pis', 'cofins', 'icms' devem ser preenchidos como 0, a menos que você encontre um valor consolidado claro para eles no documento.\n7. Identifique a 'concessionaria' e o 'mesReferencia'.";
       }
 
@@ -1865,6 +1891,7 @@ export default function App() {
           config: {
             responseMimeType: "application/json",
             responseSchema: AGRUPADORA_SCHEMA,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             systemInstruction: prompt
           }
         });
@@ -1884,7 +1911,9 @@ export default function App() {
           return next;
         }), 2000);
 
-        const result = JSON.parse(response.text || '{}');
+        let text = response.text || '{}';
+        text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const result = JSON.parse(text);
         const concessionariaRaw = (result.concessionaria || 'DESCONHECIDA').toUpperCase();
         const key = concessionariaRaw.includes('ENERGISA') ? 'ENERGISA' : 'ELEKTRO';
         
@@ -2369,16 +2398,28 @@ export default function App() {
   };
 
   const processFile = async (bill: BillData & { file: File }, retryCount = 0) => {
-    let user = null;
-    if (isSupabaseConfigured) {
-      const { data: { user: supabaseUser } } = await supabase.auth.getUser();
-      user = supabaseUser;
-    }
-
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
     const ai = new GoogleGenAI({ apiKey });
     
     try {
+      if (!bill.file || !(bill.file instanceof Blob)) {
+        throw new Error('Arquivo não encontrado na memória. Por favor, remova esta fatura e faça o upload novamente.');
+      }
+
+      let user = null;
+      if (isSupabaseConfigured) {
+        try {
+          const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+          user = supabaseUser;
+        } catch (authError: any) {
+          console.warn('Erro ao obter usuário no processamento:', authError);
+          if (authError.message?.includes('Refresh Token Not Found')) {
+            supabase.auth.signOut();
+            setIsAuthenticated(false);
+          }
+        }
+      }
+
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (30s)')), 30000);
@@ -2412,6 +2453,9 @@ export default function App() {
 
       if (bill.abortController?.signal.aborted) throw new Error('Upload cancelado');
 
+      // History check by file_name removed to allow re-extraction of files with the same name.
+      // Duplicates will still be caught after extraction by UC/Mes/Ano.
+
       const progressInterval = setInterval(() => {
         setBills(prev => {
           const currentBill = prev.find(b => b.id === bill.id);
@@ -2430,7 +2474,7 @@ export default function App() {
           contents: [
             {
               parts: [
-                { text: "Você é um especialista em análise de faturas de energia elétrica. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS CRÍTICAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para faturas da ENERGISA: Procure pelo campo 'CÓDIGO DO CLIENTE'. A UC são os números centrais (ex: em 10/9000076-1, a UC é 9000076). Ignore o dígito após o hífen e o prefixo antes da barra.\n   - Para faturas da ELEKTRO: A UC é o mesmo número do 'Código da Instalação'. Se o arquivo for 41554175.pdf, a UC é 41554175. Extraia apenas os números.\n2. VALORES NUMÉRICOS: Extraia os valores exatamente como aparecem, mas certifique-se de capturar todos os dígitos antes e depois da vírgula. Erros comuns incluem ignorar o primeiro dígito de valores altos (ex: capturar 10,00 em vez de 410,00).\n3. DEMANDA (kW): Diferencie claramente entre 'Demanda Contratada' (geralmente em 'Grandezas Contratadas') e 'Demanda Medida' (geralmente em 'Itens da Fatura').\n4. CONSUMO (kWh): Procure na tabela de itens da fatura. Extraia o consumo Ponta e Fora Ponta separadamente.\n5. GERAÇÃO DISTRIBUÍDA (GD): Procure por termos como 'Energia Injetada', 'Energia Compensada', 'GDI', 'GD III', 'Saldo Anterior'.\n6. TRIBUTOS: Extraia PIS, COFINS e ICMS. Nas faturas da ELEKTRO, procure pela tabela 'Demonstrativo de Tributos' ou 'Base de Cálculo'. Extraia os valores totais de cada tributo.\n7. CIP/COSIP: Procure pelo valor da Contribuição de Iluminação Pública. Pode estar como 'CIP', 'COSIP' ou 'Contrib. Ilum. Pública'.\n8. CONCESSIONÁRIA: Identifique claramente se é ELEKTRO ou ENERGISA.\n\nSe um campo não estiver presente ou for impossível de ler, deixe em branco. NÃO invente dados." },
+                { text: "Você é um especialista em análise de faturas de energia elétrica brasileiras. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para ENERGISA: Procure por 'CÓDIGO DO CLIENTE' (ex: 10/1069-4) ou 'MATRÍCULA'. Extraia o identificador completo que identifica esta conta.\n   - Para ELEKTRO: A UC é o 'Código da Instalação'.\n2. VALORES NUMÉRICOS: Capture todos os dígitos. Não ignore o primeiro dígito de valores altos.\n3. CONSUMO E DEMANDA: Diferencie 'Contratada' de 'Medida'.\n4. GERAÇÃO DISTRIBUÍDA: Capture créditos de energia, injeção e compensação.\n5. TRIBUTOS: Extraia PIS, COFINS e ICMS separadamente.\n\nSe um campo não estiver presente, deixe em branco. Retorne o JSON seguindo o schema." },
                 {
                   inlineData: {
                     mimeType: bill.file?.type || 'application/pdf',
@@ -2443,7 +2487,8 @@ export default function App() {
           config: {
             responseMimeType: "application/json",
             responseSchema: EXTRACTION_SCHEMA,
-            systemInstruction: "Você é um especialista em análise de faturas de energia elétrica. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS CRÍTICAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para faturas da ENERGISA: Procure pelo campo 'CÓDIGO DO CLIENTE'. A UC são os números centrais (ex: em 10/9000076-1, a UC é 9000076). Ignore o dígito após o hífen e o prefixo antes da barra.\n   - Para faturas da ELEKTRO: A UC é o mesmo número do 'Código da Instalação'. Se o arquivo for 41554175.pdf, a UC é 41554175. Extraia apenas os números.\n2. VALORES NUMÉRICOS: Extraia os valores exatamente como aparecem, mas certifique-se de capturar todos os dígitos antes e depois da vírgula. Erros comuns incluem ignorar o primeiro dígito de valores altos (ex: capturar 10,00 em vez de 410,00).\n3. DEMANDA (kW): Diferencie claramente entre 'Demanda Contratada' (geralmente em 'Grandezas Contratadas') e 'Demanda Medida' (geralmente em 'Itens da Fatura').\n4. CONSUMO (kWh): Procure na tabela de itens da fatura. Extraia o consumo Ponta e Fora Ponta separadamente.\n5. GERAÇÃO DISTRIBUÍDA (GD): Procure por termos como 'Energia Injetada', 'Energia Compensada', 'GDI', 'GD III', 'Saldo Anterior'.\n6. TRIBUTOS: Extraia PIS, COFINS e ICMS. Nas faturas da ELEKTRO, procure pela tabela 'Demonstrativo de Tributos' ou 'Base de Cálculo'. Extraia os valores totais de cada tributo.\n7. CIP/COSIP: Procure pelo valor da Contribuição de Iluminação Pública. Pode estar como 'CIP', 'COSIP' ou 'Contrib. Ilum. Pública'.\n8. CONCESSIONÁRIA: Identifique claramente se é ELEKTRO ou ENERGISA.\n\nSe um campo não estiver presente ou for impossível de ler, deixe em branco. NÃO invente dados."
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            systemInstruction: "Você é um especialista em análise de faturas de energia elétrica. Extraia os dados da fatura com precisão, especialmente UC, Mês, Ano e Valores Totais."
           }
         });
       } finally {
@@ -2454,7 +2499,10 @@ export default function App() {
 
         let result: any = {};
         try {
-          result = JSON.parse(response.text || '{}');
+          let text = response.text || '{}';
+          // Remove markdown code blocks if present
+          text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          result = JSON.parse(text);
         } catch (parseError) {
           console.error(`Erro ao fazer parse do JSON para o arquivo ${bill.fileName}:`, parseError);
           console.error('Texto retornado pela API:', response.text);
@@ -2471,25 +2519,74 @@ export default function App() {
         }
 
         if (result.uc) {
-          result.uc = result.uc.replace(/UC:?\s*/i, '').split('-')[0].trim();
+          let cleanUc = result.uc.replace(/UC:?\s*/i, '').trim();
+          
+          // Rule for formats like "10/2941716-9" -> extract "2941716"
+          if (cleanUc.includes('/') && cleanUc.includes('-')) {
+            const afterSlash = cleanUc.split('/')[1];
+            if (afterSlash) {
+              cleanUc = afterSlash.split('-')[0].trim();
+            }
+          } else if (cleanUc.includes('-')) {
+            cleanUc = cleanUc.split('-')[0].trim();
+          }
+          
+          result.uc = cleanUc;
         }
 
         if (result.mesReferencia) {
           result.mesReferencia = formatMonth(result.mesReferencia);
         }
 
-      const isDuplicate = bills.some(b => {
-        if (b.id === bill.id || b.status !== 'completed') return false;
-        
-        const normalize = (str: string) => (str || '').toString().trim().toLowerCase();
-        
-        return normalize(b.uc) === normalize(result.uc) && 
-               normalize(b.mesReferencia) === normalize(result.mesReferencia) &&
-               normalize(b.anoLeitura) === normalize(result.anoLeitura);
+      // --- CHECK FOR DUPLICATES IN DB AFTER EXTRACTION ---
+      let isDuplicateInDb = false;
+
+      if (isSupabaseConfigured && user && result.uc && result.mesReferencia && result.anoLeitura) {
+        try {
+          const { data: existingData, error: dbCheckError } = await supabase
+            .from('bills')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('uc', result.uc)
+            .eq('mes_referencia', result.mesReferencia)
+            .eq('ano_leitura', result.anoLeitura)
+            .limit(1);
+          
+          if (!dbCheckError && existingData && existingData.length > 0) {
+            isDuplicateInDb = true;
+          }
+        } catch (dbCheckErr) {
+          console.warn('Erro ao verificar duplicatas no banco de dados:', dbCheckErr);
+        }
+      }
+
+      // Check duplicates in current list using functional state update to avoid stale closures
+      let finalStatus: 'completed' | 'error' = 'completed';
+      let finalError: string | undefined = undefined;
+      let isDuplicateInCurrentList = false;
+      
+      setBills(prev => {
+        isDuplicateInCurrentList = prev.some(b => {
+          if (b.id === bill.id || b.status !== 'completed') return false;
+          
+          const normalize = (str: string) => (str || '').toString().trim().toLowerCase();
+          
+          const hasKeys = result.uc && result.mesReferencia && result.anoLeitura;
+          if (!hasKeys) return false;
+
+          return normalize(b.uc) === normalize(result.uc) && 
+                 normalize(b.mesReferencia) === normalize(result.mesReferencia) &&
+                 normalize(b.anoLeitura) === normalize(result.anoLeitura);
+        });
+
+        return prev;
       });
 
-      const finalStatus = isDuplicate ? 'error' : 'completed';
-      const finalError = isDuplicate ? 'Fatura duplicada (mesma UC e Mês/Ano)' : undefined;
+      if (isDuplicateInCurrentList) {
+        finalError = 'Fatura repetida (Duplicada na lista atual)';
+      } else if (isDuplicateInDb) {
+        finalError = 'Fatura repetida (Já salva no banco de dados)';
+      }
 
       const updatedBill: BillData = {
         ...bill,
@@ -2498,7 +2595,7 @@ export default function App() {
         error: finalError
       };
 
-      if (isSupabaseConfigured && user && !isDuplicate) {
+      if (isSupabaseConfigured && user && !isDuplicateInDb && !isDuplicateInCurrentList) {
         const dbData = mapBillDataToDb(updatedBill, user.id);
         const { error: insertError } = await supabase
           .from('bills')
@@ -2526,6 +2623,8 @@ export default function App() {
       
       let isRateLimit = false;
       let isQuotaExhausted = false;
+      let isLockError = false;
+      let isTransientError = false;
       let retryAfter = 0;
 
       // Check for rate limit in various error formats
@@ -2544,18 +2643,26 @@ export default function App() {
         if (match && match[1]) {
           retryAfter = parseFloat(match[1]) * 1000;
         }
+      } else if (errorStr.includes('Lock broken by another request')) {
+        isLockError = true;
+      } else if (errorCode === 500 || errorCode === 502 || errorCode === 503 || errorCode === 504 || errorStatus === 'INTERNAL' || errorStatus === 'UNAVAILABLE' || errorStr.includes('500') || errorStr.includes('502') || errorStr.includes('503') || errorStr.includes('504') || errorStr.includes('INTERNAL') || errorStr.includes('UNAVAILABLE')) {
+        isTransientError = true;
       }
 
       if (isQuotaExhausted) {
         setBills(prev => prev.map(b => b.id === bill.id ? {
           ...b,
           status: 'error',
-          error: 'Cota da API excedida. Verifique seu plano de faturamento.'
+          error: 'O limite de gastos do seu projeto foi atingido. O processamento foi interrompido para evitar cobranças excedentes.'
         } : b));
+        
+        // Stop the entire processing queue
+        setIsProcessing(false);
+        isProcessingRef.current = false;
         return;
       }
 
-      if (isRateLimit) {
+      if (isRateLimit || isLockError || isTransientError) {
         // Limit max retries to 5 to avoid freezing the app for too long
         if (retryCount < 5) {
           // Use retryAfter if found, otherwise exponential backoff starting at 5s
@@ -2563,18 +2670,18 @@ export default function App() {
             ? retryAfter + 2000 // Adiciona 2s de margem
             : Math.pow(1.5, retryCount) * 5000 + Math.random() * 2000;
           
-          console.log(`[Worker] Limite de taxa atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/5)`);
+          console.log(`[Worker] ${isLockError ? 'Erro de trava' : isTransientError ? 'Erro temporário (' + errorCode + ')' : 'Limite de taxa'} atingido para ${bill.fileName}. Tentando novamente em ${Math.round(delay/1000)}s... (Tentativa ${retryCount + 1}/5)`);
           
           setBills(prev => prev.map(b => b.id === bill.id ? {
             ...b,
             status: 'processing',
-            error: `Aguardando limite da API... Tentativa ${retryCount + 1}/5 (${Math.round(delay/1000)}s)`
+            error: `Aguardando ${isLockError ? 'liberação' : isTransientError ? 'servidor' : 'limite'} da API... Tentativa ${retryCount + 1}/5 (${Math.round(delay/1000)}s)`
           } : b));
 
           await new Promise(resolve => setTimeout(resolve, delay));
-          return processFile(bill, retryCount + 1);
+          return await processFile(bill, retryCount + 1);
         } else {
-          console.error(`[Worker] Falha após ${retryCount} tentativas para ${bill.fileName} devido a limite de taxa.`);
+          console.error(`[Worker] Falha após ${retryCount} tentativas para ${bill.fileName} devido a ${isLockError ? 'erro de trava' : 'limite de taxa'}.`);
         }
       }
 
@@ -2596,17 +2703,18 @@ export default function App() {
     await ensureApiKey();
 
     setIsProcessing(true);
+    isProcessingRef.current = true;
 
-    // Worker pool approach to maintain concurrency limited to 3 to avoid freezing
+    // Worker pool approach to maintain concurrency limited to 1 to avoid freezing and rate limits
     const queue = [...pendingBills];
-    const maxConcurrency = 3;
+    const maxConcurrency = 1;
     const initialWorkers = Math.min(maxConcurrency, queue.length);
 
     const runWorker = async (workerId: number) => {
       // Add a small staggered start for workers to avoid simultaneous requests
       await new Promise(resolve => setTimeout(resolve, workerId * 1000));
       
-      while (queue.length > 0) {
+      while (queue.length > 0 && isProcessingRef.current) {
         const bill = queue.shift();
         if (!bill) break;
 
@@ -2618,6 +2726,12 @@ export default function App() {
           console.log(`[Worker ${workerId}] Iniciando processamento de: ${bill.fileName} (Restam: ${queue.length})`);
           await processFile({ ...bill, abortController } as any);
           console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
+          
+          // Add a 4.5s delay to stay within the 15 RPM free tier limit
+          if (queue.length > 0 && isProcessingRef.current) {
+            console.log(`[Worker ${workerId}] Aguardando 4.5s para respeitar o limite da cota gratuita...`);
+            await new Promise(resolve => setTimeout(resolve, 4500));
+          }
         } catch (error) {
           console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
         }
@@ -2636,6 +2750,7 @@ export default function App() {
   const resetStuckProcesses = () => {
     setBills(prev => prev.map(b => b.status === 'processing' ? { ...b, status: 'pending', progress: 0 } : b));
     setIsProcessing(false);
+    isProcessingRef.current = false;
   };
 
   const [selectedBills, setSelectedBills] = useState<string[]>([]);
@@ -3785,10 +3900,17 @@ export default function App() {
                                   </div>
                                 )}
                                 {bill.status === 'completed' && (
-                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                                    <CheckCircle2 size={12} />
-                                    Concluído
-                                  </span>
+                                  <div className="flex flex-col gap-1">
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold uppercase tracking-wider w-fit">
+                                      <CheckCircle2 size={12} />
+                                      Concluído
+                                    </span>
+                                    {bill.error && (
+                                      <span className="text-[9px] text-amber-600 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
+                                        <AlertCircle size={10} /> {bill.error}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                                 {bill.status === 'error' && (
                                   <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold uppercase tracking-wider" title={bill.error}>
@@ -6236,14 +6358,18 @@ export default function App() {
                             console.error('Erro ao atualizar fatura no Supabase:', error);
                             return;
                           }
-                          setBills(bills.map(b => b.id === billToSave.id ? billToSave : b));
+                          setBills(prev => prev.map(b => b.id === billToSave.id ? billToSave : b));
                         } else {
                           const { data, error } = await supabase.from('bills').insert(dbData).select().single();
                           if (error) {
                             console.error('Erro ao inserir fatura no Supabase:', error);
                             return;
                           }
-                          setBills([...bills, mapDbToBillData(data)]);
+                          const newBill = mapDbToBillData(data);
+                          setBills(prev => {
+                            if (prev.some(b => b.id === newBill.id)) return prev;
+                            return [...prev, newBill];
+                          });
                         }
                       }
                     } catch (err) {
@@ -6252,9 +6378,12 @@ export default function App() {
                     }
                   } else {
                     if (isExisting) {
-                      setBills(bills.map(b => b.id === billToSave.id ? billToSave : b));
+                      setBills(prev => prev.map(b => b.id === billToSave.id ? billToSave : b));
                     } else {
-                      setBills([...bills, billToSave]);
+                      setBills(prev => {
+                        if (prev.some(b => b.id === billToSave.id)) return prev;
+                        return [...prev, billToSave];
+                      });
                     }
                   }
                   setIsBillModalOpen(false);

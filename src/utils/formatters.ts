@@ -4,7 +4,13 @@ export const formatMonth = (month: string | number) => {
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
   ];
   if (typeof month === 'number') return months[month - 1] || '';
-  const m = month.toString().trim();
+  
+  // Clean up any " / 2025" or similar that might be attached
+  let m = month.toString().trim();
+  if (m.includes('/')) {
+    m = m.split('/')[0].trim();
+  }
+  
   if (m.length <= 2) return months[parseInt(m) - 1] || '';
   return m.charAt(0).toUpperCase() + m.slice(1).toLowerCase();
 };

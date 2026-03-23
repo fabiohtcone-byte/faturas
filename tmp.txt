@@ -1,0 +1,598 @@
+1223:            if (isElektro && b.status === 'completed') {
+1224-              const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
+1225-              if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
+1226-                return { ...b, uc: fileNameNumbers };
+1227-              }
+1228-            }
+1229-            return b;
+1230-          });
+1231-        }
+1232-        return parsed;
+1233-      } catch (e) {
+1234-        return [];
+1235-      }
+1236-    }
+1237-    return [];
+1238-  });
+1239-
+1240-  React.useEffect(() => {
+1241-    const fetchBills = async () => {
+1242-      if (!isSupabaseConfigured || !isAuthenticated) return;
+1243-      
+1244-      try {
+1245-        const { data: { user } } = await supabase.auth.getUser();
+1246-        if (!user) return;
+1247-
+1248-        let allData: any[] = [];
+1249-        let from = 0;
+1250-        let to = 999;
+1251-        let finished = false;
+1252-
+1253-        while (!finished) {
+1254-          const { data, error } = await supabase
+1255-            .from('bills')
+1256-            .select('*')
+1257-            .eq('user_id', user.id)
+1258-            .range(from, to)
+1259-            .order('created_at', { ascending: false });
+1260-
+1261-          if (error) {
+1262-            console.error('Erro ao buscar faturas do Supabase:', error);
+1263-            finished = true;
+1264-            return;
+1265-          }
+1266-
+1267-          if (data && data.length > 0) {
+1268-            allData = [...allData, ...data];
+1269-            if (data.length < 1000) {
+1270-              finished = true;
+1271-            } else {
+1272-              from += 1000;
+1273-              to += 1000;
+--
+1287:            if (isElektro && b.status === 'completed') {
+1288-              const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
+1289-              if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
+1290-                hasChanges = true;
+1291-                return { ...b, uc: fileNameNumbers };
+1292-              }
+1293-            }
+1294-            return b;
+1295-          });
+1296-
+1297-          setBills(updatedBills);
+1298-
+1299-          // If changes were made, update Supabase sequentially to avoid locking
+1300-          if (hasChanges) {
+1301-            const changedBills = updatedBills.filter((b, i) => b.uc !== mappedBills[i].uc);
+1302-            for (const billToSave of changedBills) {
+1303-              try {
+1304-                const dbData = mapBillDataToDb(billToSave, user.id);
+1305-                await supabase.from('bills').update(dbData).eq('id', billToSave.id);
+1306-              } catch (err) {
+1307-                console.error('Erro ao atualizar UC no Supabase:', err);
+1308-              }
+1309-            }
+1310-          }
+1311-        }
+1312-      } catch (err) {
+1313-        console.error('Erro inesperado ao buscar faturas:', err);
+1314-      }
+1315-    };
+1316-
+1317-    fetchBills();
+1318-  }, [isAuthenticated]);
+1319-
+1320-  React.useEffect(() => {
+1321-    try {
+1322-      const billsToSave = bills.map(b => {
+1323-        // We cannot serialize File objects, so we remove it before saving
+1324-        const { file, ...rest } = b as any;
+1325-        return rest;
+1326-      });
+1327-      localStorage.setItem('sanesul_bills', JSON.stringify(billsToSave));
+1328-    } catch (e) {
+1329-      console.warn('LocalStorage limit reached, skipping save:', e);
+1330-    }
+1331-  }, [bills]);
+1332-
+1333-  const [isProcessing, setIsProcessing] = useState(false);
+1334-  const [isDragging, setIsDragging] = useState(false);
+1335-  const [currentPage, setCurrentPage] = useState<'visao_geral' | 'sistema'>('visao_geral');
+1336-  const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'monitoramento_reativo' | 'relatorio'>('faturas');
+1337-  const [filterReference, setFilterReference] = useState<string>('all');
+--
+2012:    const completedBills = bills.filter(b => b.status === 'completed');
+2013-    if (completedBills.length === 0) return;
+2014-
+2015-    const parsedData = completedBills.map(b => {
+2016-      let dmp = parseValue(b.demandaPotenciaMedidaPonta);
+2017-      
+2018-      // Correção manual para UC 3401807 em Dezembro/2025 conforme solicitado pelo usuário
+2019-      // O usuário informou que houve uma leitura incorreta da demanda medida ponta neste mês.
+2020-      const isUC3401807 = String(b.uc) === '3401807';
+2021-      const isDec2025 = (b.mesReferencia?.toLowerCase() === 'dezembro' || b.mesReferencia === '12' || b.mesReferencia === '12/2025') && b.anoLeitura === '2025';
+2022-      
+2023-      if (isUC3401807 && isDec2025) {
+2024-        // Se a leitura foi incorreta (provavelmente um pico errôneo), ajustamos para 0 
+2025-        // para que não influencie o cálculo da demanda ideal (que usa o máximo do período).
+2026-        dmp = 0;
+2027-      }
+2028-
+2029-      return {
+2030-        mes: b.mesReferencia || 'N/A',
+2031-        ano: b.anoLeitura || '',
+2032-        uc: b.uc || 'N/A',
+2033-        dcp: parseValue(b.demandaPontaKW),
+2034-        dmp: dmp,
+2035-        dcfp: parseValue(b.demandaForaPontaKW),
+2036-        dmfp: parseValue(b.demandaPotenciaMedidaForaPonta),
+2037-        modalidade: (b.modalidadeTarifaria || '').toUpperCase(),
+2038-        // Valores financeiros para o Gasto Real
+2039-        vDmpP: parseValue(b.valorDemandaPotenciaMedidaPonta),
+2040-        vDmfpFP: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
+2041-        vUltrapP: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
+2042-        vUltrapFP: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
+2043-        vNaoConsP: parseValue(b.valorDemandaPotenciaNaoConsumidaPonta),
+2044-        vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta)
+2045-      };
+2046-    }).filter(d => d.dcp > 0 || d.dcfp > 0);
+2047-
+2048-    // 2. Calculate Optimal Fixed Demand (Resolução 1000)
+2049-    // The optimal fixed demand is the one that minimizes the total cost over the period.
+2050-    // Group by UC to find the optimal demand per UC
+2051-    const ucs = Array.from(new Set(parsedData.map(d => d.uc)));
+2052-    const optimalDemands: Record<string, { ponta: number, foraPonta: number }> = {};
+2053-
+2054-    ucs.forEach(uc => {
+2055-      const ucData = parsedData.filter(d => d.uc === uc);
+2056-      // Verifica se a UC tem contrato de ponta (ex: Tarifa Azul)
+2057-      // Se dcp for 0 em todos os meses, não sugerimos valor para ponta (ex: Tarifa Verde)
+2058-      // NOVO: Se a modalidade for VERDE, forçamos hasPontaContract para false
+2059-      const isVerde = ucData.some(d => d.modalidade.includes('VERDE'));
+2060-      const hasPontaContract = !isVerde && ucData.some(d => d.dcp > 0);
+2061-      
+2062-      const maxDmp = Math.max(...ucData.map(d => d.dmp));
+--
+2165:    const completedBills = bills.filter(b => b.status === 'completed');
+2166-    if (completedBills.length === 0) return;
+2167-
+2168-    const tp = 15.00; 
+2169-    const tfp = 10.00;
+2170-
+2171-    const getYear = (year: string) => parseInt(year || '0', 10);
+2172-
+2173-    // Get all unique UCs
+2174-    const ucs = Array.from(new Set(completedBills.map(b => b.uc))).filter(uc => {
+2175-      const ucBills = completedBills.filter(b => b.uc === uc);
+2176-      return ucBills.some(b => parseValue(b.demandaPontaKW) > 0 || parseValue(b.demandaForaPontaKW) > 0);
+2177-    });
+2178-
+2179-    const allUcData = ucs.map(uc => {
+2180-      let ucBills = completedBills.filter(b => b.uc === uc);
+2181-      const city = ucBills[0]?.cidade || 'N/A';
+2182-      
+2183-      // Sort bills chronologically (Oldest to Newest) for change detection
+2184-      ucBills.sort((a, b) => {
+2185-        const yearA = getYear(a.anoLeitura);
+2186-        const yearB = getYear(b.anoLeitura);
+2187-        if (yearA !== yearB) return yearA - yearB;
+2188-        return getMonthNumber(a.mesReferencia) - getMonthNumber(b.mesReferencia);
+2189-      });
+2190-
+2191-      // Calculate optimal demand (Ideal) based on all history (Max measured)
+2192-      // NOVO: Se a modalidade for VERDE, não consideramos a demanda ponta para o cálculo da demanda ideal
+2193-      const isVerde = ucBills.some(b => (b.modalidadeTarifaria || '').toUpperCase().includes('VERDE'));
+2194-      
+2195-      const maxDmp = isVerde ? 0 : Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaPonta)));
+2196-      const maxDmfp = Math.max(...ucBills.map(b => parseValue(b.demandaPotenciaMedidaForaPonta)));
+2197-      
+2198-      const roundDemand = (val: number) => {
+2199-        const minRequired = val / 1.05;
+2200-        return Math.ceil(minRequired * 2) / 2;
+2201-      };
+2202-
+2203-      const optPonta = (maxDmp > 0 && !isVerde) ? roundDemand(maxDmp) : 0;
+2204-      const optForaPonta = Math.max(30, roundDemand(maxDmfp));
+2205-
+2206-      // 1st Pass: Calculate Current Total for ALL bills first
+2207-      const processedBills = ucBills.map(b => {
+2208-        const dcp = parseValue(b.demandaPontaKW);
+2209-        const dmp = parseValue(b.demandaPotenciaMedidaPonta);
+2210-        const dcfp = parseValue(b.demandaForaPontaKW);
+2211-        const dmfp = parseValue(b.demandaPotenciaMedidaForaPonta);
+2212-
+2213-        const vDmpP = parseValue(b.valorDemandaPotenciaMedidaPonta);
+2214-        const vDmpFp = parseValue(b.valorDemandaPotenciaMedidaForaPonta);
+2215-        const vDncP = parseValue(b.valorDemandaPotenciaNaoConsumidaPonta);
+--
+2868:        const bestToKeep = billsList.find(b => b.status === 'completed') || billsList[0];
+2869-        billsList.forEach(b => {
+2870-          if (b.id !== bestToKeep.id) {
+2871-            idsToDelete.push(b.id);
+2872-          }
+2873-        });
+2874-      }
+2875-    });
+2876-
+2877-    if (idsToDelete.length === 0) {
+2878-      showAlert(
+2879-        'Limpeza de Duplicados',
+2880-        filterReference === 'all' 
+2881-          ? 'Nenhuma fatura duplicada encontrada em todo o sistema.' 
+2882-          : 'Nenhuma fatura duplicada encontrada para esta referência.'
+2883-      );
+2884-      return;
+2885-    }
+2886-
+2887-    const confirmMsg = `Foram encontradas duplicatas para ${duplicateKeys.length} combinações de UC/Mês/Ano.\n\nNo total, ${idsToDelete.length} faturas repetidas serão excluídas, deixando sempre apenas uma de cada. Deseja continuar?`;
+2888-    
+2889-    showConfirm(
+2890-      'Confirmar Exclusão',
+2891-      confirmMsg,
+2892-      async () => {
+2893-        if (isSupabaseConfigured && isAuthenticated) {
+2894-          try {
+2895-            const { error } = await supabase.from('bills').delete().in('id', idsToDelete);
+2896-            if (error) console.error('Erro ao deletar duplicados do Supabase:', error);
+2897-          } catch (err) {
+2898-            console.error('Erro inesperado ao deletar duplicados:', err);
+2899-          }
+2900-        }
+2901-        setBills(prev => prev.filter(b => !idsToDelete.includes(b.id)));
+2902-        setSelectedBills(prev => prev.filter(id => !idsToDelete.includes(id)));
+2903-      },
+2904-      'danger'
+2905-    );
+2906-  };
+2907-
+2908-  const exportAnalysisToCSV = () => {
+2909-    if (!analysisResults || analysisResults.length === 0) return;
+2910-
+2911-    const headers = [
+2912-      "UC", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
+2913-      "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Gasto Real (R$)", "Economia (R$)", "Status",
+2914-      "Grupo Tarifário", "Tarifa Branca", "Optante B"
+2915-    ];
+2916-
+2917-    const rows = analysisResults.map((r: any) => {
+2918-      // Basic classification logic (placeholder, needs refinement based on actual data)
+--
+2960:    const completedBills = sortedBills.filter(b => b.status === 'completed');
+2961-    if (completedBills.length === 0) {
+2962-      showAlert('Exportação', 'Não há faturas concluídas para exportar nesta referência.');
+2963-      return;
+2964-    }
+2965-
+2966-    const headers = [
+2967-      "Concessionária",
+2968-      "UC", 
+2969-      "Ano Leitura", 
+2970-      "Mês Referência", 
+2971-      "Consumo em kWh - Ponta",
+2972-      "Valor (R$) - Consumo em kWh - Ponta",
+2973-      "Consumo em kWh - Fora Ponta",
+2974-      "Valor (R$) - Consumo em kWh - Fora Ponta",
+2975-      "Valor R$",
+2976-      "Demanda ponta - kW", 
+2977-      "Demanda fora ponta - kW", 
+2978-      "Demanda de Potência Medida - Ponta", 
+2979-      "Valor (R$) - Demanda de Potência Medida - Ponta",
+2980-      "Demanda de Potência Medida - Fora Ponta", 
+2981-      "Valor (R$) - Demanda de Potência Medida - Fora Ponta",
+2982-      "CIDADE",
+2983-      "Demanda Potência Não Consumida - Ponta", 
+2984-      "Valor (R$) - Demanda Potência Não Consumida - Ponta",
+2985-      "Demanda Potência Não Consumida - F Ponta",
+2986-      "Valor (R$) - Demanda Potência Não Consumida - F Ponta",
+2987-      "Demanda Potência Ativa - Ultrap - Ponta",
+2988-      "Valor (R$) - Demanda Potência Ativa - Ultrap - Ponta",
+2989-      "Demanda Potência Ativa - Ultrap - F Ponta",
+2990-      "Valor (R$) - Demanda Potência Ativa - Ultrap - F Ponta",
+2991-      "Energia Reativa Exced em KWh - Ponta",
+2992-      "Valor (R$) - Energia Reativa Exced em KWh - Ponta",
+2993-      "Energia Reativa Exced em KWh - Fponta",
+2994-      "Valor (R$) - Energia Reativa Exced em KWh - Fponta",
+2995-      "Energia Injetada kWh",
+2996-      "Energia Compensada kWh",
+2997-      "Energia Atv Injetada GDI oUC (kWh)",
+2998-      "Valor (R$) - Energia Atv Injetada GDI oUC",
+2999-      "Energia Atv Injetada GDI mUC (kWh)",
+3000-      "Valor (R$) - Energia Atv Injetada GDI mUC",
+3001-      "Tipo"
+3002-    ];
+3003-
+3004-    const formatCSVValue = (val: any) => {
+3005-      if (val === null || val === undefined) return '';
+3006-      let str = String(val);
+3007-      // If it looks like a number with a dot, replace it with a comma for Brazilian Excel
+3008-      if (!isNaN(Number(val)) && str.includes('.') && !str.includes(',')) {
+3009-        str = str.replace('.', ',');
+3010-      }
+--
+3085:  const completedBills = bills.filter(b => b.status === 'completed');
+3086-
+3087-
+3088-
+3089-  const dashboardData = completedBills.map(b => ({
+3090-    name: `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`,
+3091-    uc: b.uc,
+3092-    consumoPonta: parseValue(b.consumoKwhPonta),
+3093-    valorConsumoPonta: parseValue(b.valorConsumoKwhPonta),
+3094-    consumoForaPonta: parseValue(b.consumoKwhForaPonta),
+3095-    valorConsumoForaPonta: parseValue(b.valorConsumoKwhForaPonta),
+3096-    valorTotal: parseValue(b.valorTotal),
+3097-    demandaMedidaPonta: parseValue(b.demandaPotenciaMedidaPonta),
+3098-    demandaMedidaForaPonta: parseValue(b.demandaPotenciaMedidaForaPonta),
+3099-    valorDemandaPonta: parseValue(b.valorDemandaPotenciaMedidaPonta),
+3100-    valorDemandaForaPonta: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
+3101-    demandaContratadaPonta: parseValue(b.demandaPontaKW),
+3102-    demandaContratadaForaPonta: parseValue(b.demandaForaPontaKW),
+3103-    ultrapassagemPonta: parseValue(b.demandaPotenciaAtivaUltrapPonta),
+3104-    ultrapassagemForaPonta: parseValue(b.demandaPotenciaAtivaUltrapFPonta),
+3105-    reativaPonta: parseValue(b.energiaReativaExcedPonta),
+3106-    reativaForaPonta: parseValue(b.energiaReativaExcedFPonta),
+3107-    solarInjetada: parseValue(b.energiaInjetadaKwh),
+3108-    solarCompensada: parseValue(b.energiaCompensadaKwh),
+3109-    solarInjetadaOUC: parseValue(b.energiaAtvInjetadaGDIOUC),
+3110-    solarInjetadaMUC: parseValue(b.energiaAtvInjetadaGDIMUC),
+3111-    valorUltrapassagemPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
+3112-    valorUltrapassagemForaPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
+3113-    valorReativaPonta: parseValue(b.valorEnergiaReativaExcedPonta),
+3114-    valorReativaForaPonta: parseValue(b.valorEnergiaReativaExcedFPonta),
+3115-    valorSolarOUC: parseValue(b.valorEnergiaAtvInjetadaGDIOUC),
+3116-    valorSolarMUC: parseValue(b.valorEnergiaAtvInjetadaGDIMUC),
+3117-    cip: parseValue(b.cip),
+3118-    outrosEncargos: parseValue(b.outrosEncargos),
+3119-    pis: parseValue(b.pis),
+3120-    cofins: parseValue(b.cofins),
+3121-    icms: parseValue(b.icms),
+3122-    concessionaria: b.concessionaria || '',
+3123-    numeroNotaFiscal: b.numeroNotaFiscal || '',
+3124-    cidade: b.cidade,
+3125-    modalidadeTarifaria: (b.modalidadeTarifaria || '').toString().toUpperCase(),
+3126-    subgrupo: (b.subgrupo || '').toString().toUpperCase()
+3127-  }));
+3128-
+3129-  const ucs = Array.from(new Set(dashboardData.map(d => d.uc))).filter(Boolean);
+3130-
+3131-  const availableMonths = Array.from(new Set(dashboardData.map(d => d.name))).filter(Boolean).sort((a, b) => {
+3132-    const [mA, yA] = String(a).split('/');
+3133-    const [mB, yB] = String(b).split('/');
+3134-    if (yA !== yB) return Number(yB) - Number(yA);
+3135-    return getMonthNumber(mB) - getMonthNumber(mA);
+--
+3515:            {bills.some(b => b.status === 'completed') && (
+3516-              <button
+3517-                onClick={exportToCSV}
+3518-                className="flex items-center gap-2 px-6 py-3 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-secondary/20 active:scale-95"
+3519-              >
+3520-                <Download size={16} />
+3521-                Exportar CSV
+3522-              </button>
+3523-            )}
+3524-            {bills.length > 0 && activeTab === 'faturas' && (
+3525-              <div className="flex items-center gap-2 bg-white border border-sanesul-primary/20 rounded-xl px-4 py-2 shadow-sm">
+3526-                <Filter size={14} className="text-sanesul-primary" />
+3527-                <select
+3528-                  value={filterReference}
+3529-                  onChange={(e) => setFilterReference(e.target.value)}
+3530-                  className="bg-transparent text-xs font-bold text-sanesul-primary outline-none cursor-pointer min-w-[140px]"
+3531-                >
+3532-                  <option value="all">Todas as Referências</option>
+3533-                  {availableReferences.map(ref => (
+3534-                    <option key={ref} value={ref}>{ref}</option>
+3535-                  ))}
+3536-                </select>
+3537-              </div>
+3538-            )}
+3539-            {bills.length > 0 && activeTab === 'faturas' && (
+3540-              <button
+3541-                onClick={removeDuplicateUCs}
+3542-                className="flex items-center gap-2 px-6 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+3543-                title="Remove faturas duplicadas (mesma UC) para a referência selecionada"
+3544-              >
+3545-                <Trash2 size={16} />
+3546-                Remover Duplicados
+3547-              </button>
+3548-            )}
+3549-            {bills.length > 0 && activeTab === 'faturas' && (
+3550-              <button
+3551-                onClick={() => setSelectedBills(bills.filter(b => b.status === 'error' || b.status === 'pending').map(b => b.id))}
+3552-                className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+3553-              >
+3554-                <CheckSquare size={16} />
+3555-                Selecionar Pendentes/Erro
+3556-              </button>
+3557-            )}
+3558-            {(bills.length > 0 || Object.keys(agrupadoraFiles).length > 0) && activeTab === 'faturas' && (
+3559-              <></>
+3560-            )}
+3561-
+3562-          </div>
+3563-        </div>
+3564-
+3565-        {/* Tabs */}
+--
+3731:                  { label: 'Concluídos', value: sortedBills.filter(b => b.status === 'completed').length, color: 'green-600', icon: CheckCircle2 }
+3732-                ].map((stat, i) => (
+3733-                  <div key={i} className="bg-white p-6 rounded-3xl border border-sanesul-primary/5 shadow-sm flex items-center gap-4">
+3734-                    <div className={`w-12 h-12 rounded-2xl bg-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color}/10 flex items-center justify-center`}>
+3735-                      <stat.icon size={20} className={`text-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color} ${stat.label === 'Em Processamento' ? 'animate-spin' : ''}`} />
+3736-                    </div>
+3737-                    <div>
+3738-                      <p className="text-[10px] font-bold text-sanesul-muted uppercase tracking-widest">{stat.label}</p>
+3739-                      <p className={`text-2xl font-display font-bold text-${stat.color === 'sanesul-primary' ? 'sanesul-primary' : stat.color === 'sanesul-secondary' ? 'sanesul-secondary' : stat.color}`}>{stat.value}</p>
+3740-                    </div>
+3741-                  </div>
+3742-                ))}
+3743-              </div>
+3744-
+3745-              {/* Table Container */}
+3746-              <div className="bg-white rounded-[32px] border border-sanesul-primary/10 shadow-xl overflow-hidden">
+3747-                <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+3748-                  <table className="w-full text-left border-collapse relative">
+3749-                    <thead className="sticky top-0 z-20 bg-slate-50 shadow-sm">
+3750-                      <tr className="bg-slate-50/50">
+3751-                        <th className="px-4 py-3 w-12">
+3752-                          <input 
+3753-                            type="checkbox"
+3754-                            checked={selectedBills.length > 0 && selectedBills.length === bills.length}
+3755-                            onChange={() => setSelectedBills(selectedBills.length === bills.length ? [] : bills.map(b => b.id))}
+3756-                            className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
+3757-                          />
+3758-                        </th>
+3759-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('fileName')}>Arquivo</th>
+3760-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('uc')}>UC</th>
+3761-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('concessionaria')}>Concessionária</th>
+3762-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('referencia')}>Referência</th>
+3763-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Medida</th>
+3764-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Contratada</th>
+3765-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
+3766-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Status</th>
+3767-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 text-right">
+3768-                          {selectedBills.length > 0 ? (
+3769-                            <div className="flex items-center justify-end gap-4">
+3770-                              <button onClick={removeSelectedBills} className="text-red-600 hover:text-red-700 font-bold">Excluir ({selectedBills.length})</button>
+3771-                              {bills.length >= 223 && (
+3772-                                <button onClick={deselectFirst223} className="text-sanesul-primary hover:text-sanesul-secondary font-bold">Deselecionar 223</button>
+3773-                              )}
+3774-                            </div>
+3775-                          ) : 'Ações'}
+3776-                        </th>
+3777-                      </tr>
+3778-                    </thead>
+3779-                    <tbody className="divide-y divide-sanesul-primary/5">
+3780-                      <AnimatePresence initial={false}>
+3781-                        {sortedBills.map((bill) => (
+--
+4667:                    disabled={bills.filter(b => b.status === 'completed').length === 0}
+4668-                    className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+4669-                  >
+4670-                    <BarChart3 size={16} />
+4671-                    Gerar Análise
+4672-                  </button>
+4673-                  {analysisResults && (
+4674-                    <div className="flex items-center gap-4">
+4675-                      <button 
+4676-                        onClick={exportAnalysisToCSV}
+4677-                        className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+4678-                      >
+4679-                        <Download size={16} />
+4680-                        Exportar
+4681-                      </button>
+4682-                      <button 
+4683-                        onClick={() => { setAnalysisResults(null); setAnalysisData([]); }}
+4684-                        className="flex items-center gap-2 px-6 py-3 bg-red-50 text-red-600 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-red-100 transition-all"
+4685-                      >
+4686-                        <Trash2 size={16} />
+4687-                        Limpar
+4688-                      </button>
+4689-                    </div>
+4690-                  )}
+4691-                </div>
+4692-              </div>
+4693-
+4694-              {!analysisResults ? (
+4695-                <div className="border-2 border-dashed border-sanesul-primary/10 rounded-3xl p-20 text-center bg-slate-50/50">
+4696-                  <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm">
+4697-                    <FileSpreadsheet size={40} className="text-sanesul-primary/40" />
+4698-                  </div>
+4699-                  <h3 className="text-xl font-bold text-sanesul-primary mb-2">Nenhuma análise gerada</h3>
+4700-                  <p className="text-sanesul-muted max-w-md mx-auto mb-8">
+4701-                    Clique em "Gerar Análise" para utilizar os dados das faturas processadas e calcular a demanda ideal.
+4702-                  </p>
+4703-                  <div className="flex justify-center gap-4">
+4704-                    <div className="p-4 rounded-xl bg-white border border-slate-100 text-left max-w-xs">
+4705-                      <div className="flex items-center gap-2 text-sanesul-primary font-bold text-xs mb-2">
+4706-                        <TrendingUp size={14} />
+4707-                        Ultrapassagem
+4708-                      </div>
+4709-                      <p className="text-[10px] text-sanesul-muted">Calculamos a demanda otimizada para eliminar multas de ultrapassagem (Resolução 1000 ANEEL).</p>
+4710-                    </div>
+4711-                    <div className="p-4 rounded-xl bg-white border border-slate-100 text-left max-w-xs">
+4712-                      <div className="flex items-center gap-2 text-sanesul-primary font-bold text-xs mb-2">
+4713-                        <Zap size={14} />
+4714-                        Subutilização
+4715-                      </div>
+4716-                      <p className="text-[10px] text-sanesul-muted">Identificamos a demanda ideal para evitar pagamentos por potência não utilizada.</p>
+4717-                    </div>
+--
+4897:                disabled={bills.filter(b => b.status === 'completed').length === 0}
+4898-                className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+4899-              >
+4900-                <BarChart3 size={16} />
+4901-                Atualizar Monitoramento
+4902-              </button>
+4903-            </div>
+4904-
+4905-            {!monitoringResults ? (
+4906-              <div className="border-2 border-dashed border-sanesul-primary/10 rounded-[40px] p-20 text-center bg-white/50 backdrop-blur-sm">
+4907-                <div className="w-24 h-24 bg-sanesul-primary/5 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-inner">
+4908-                  <DollarSign size={48} className="text-sanesul-primary/40" />
+4909-                </div>
+4910-                <h3 className="text-2xl font-display font-bold text-sanesul-primary mb-4">Pronto para analisar</h3>
+4911-                <p className="text-sanesul-muted max-w-md mx-auto mb-10 text-lg">
+4912-                  Clique no botão acima para processar os indicadores de despesa e economia baseados nas faturas extraídas.
+4913-                </p>
+4914-              </div>
+4915-            ) : (
+4916-              <div className="space-y-12">
+4917-                {/* Summary Cards */}
+4918-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+4919-                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+4920-                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+4921-                      <FileText size={80} className="text-sanesul-primary" />
+4922-                    </div>
+4923-                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Faturas Analisadas</p>
+4924:                    <p className="text-4xl font-display font-bold text-sanesul-primary">{bills.filter(b => b.status === 'completed').length} <span className="text-base font-sans font-medium opacity-40">Arquivos</span></p>
+4925-                  </div>
+4926-
+4927-                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+4928-                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+4929-                      {monitoringResults.generalTotalEconomy >= 0 ? (
+4930-                        <TrendingUp size={80} className="text-green-600" />
+4931-                      ) : (
+4932-                        <TrendingDown size={80} className="text-red-600" />
+4933-                      )}
+4934-                    </div>
+4935-                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Economia Geral Total</p>
+4936-                    <p className={`text-4xl font-display font-bold ${monitoringResults.generalTotalEconomy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+4937-                      R$ {monitoringResults.generalTotalEconomy.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+4938-                    </p>
+4939-                  </div>
+4940-
+4941-                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+4942-                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+4943-                      <DollarSign size={80} className="text-sanesul-primary" />
+4944-                    </div>
+4945-                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Despesa Atual Total</p>
+4946-                    <p className="text-4xl font-display font-bold text-sanesul-primary">R$ {monitoringResults.generalTotalCurrent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+4947-                  </div>
+4948-
+4949-                  <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+4950-                    <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+4951-                      <Zap size={80} className="text-sanesul-secondary" />
+4952-                    </div>
+4953-                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">Potencial de Redução</p>
+4954-                    <p className="text-4xl font-display font-bold text-sanesul-secondary">
+4955-                      {((monitoringResults.generalTotalEconomy / monitoringResults.generalTotalCurrent) * 100).toFixed(1)}%
+4956-                    </p>
+4957-                  </div>
+4958-                </div>
+4959-
+4960-                {/* Charts Section - Replaced with Text Summary */}
+4961-                <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
+4962-                  <div className="flex items-center justify-between mb-8">
+4963-                    <h3 className="text-xl font-display font-bold text-sanesul-primary">Resumo de Economia por Cidade</h3>
+4964-                    <div className="px-4 py-2 bg-sanesul-primary/5 rounded-full">
+4965-                      <span className="text-xs font-bold text-sanesul-primary uppercase tracking-wider">Top Impactos Financeiros</span>
+4966-                    </div>
+4967-                  </div>
+4968-                  
+4969-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+4970-                    {/* Top Economies */}
+4971-                    <div className="space-y-6">
+4972-                      <div className="flex items-center gap-3 pb-4 border-b border-green-100">
+4973-                        <div className="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center">
+4974-                          <TrendingUp className="text-green-600" size={20} />
