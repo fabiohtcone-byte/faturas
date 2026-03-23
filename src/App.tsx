@@ -53,7 +53,8 @@ import {
   Battery,
   ZapOff,
   Leaf,
-  Key
+  Key,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -238,8 +239,8 @@ const ensureApiKey = async () => {
 const generateContentWithRetry = async (
   ai: GoogleGenAI,
   params: any,
-  retries = 5,
-  delay = 5000
+  retries = 7,
+  delay = 6000
 ): Promise<GenerateContentResponse> => {
   try {
     // Add a timeout of 60 seconds to the API call
@@ -297,7 +298,7 @@ const generateContentWithRetry = async (
 
     const isTimeout = errorStr.includes('TIMEOUT_API');
     const isLockError = errorStr.includes('Lock broken by another request');
-    const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('limit reached');
+    const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('limit reached') || errorStr.includes('monthly limit') || errorStr.includes('billing details');
     const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('expired');
     const isInvalid = errorStr.includes('invalid API key') || errorStr.includes('invalid key') || (errorCode === 401 && errorStr.includes('invalid'));
     const isNotFound = errorStr.includes('Requested entity was not found') || errorStr.includes('API key not found');
@@ -1352,7 +1353,10 @@ export default function App() {
   }, [isProcessing]);
   const [isDragging, setIsDragging] = useState(false);
   const [currentPage, setCurrentPage] = useState<'visao_geral' | 'sistema'>('visao_geral');
-  const [activeTab, setActiveTab] = useState<'faturas' | 'dashboard' | 'analises' | 'monitoramento' | 'monitoramento_reativo' | 'relatorio'>('faturas');
+  const [activeTab, setActiveTab] = useState<'faturas' | 'multas' | 'dashboard' | 'analises' | 'monitoramento' | 'monitoramento_reativo' | 'relatorio'>('faturas');
+  const [multasMonth, setMultasMonth] = useState<string>('all');
+  const [selectedMultaType, setSelectedMultaType] = useState<'ultrapassagem' | 'reativa' | 'subutilizacao'>('ultrapassagem');
+  const [multasSortDirection, setMultasSortDirection] = useState<'asc' | 'desc'>('desc');
   const [filterReference, setFilterReference] = useState<string>('all');
   const [sortConfig, setSortConfig] = useState<{ key: keyof BillData | 'referencia', direction: 'asc' | 'desc' } | null>(null);
   const [analysisData, setAnalysisData] = useState<any[]>([]);
@@ -1846,12 +1850,12 @@ export default function App() {
 
       const base64Data = await base64Promise;
 
-      let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: Fevereiro/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.";
+      let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: Fevereiro/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.";
       let selectedModel = "gemini-3-flash-preview";
 
       if (reportType === 'detailed') {
         selectedModel = "gemini-3-flash-preview";
-        prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA EM FATURAS DE ENERGIA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado para consolidar o valor da CIP.\n\nINSTRUÇÕES DETALHADAS:\n1. Percorra TODAS as páginas do documento, sem exceção.\n2. Em cada página, localize a tabela de itens faturados.\n3. Procure pelas descrições: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n4. Extraia o valor monetário associado a cada uma dessas linhas.\n5. SOMA TOTAL: Você deve somar TODOS os valores encontrados em todas as páginas para obter o total da CIP do grupo.\n6. RETORNO: Retorne o JSON preenchendo o campo 'cip' com a soma total calculada. Os campos 'valorTotal', 'pis', 'cofins', 'icms' devem ser preenchidos como 0, a menos que você encontre um valor consolidado claro para eles no documento.\n7. Identifique a 'concessionaria' e o 'mesReferencia'.";
+        prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA EM FATURAS DE ENERGIA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado para consolidar o valor da CIP.\n\nINSTRUÇÕES DETALHADAS:\n1. Percorra TODAS as páginas do documento, sem exceção.\n2. Em cada página, localize a tabela de itens faturados.\n3. Procure pelas descrições: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n4. Extraia o valor monetário associado a cada uma dessas linhas.\n5. SOMA TOTAL: Você deve somar TODOS os valores encontrados em todas as páginas para obter o total da CIP do grupo.\n6. RETORNO: Retorne o JSON preenchendo o campo 'cip' com a soma total calculada. Os campos 'valorTotal', 'pis', 'cofins', 'icms' devem ser preenchidos como 0, a menos que você encontre um valor consolidado claro para eles no documento.\n7. Identifique a 'concessionaria' e o 'mesReferencia'.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.";
       }
 
       if (abortController.signal.aborted) throw new Error('Upload cancelado');
@@ -2469,7 +2473,7 @@ export default function App() {
           contents: [
             {
               parts: [
-                { text: "Você é um especialista em análise de faturas de energia elétrica brasileiras. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para ENERGISA: Procure por 'CÓDIGO DO CLIENTE' (ex: 10/1069-4) ou 'MATRÍCULA'. Extraia o identificador completo que identifica esta conta.\n   - Para ELEKTRO: A UC é o 'Código da Instalação'.\n2. VALORES NUMÉRICOS: Capture todos os dígitos. Não ignore o primeiro dígito de valores altos.\n3. CONSUMO E DEMANDA: Diferencie 'Contratada' de 'Medida'.\n4. GERAÇÃO DISTRIBUÍDA: Capture créditos de energia, injeção e compensação.\n5. TRIBUTOS: Extraia PIS, COFINS e ICMS separadamente.\n\nSe um campo não estiver presente, deixe em branco. Retorne o JSON seguindo o schema." },
+                { text: "Você é um especialista em análise de faturas de energia elétrica brasileiras. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para ENERGISA: Procure por 'CÓDIGO DO CLIENTE' (ex: 10/1069-4) ou 'MATRÍCULA'. Extraia o identificador completo que identifica esta conta.\n   - Para ELEKTRO: A UC é o 'Código da Instalação'.\n2. VALORES NUMÉRICOS: Capture todos os dígitos. Não ignore o primeiro dígito de valores altos.\n3. CONSUMO E DEMANDA: Diferencie 'Contratada' de 'Medida'.\n4. GERAÇÃO DISTRIBUÍDA: Capture créditos de energia, injeção e compensação.\n5. TRIBUTOS: Extraia PIS, COFINS e ICMS separadamente.\n\nSe um campo não estiver presente, deixe em branco. Retorne o JSON seguindo o schema.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS." },
                 {
                   inlineData: {
                     mimeType: bill.file?.type || 'application/pdf',
@@ -2483,7 +2487,7 @@ export default function App() {
             responseMimeType: "application/json",
             responseSchema: EXTRACTION_SCHEMA,
             thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            systemInstruction: "Você é um especialista em análise de faturas de energia elétrica. Extraia os dados da fatura com precisão, especialmente UC, Mês, Ano e Valores Totais."
+            systemInstruction: "Você é um especialista em análise de faturas de energia elétrica. Extraia os dados da fatura com precisão, especialmente UC, Mês, Ano e Valores Totais. SEMPRE RESPONDA EM PORTUGUÊS."
           }
         });
       } finally {
@@ -2629,9 +2633,9 @@ export default function App() {
       const errorStatus = nestedError?.status || '';
       const msg = nestedError?.message || error?.message || '';
 
-      if (msg.includes('spending cap') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('monthly limit')) {
+      if (msg.includes('spending cap') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('monthly limit') || errorStr.includes('billing details')) {
         isQuotaExhausted = true;
-      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
         isRateLimit = true;
         // Try to extract retry time from message
         const match = msg.match(/retry in ([\d.]+)s/);
@@ -2639,7 +2643,7 @@ export default function App() {
           retryAfter = parseFloat(match[1]) * 1000;
         } else {
           // Default to a longer delay for quota issues
-          retryAfter = 10000;
+          retryAfter = 15000;
         }
       } else if (errorStr.includes('Lock broken by another request')) {
         isLockError = true;
@@ -2722,10 +2726,10 @@ export default function App() {
           await processFile({ ...bill, abortController } as any);
           console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
           
-          // Add a 6s delay to stay within the 15 RPM free tier limit
+          // Add a 7.5s delay to stay within the 15 RPM free tier limit
           if (queue.length > 0 && isProcessingRef.current) {
-            console.log(`[Worker ${workerId}] Aguardando 6s para respeitar o limite da cota gratuita...`);
-            await new Promise(resolve => setTimeout(resolve, 6000));
+            console.log(`[Worker ${workerId}] Aguardando 7.5s para respeitar o limite da cota gratuita...`);
+            await new Promise(resolve => setTimeout(resolve, 7500));
           }
         } catch (error) {
           console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
@@ -3086,7 +3090,63 @@ export default function App() {
 
   const completedBills = bills.filter(b => b.status === 'completed');
 
+  const { multasTotals, multasMonthlyData, multasUcList } = useMemo(() => {
+    let ultrapassagem = 0;
+    let reativa = 0;
+    let subutilizacao = 0;
+    
+    const monthlyBreakdown: Record<string, { month: string, sortKey: string, ultrapassagem: number, reativa: number, subutilizacao: number }> = {};
+    const ucBreakdown: Record<string, { ultrapassagem: number, reativa: number, subutilizacao: number }> = {};
 
+    completedBills.forEach(b => {
+      const u = parseValue(b.valorDemandaPotenciaAtivaUltrapPonta) + parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta);
+      const r = parseValue(b.valorEnergiaReativaExcedPonta) + parseValue(b.valorEnergiaReativaExcedFPonta);
+      const s = parseValue(b.valorDemandaPotenciaNaoConsumidaPonta) + parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta);
+
+      ultrapassagem += u;
+      reativa += r;
+      subutilizacao += s;
+
+      const monthName = `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`;
+      const sortKey = `${b.anoLeitura}${b.mesReferencia.padStart(2, '0')}`;
+      
+      if (!monthlyBreakdown[sortKey]) {
+        monthlyBreakdown[sortKey] = { month: monthName, sortKey, ultrapassagem: 0, reativa: 0, subutilizacao: 0 };
+      }
+      monthlyBreakdown[sortKey].ultrapassagem += u;
+      monthlyBreakdown[sortKey].reativa += r;
+      monthlyBreakdown[sortKey].subutilizacao += s;
+
+      if (multasMonth === 'all' || monthName === multasMonth) {
+        if (!ucBreakdown[b.uc]) {
+          ucBreakdown[b.uc] = { ultrapassagem: 0, reativa: 0, subutilizacao: 0 };
+        }
+        ucBreakdown[b.uc].ultrapassagem += u;
+        ucBreakdown[b.uc].reativa += r;
+        ucBreakdown[b.uc].subutilizacao += s;
+      }
+    });
+
+    const monthlyData = Object.values(monthlyBreakdown)
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+    const ucList = Object.entries(ucBreakdown)
+      .map(([uc, data]) => ({ uc, ...data }))
+      .filter(d => d[selectedMultaType] > 0)
+      .sort((a, b) => {
+        if (multasSortDirection === 'asc') {
+          return a[selectedMultaType] - b[selectedMultaType];
+        } else {
+          return b[selectedMultaType] - a[selectedMultaType];
+        }
+      });
+
+    return {
+      multasTotals: { ultrapassagem, reativa, subutilizacao },
+      multasMonthlyData: monthlyData,
+      multasUcList: ucList
+    };
+  }, [completedBills, selectedMultaType, multasMonth, multasSortDirection]);
 
   const dashboardData = completedBills.map(b => ({
     name: `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`,
@@ -3586,6 +3646,17 @@ export default function App() {
             Gestão de Faturas
           </button>
           <button 
+            onClick={() => setActiveTab('multas')}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === 'multas' 
+                ? 'bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20' 
+                : 'text-sanesul-muted hover:text-sanesul-primary hover:bg-white'
+            }`}
+          >
+            <AlertTriangle size={14} />
+            Multas
+          </button>
+          <button 
             onClick={() => setActiveTab('dashboard')}
             className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
               activeTab === 'dashboard' 
@@ -3955,6 +4026,181 @@ export default function App() {
               </div>
             </div>
           )
+        ) : activeTab === 'multas' ? (
+          <div className="space-y-8">
+            <div className="bg-white p-10 rounded-3xl border border-sanesul-primary/10 shadow-xl">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+                <div>
+                  <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">Análise de Multas</h2>
+                  <p className="text-sanesul-muted">Acompanhe as multas por ultrapassagem, reativa e subutilização.</p>
+                </div>
+              </div>
+
+              {/* Chart Section */}
+              <div className="bg-slate-50 rounded-3xl p-8 mb-10 border border-sanesul-primary/5">
+                <h3 className="text-lg font-bold text-sanesul-primary mb-6">
+                  {selectedMultaType === 'ultrapassagem' ? 'Evolução Mensal - Multa de Ultrapassagem' :
+                   selectedMultaType === 'reativa' ? 'Evolução Mensal - Multa Reativa' :
+                   'Evolução Mensal - Subutilização'}
+                </h3>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={multasMonthlyData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} dy={10} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} tickFormatter={(value) => `R$ ${value.toLocaleString('pt-BR')}`} />
+                      <Tooltip 
+                        cursor={{ stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '3 3' }}
+                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)' }}
+                        formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Valor']}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey={selectedMultaType} 
+                        stroke={selectedMultaType === 'ultrapassagem' ? '#ef4444' : selectedMultaType === 'reativa' ? '#f59e0b' : '#3b82f6'} 
+                        strokeWidth={4}
+                        dot={{ r: 4, strokeWidth: 2 }}
+                        activeDot={{ r: 6, strokeWidth: 0 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Cards Section */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                <div 
+                  onClick={() => setSelectedMultaType('reativa')}
+                  className={`p-8 rounded-3xl border cursor-pointer transition-all ${
+                    selectedMultaType === 'reativa' 
+                      ? 'bg-amber-50 border-amber-200 shadow-xl shadow-amber-100' 
+                      : 'bg-white border-slate-100 hover:border-amber-100 hover:bg-amber-50/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className={`p-3 rounded-xl ${selectedMultaType === 'reativa' ? 'bg-amber-100 text-amber-600' : 'bg-slate-50 text-slate-400'}`}>
+                      <Zap size={24} />
+                    </div>
+                    <h3 className={`font-bold text-sm uppercase tracking-wider ${selectedMultaType === 'reativa' ? 'text-amber-900' : 'text-slate-500'}`}>
+                      Multa Reativa
+                    </h3>
+                  </div>
+                  <p className={`text-3xl font-display font-bold ${selectedMultaType === 'reativa' ? 'text-amber-600' : 'text-slate-700'}`}>
+                    R$ {multasTotals.reativa.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+
+                <div 
+                  onClick={() => setSelectedMultaType('ultrapassagem')}
+                  className={`p-8 rounded-3xl border cursor-pointer transition-all ${
+                    selectedMultaType === 'ultrapassagem' 
+                      ? 'bg-red-50 border-red-200 shadow-xl shadow-red-100' 
+                      : 'bg-white border-slate-100 hover:border-red-100 hover:bg-red-50/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className={`p-3 rounded-xl ${selectedMultaType === 'ultrapassagem' ? 'bg-red-100 text-red-600' : 'bg-slate-50 text-slate-400'}`}>
+                      <TrendingUp size={24} />
+                    </div>
+                    <h3 className={`font-bold text-sm uppercase tracking-wider ${selectedMultaType === 'ultrapassagem' ? 'text-red-900' : 'text-slate-500'}`}>
+                      Ultrapassagem de Demanda
+                    </h3>
+                  </div>
+                  <p className={`text-3xl font-display font-bold ${selectedMultaType === 'ultrapassagem' ? 'text-red-600' : 'text-slate-700'}`}>
+                    R$ {multasTotals.ultrapassagem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+
+                <div 
+                  onClick={() => setSelectedMultaType('subutilizacao')}
+                  className={`p-8 rounded-3xl border cursor-pointer transition-all ${
+                    selectedMultaType === 'subutilizacao' 
+                      ? 'bg-blue-50 border-blue-200 shadow-xl shadow-blue-100' 
+                      : 'bg-white border-slate-100 hover:border-blue-100 hover:bg-blue-50/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className={`p-3 rounded-xl ${selectedMultaType === 'subutilizacao' ? 'bg-blue-100 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
+                      <TrendingDown size={24} />
+                    </div>
+                    <h3 className={`font-bold text-sm uppercase tracking-wider ${selectedMultaType === 'subutilizacao' ? 'text-blue-900' : 'text-slate-500'}`}>
+                      Subutilização
+                    </h3>
+                  </div>
+                  <p className={`text-3xl font-display font-bold ${selectedMultaType === 'subutilizacao' ? 'text-blue-600' : 'text-slate-700'}`}>
+                    R$ {multasTotals.subutilizacao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+
+              {/* UC List Section */}
+              <div className="bg-white rounded-3xl border border-sanesul-primary/10 overflow-hidden">
+                <div className="p-6 border-b border-sanesul-primary/10 bg-slate-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-sanesul-primary">
+                      Detalhamento por Unidade Consumidora (UC)
+                    </h3>
+                    <p className="text-sm text-sanesul-muted mt-1">
+                      {selectedMultaType === 'ultrapassagem' ? 'UCs com multas de ultrapassagem no período.' :
+                       selectedMultaType === 'reativa' ? 'UCs com multas reativas no período.' :
+                       'UCs com subutilização no período.'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <select
+                      value={multasMonth}
+                      onChange={(e) => setMultasMonth(e.target.value)}
+                      className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-sanesul-primary focus:ring-2 focus:ring-sanesul-primary/20"
+                    >
+                      <option value="all">Todos os Meses</option>
+                      {Array.from(new Set(bills.filter(b => b.status === 'completed').map(b => `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`))).map(month => (
+                        <option key={month} value={month}>{month}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/80 border-b border-sanesul-primary/10">
+                        <th className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted">UC</th>
+                        <th 
+                          className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted text-right cursor-pointer hover:text-sanesul-primary transition-colors group"
+                          onClick={() => setMultasSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                        >
+                          <div className="flex items-center justify-end gap-1">
+                            Valor Total (R$)
+                            <div className="flex flex-col">
+                              <ArrowUp size={10} className={`${multasSortDirection === 'asc' ? 'text-sanesul-primary' : 'text-slate-300 group-hover:text-slate-400'}`} />
+                              <ArrowDown size={10} className={`-mt-1 ${multasSortDirection === 'desc' ? 'text-sanesul-primary' : 'text-slate-300 group-hover:text-slate-400'}`} />
+                            </div>
+                          </div>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {multasUcList.length > 0 ? (
+                        multasUcList.map((item, index) => (
+                          <tr key={item.uc} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                            <td className="p-4 font-medium text-sanesul-primary">{item.uc}</td>
+                            <td className="p-4 text-right font-bold text-sanesul-primary">
+                              R$ {item[selectedMultaType].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={2} className="p-8 text-center text-sanesul-muted">
+                            Nenhuma UC com este tipo de multa no período.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
         ) : activeTab === 'dashboard' ? (
           <div className="flex flex-col md:flex-row gap-8">
             {/* Dashboard Sidebar Navigation */}
