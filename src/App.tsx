@@ -1845,7 +1845,7 @@ export default function App() {
       [fileId]: { status: `Lendo ${statusPrefix}...`, percent: 0, fileName: file.name, fileSize: file.size, abortController }
     }));
     
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || '';
     const ai = new GoogleGenAI({ apiKey });
 
     try {
@@ -2432,7 +2432,7 @@ export default function App() {
   };
 
   const processFile = async (bill: BillData & { file: File }, retryCount = 0) => {
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || '';
     const ai = new GoogleGenAI({ apiKey });
     
     try {
