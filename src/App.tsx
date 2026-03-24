@@ -556,7 +556,7 @@ const UCS_USINA = new Set([
   "2400975", "1602335", "279006", "176817", "176812", "102690", "3211"
 ]);
 
-const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: { data: any[], setCurrentPage: (page: string) => void, handleLogout: () => void }) => {
+const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, handleSelectKey }: { data: any[], setCurrentPage: (page: string) => void, handleLogout: () => void, hasApiKey: boolean, handleSelectKey: () => void }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
 
   const availableMonths = Array.from(new Set(data.map(d => d.name))).filter(Boolean).sort((a, b) => {
@@ -805,6 +805,18 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: { data: any
         </div>
         <div className="flex items-center gap-4">
           <button
+            onClick={handleSelectKey}
+            className={`flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 ${
+              hasApiKey 
+                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
+                : 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100'
+            }`}
+            title={hasApiKey ? "Chave Paga Ativa. Clique para trocar." : "Chave Gratuita Ativa. Clique para usar uma chave paga."}
+          >
+            <Key size={16} />
+            {hasApiKey ? "Chave Paga Ativa" : "Chave Gratuita Ativa"}
+          </button>
+          <button
             onClick={() => setCurrentPage('sistema')}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 transition-all rounded-xl text-xs font-bold tracking-wider shadow-md active:scale-95"
           >
@@ -819,9 +831,6 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: { data: any
             <LogOut size={16} />
             Sair
           </button>
-          <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden border-2 border-white shadow-sm ml-2">
-            <img src="https://i.pravatar.cc/150?img=11" alt="User" className="w-full h-full object-cover" />
-          </div>
         </div>
       </header>
 
@@ -1215,6 +1224,27 @@ export default function App() {
       } else {
         setLoginError('Erro inesperado ao tentar logar. Verifique a conexão.');
       }
+    }
+  };
+
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkApiKey = async () => {
+      const aiStudio = (window as any).aistudio;
+      if (aiStudio?.hasSelectedApiKey) {
+        const selected = await aiStudio.hasSelectedApiKey();
+        setHasApiKey(selected);
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleSelectKey = async () => {
+    const aiStudio = (window as any).aistudio;
+    if (aiStudio?.openSelectKey) {
+      await aiStudio.openSelectKey();
+      setHasApiKey(true);
     }
   };
 
@@ -1815,7 +1845,7 @@ export default function App() {
       [fileId]: { status: `Lendo ${statusPrefix}...`, percent: 0, fileName: file.name, fileSize: file.size, abortController }
     }));
     
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
     const ai = new GoogleGenAI({ apiKey });
 
     try {
@@ -2121,22 +2151,27 @@ export default function App() {
       const tp_ideal = isAzul ? 91.115690 : 0;
       const tfp_ideal = isAzul ? 45.702760 : (isVerde ? 43.177150 : 10.00);
 
-      // Optimized Cost (using the FIXED optimal demand and specific rates)
-      // O cálculo continua considerando ultrapassagem para uma comparação justa com o Gasto Real
-      // Para a modalidade VERDE, o usuário solicitou somar o valor real da "Demanda de Potência Medida - Ponta"
-      const optCostPonta = isVerde 
-        ? vDmpP 
-        : ((dcp > 0 && opt.ponta > 0 && tp_ideal > 0)
+      let optimizedTotal = 0;
+      let economy = 0;
+
+      if (isVerde) {
+        // Fórmula específica solicitada pelo usuário para UC VERDE:
+        // Economia = Gasto Real - (Valor Demanda de Potência Medida Ponta + (Demanda Ideal fora ponta * 45.702760))
+        optimizedTotal = vDmpP + (opt.foraPonta * 45.702760);
+        economy = currentTotal - optimizedTotal;
+      } else {
+        // Optimized Cost (using the FIXED optimal demand and specific rates)
+        const optCostPonta = (dcp > 0 && opt.ponta > 0 && tp_ideal > 0)
             ? (dmp > opt.ponta * 1.05 ? (opt.ponta * tp_ideal) + ((dmp - opt.ponta) * tp_ideal * 2) : (Math.max(dmp, opt.ponta) * tp_ideal))
-            : 0);
-      const optCostForaPonta = dmfp > opt.foraPonta * 1.05 
-        ? (opt.foraPonta * tfp_ideal) + ((dmfp - opt.foraPonta) * tfp_ideal * 2) 
-        : (Math.max(dmfp, opt.foraPonta) * tfp_ideal);
-      
-      const optimizedTotal = optCostPonta + optCostForaPonta;
-      
-      // O usuário solicitou que o valor economizado seja exatamente a diferença entre o Gasto Real e o Gasto Ideal simulado
-      const economy = currentTotal - optimizedTotal;
+            : 0;
+            
+        const optCostForaPonta = dmfp > opt.foraPonta * 1.05 
+          ? (opt.foraPonta * tfp_ideal) + ((dmfp - opt.foraPonta) * tfp_ideal * 2) 
+          : (Math.max(dmfp, opt.foraPonta) * tfp_ideal);
+        
+        optimizedTotal = optCostPonta + optCostForaPonta;
+        economy = currentTotal - optimizedTotal;
+      }
 
       // Ultrapassagem
       const overrunPonta = (dcp > 0 && dmp > dcp * 1.05) ? dmp - dcp : 0;
@@ -2397,7 +2432,7 @@ export default function App() {
   };
 
   const processFile = async (bill: BillData & { file: File }, retryCount = 0) => {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
     const ai = new GoogleGenAI({ apiKey });
     
     try {
@@ -2469,7 +2504,7 @@ export default function App() {
       let response;
       try {
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3-flash-preview",
+          model: "gemini-3.1-flash-lite-preview",
           contents: [
             {
               parts: [
@@ -2726,10 +2761,10 @@ export default function App() {
           await processFile({ ...bill, abortController } as any);
           console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
           
-          // Add a 7.5s delay to stay within the 15 RPM free tier limit
+          // Add a 15s delay to stay well within the 15 RPM free tier limit
           if (queue.length > 0 && isProcessingRef.current) {
-            console.log(`[Worker ${workerId}] Aguardando 7.5s para respeitar o limite da cota gratuita...`);
-            await new Promise(resolve => setTimeout(resolve, 7500));
+            console.log(`[Worker ${workerId}] Aguardando 15s para respeitar o limite da cota gratuita...`);
+            await new Promise(resolve => setTimeout(resolve, 15000));
           }
         } catch (error) {
           console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
@@ -3097,7 +3132,7 @@ export default function App() {
     let total = 0;
     
     const monthlyBreakdown: Record<string, { month: string, sortKey: string, ultrapassagem: number, reativa: number, subutilizacao: number, total: number }> = {};
-    const ucBreakdown: Record<string, { ultrapassagem: number, reativa: number, subutilizacao: number, total: number }> = {};
+    const ucBreakdown: Record<string, { cidade: string, ultrapassagem: number, reativa: number, subutilizacao: number, total: number }> = {};
 
     completedBills.forEach(b => {
       const u = parseValue(b.valorDemandaPotenciaAtivaUltrapPonta) + parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta);
@@ -3123,7 +3158,7 @@ export default function App() {
 
       if (multasMonth === 'all' || monthName === multasMonth) {
         if (!ucBreakdown[b.uc]) {
-          ucBreakdown[b.uc] = { ultrapassagem: 0, reativa: 0, subutilizacao: 0, total: 0 };
+          ucBreakdown[b.uc] = { cidade: b.cidade || 'N/A', ultrapassagem: 0, reativa: 0, subutilizacao: 0, total: 0 };
         }
         ucBreakdown[b.uc].ultrapassagem += u;
         ucBreakdown[b.uc].reativa += r;
@@ -3474,7 +3509,13 @@ export default function App() {
   }
 
   if (currentPage === 'visao_geral') {
-    return <VisaoGeralDashboard data={dashboardData} setCurrentPage={setCurrentPage} handleLogout={handleLogout} />;
+    return <VisaoGeralDashboard 
+      data={dashboardData} 
+      setCurrentPage={setCurrentPage} 
+      handleLogout={handleLogout} 
+      hasApiKey={hasApiKey}
+      handleSelectKey={handleSelectKey}
+    />;
   }
 
   return (
@@ -3497,12 +3538,16 @@ export default function App() {
           </div>
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={() => window.aistudio?.openSelectKey?.()}
-              className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-              title="Selecionar Conta/Chave de API"
+              onClick={handleSelectKey}
+              className={`flex items-center gap-2 px-6 py-3 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 ${
+                hasApiKey 
+                  ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
+                  : 'bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5'
+              }`}
+              title={hasApiKey ? "Chave Paga Ativa. Clique para trocar." : "Chave Gratuita Ativa. Clique para usar uma chave paga."}
             >
               <Key size={16} />
-              Trocar Conta
+              {hasApiKey ? "Chave Paga Ativa" : "Chave Gratuita Ativa"}
             </button>
             <button
               onClick={() => setCurrentPage('visao_geral')}
@@ -4211,6 +4256,7 @@ export default function App() {
                     <thead>
                       <tr className="bg-slate-50/80 border-b border-sanesul-primary/10">
                         <th className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted">UC</th>
+                        <th className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted">Cidade</th>
                         <th 
                           className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted text-right cursor-pointer hover:text-sanesul-primary transition-colors group"
                           onClick={() => setMultasSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
@@ -4230,6 +4276,7 @@ export default function App() {
                         multasUcList.map((item, index) => (
                           <tr key={item.uc} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
                             <td className="p-4 font-medium text-sanesul-primary">{item.uc}</td>
+                            <td className="p-4 text-slate-600">{item.cidade}</td>
                             <td className="p-4 text-right font-bold text-sanesul-primary">
                               R$ {item[selectedMultaType].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                             </td>
