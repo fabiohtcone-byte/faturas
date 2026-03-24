@@ -239,8 +239,8 @@ const ensureApiKey = async () => {
 const generateContentWithRetry = async (
   ai: GoogleGenAI,
   params: any,
-  retries = 7,
-  delay = 6000
+  retries = 2,
+  delay = 2000
 ): Promise<GenerateContentResponse> => {
   try {
     // Add a timeout of 60 seconds to the API call
@@ -4028,6 +4028,11 @@ export default function App() {
                                         style={{ width: `${bill.progress || 0}%` }}
                                       ></div>
                                     </div>
+                                    {bill.error && (
+                                      <span className="text-[9px] text-amber-600 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
+                                        <AlertCircle size={10} /> {bill.error}
+                                      </span>
+                                    )}
                                   </div>
                                 )}
                                 {bill.status === 'completed' && (
