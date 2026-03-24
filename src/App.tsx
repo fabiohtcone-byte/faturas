@@ -244,16 +244,23 @@ const generateContentWithRetry = async (
 ): Promise<GenerateContentResponse> => {
   try {
     // Add a timeout of 60 seconds to the API call
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('TIMEOUT_API: A API demorou muito para responder (60s).')), 60000)
-    );
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('TIMEOUT_API: A API demorou muito para responder (60s).')), 60000);
+    });
 
-    const response = await Promise.race([
-      ai.models.generateContent(params),
-      timeoutPromise
-    ]) as GenerateContentResponse;
-
-    return response;
+    try {
+      const response = await Promise.race([
+        ai.models.generateContent(params),
+        timeoutPromise
+      ]) as GenerateContentResponse;
+      
+      clearTimeout(timeoutId!);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId!);
+      throw error;
+    }
   } catch (error: any) {
     // Extract error details
     let errorStr = '';
@@ -298,7 +305,7 @@ const generateContentWithRetry = async (
 
     const isTimeout = errorStr.includes('TIMEOUT_API');
     const isLockError = errorStr.includes('Lock broken by another request');
-    const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('limit reached') || errorStr.includes('monthly limit') || errorStr.includes('billing details');
+    const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('monthly limit');
     const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('expired');
     const isInvalid = errorStr.includes('invalid API key') || errorStr.includes('invalid key') || (errorCode === 401 && errorStr.includes('invalid'));
     const isNotFound = errorStr.includes('Requested entity was not found') || errorStr.includes('API key not found');
@@ -2668,9 +2675,9 @@ export default function App() {
       const errorStatus = nestedError?.status || '';
       const msg = nestedError?.message || error?.message || '';
 
-      if (msg.includes('spending cap') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('monthly limit') || errorStr.includes('billing details')) {
+      if (msg.includes('spending cap') || errorStr.includes('spending cap') || errorStr.includes('limite de gastos') || errorStr.includes('monthly limit')) {
         isQuotaExhausted = true;
-      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
+      } else if (errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit') || errorStr.includes('billing details')) {
         isRateLimit = true;
         // Try to extract retry time from message
         const match = msg.match(/retry in ([\d.]+)s/);
