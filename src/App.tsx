@@ -3181,13 +3181,8 @@ export default function App() {
       const s = parseValue(b.valorDemandaPotenciaNaoConsumidaPonta) + parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta);
       const t = u + r + s;
 
-      ultrapassagem += u;
-      reativa += r;
-      subutilizacao += s;
-      total += t;
-
       const monthName = `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`;
-      const sortKey = `${b.anoLeitura}${b.mesReferencia.padStart(2, '0')}`;
+      const sortKey = `${b.anoLeitura}${getMonthNumber(b.mesReferencia.toString()).toString().padStart(2, '0')}`;
       
       if (!monthlyBreakdown[sortKey]) {
         monthlyBreakdown[sortKey] = { month: monthName, sortKey, ultrapassagem: 0, reativa: 0, subutilizacao: 0, total: 0 };
@@ -3198,6 +3193,11 @@ export default function App() {
       monthlyBreakdown[sortKey].total += t;
 
       if (multasMonth === 'all' || monthName === multasMonth) {
+        ultrapassagem += u;
+        reativa += r;
+        subutilizacao += s;
+        total += t;
+
         if (!ucBreakdown[b.uc]) {
           ucBreakdown[b.uc] = { cidade: b.cidade || 'N/A', ultrapassagem: 0, reativa: 0, subutilizacao: 0, total: 0 };
         }
