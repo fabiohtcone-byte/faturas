@@ -214,6 +214,40 @@ interface AgrupadoraData {
 
 // --- Helper Functions ---
 
+const Logo = ({ className = "h-10", showText = true, isLogin = false }: { className?: string, showText?: boolean, isLogin?: boolean }) => {
+  const [error, setError] = useState(false);
+  
+  if (!error) {
+    return (
+      <img 
+        src="/logo.png" 
+        alt="Sanesul Energy" 
+        className={`object-contain ${className}`}
+        onError={() => setError(true)}
+      />
+    );
+  }
+
+  // Fallback to HTML logo if image is missing
+  return (
+    <div className={`flex ${isLogin ? 'flex-col items-center' : 'items-center gap-3'} ${className}`}>
+      <div className={`${isLogin ? 'w-16 h-16 rounded-2xl mb-4' : className.includes('h-12') ? 'w-12 h-12 rounded-xl' : 'w-10 h-10 rounded-xl'} bg-sanesul-primary flex items-center justify-center shadow-lg shadow-sanesul-primary/20 shrink-0`}>
+        <Zap className="text-white" size={isLogin ? 32 : className.includes('h-12') ? 24 : 20} />
+      </div>
+      {showText && (
+        <div className={isLogin ? 'text-center' : ''}>
+          <h1 className={`${isLogin ? 'text-3xl' : className.includes('h-12') ? 'text-3xl md:text-4xl' : 'text-2xl'} font-display font-bold tracking-tight text-sanesul-primary leading-none`}>
+            Sanesul <span className="text-sanesul-secondary">Energy</span>
+          </h1>
+          <p className="text-[9px] uppercase tracking-[0.2em] text-sanesul-muted font-bold mt-1">
+            {isLogin ? 'Acesso Restrito' : 'Portal de Inteligência Energética'}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const deduplicateBills = (bills: BillData[]) => {
   const seen = new Set();
   return bills.filter(bill => {
@@ -801,15 +835,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     <div className="min-h-screen bg-[#f8fafc] pb-8 text-slate-600 selection:bg-blue-500/30">
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg">
-            <Zap className="text-white" size={20} />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900 leading-tight">Sanesul Energy</h1>
-            <p className="text-[9px] text-blue-600 uppercase tracking-widest font-bold">Portal de Inteligência Energética</p>
-          </div>
-        </div>
+        <Logo className="h-10" />
         <div className="flex items-center gap-4">
           <button
             onClick={handleSelectKey}
@@ -3455,16 +3481,8 @@ export default function App() {
     return (
       <div className="min-h-screen bg-sanesul-bg flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-sanesul-primary/10">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 bg-sanesul-primary rounded-2xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20 mb-4">
-              <Zap className="text-white" size={32} />
-            </div>
-            <h1 className="text-3xl font-display font-bold tracking-tight text-sanesul-primary text-center">
-              Sanesul <span className="text-sanesul-secondary">Energy</span>
-            </h1>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-sanesul-muted font-bold mt-2">
-              Acesso Restrito
-            </p>
+          <div className="mb-8">
+            <Logo className="h-16" isLogin={true} />
           </div>
 
           <form onSubmit={handleLogin} className="space-y-6">
@@ -3530,32 +3548,22 @@ export default function App() {
       {/* Header */}
       <header className="max-w-[1600px] mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-sanesul-primary rounded-xl flex items-center justify-center shadow-lg shadow-sanesul-primary/20">
-              <Zap className="text-white" size={24} />
-            </div>
-            <div>
-              <h1 className="text-3xl md:text-4xl font-display font-bold tracking-tight text-sanesul-primary">
-                Sanesul <span className="text-sanesul-secondary">Energy</span>
-              </h1>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-sanesul-muted font-bold">
-                Portal de Inteligência Energética
-              </p>
-            </div>
-          </div>
+          <Logo className="h-12" />
           <div className="flex flex-wrap gap-3">
-            <button
-              onClick={handleSelectKey}
-              className={`flex items-center gap-2 px-6 py-3 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 ${
-                hasApiKey 
-                  ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
-                  : 'bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5'
-              }`}
-              title={hasApiKey ? "Chave Paga Ativa. Clique para trocar." : "Chave Gratuita Ativa. Clique para usar uma chave paga."}
-            >
-              <Key size={16} />
-              {hasApiKey ? "Chave Paga Ativa" : "Chave Gratuita Ativa"}
-            </button>
+            {activeTab === 'faturas' && (
+              <button
+                onClick={handleSelectKey}
+                className={`flex items-center gap-2 px-6 py-3 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 ${
+                  hasApiKey 
+                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
+                    : 'bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5'
+                }`}
+                title={hasApiKey ? "Chave Paga Ativa. Clique para trocar." : "Chave Gratuita Ativa. Clique para usar uma chave paga."}
+              >
+                <Key size={16} />
+                {hasApiKey ? "Chave Paga Ativa" : "Chave Gratuita Ativa"}
+              </button>
+            )}
             <button
               onClick={() => setCurrentPage('visao_geral')}
               className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
@@ -3571,54 +3579,58 @@ export default function App() {
               <LogOut size={16} />
               Sair
             </button>
-            <button
-              onClick={() => {
-                setEditingBill({
-                  id: crypto.randomUUID(),
-                  fileName: 'Fatura Manual',
-                  status: 'completed',
-                  tipo: 'OPERACIONAL',
-                  concessionaria: 'ENERGISA',
-                  mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, '0'))}/${new Date().getFullYear()}`,
-                  anoLeitura: new Date().getFullYear().toString()
-                });
-                setIsBillModalOpen(true);
-              }}
-              className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-            >
-              <Plus size={16} />
-              Nova Fatura Manual
-            </button>
-            <button
-              onClick={() => fileInputEnergisaRef.current?.click()}
-              className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
-            >
-              <Plus size={16} />
-              Adicionar Faturas - ENERGISA
-            </button>
-            <input
-              type="file"
-              ref={fileInputEnergisaRef}
-              onChange={(e) => handleFileUpload(e, 'ENERGISA')}
-              multiple
-              accept="application/pdf,image/*"
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputElektroRef.current?.click()}
-              className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
-            >
-              <Plus size={16} />
-              Adicionar Faturas - ELEKTRO
-            </button>
-            <input
-              type="file"
-              ref={fileInputElektroRef}
-              onChange={(e) => handleFileUpload(e, 'ELEKTRO')}
-              multiple
-              accept="application/pdf,image/*"
-              className="hidden"
-            />
+            {activeTab === 'faturas' && (
+              <>
+                <button
+                  onClick={() => {
+                    setEditingBill({
+                      id: crypto.randomUUID(),
+                      fileName: 'Fatura Manual',
+                      status: 'completed',
+                      tipo: 'OPERACIONAL',
+                      concessionaria: 'ENERGISA',
+                      mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, '0'))}/${new Date().getFullYear()}`,
+                      anoLeitura: new Date().getFullYear().toString()
+                    });
+                    setIsBillModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                >
+                  <Plus size={16} />
+                  Nova Fatura Manual
+                </button>
+                <button
+                  onClick={() => fileInputEnergisaRef.current?.click()}
+                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
+                >
+                  <Plus size={16} />
+                  Adicionar Faturas - ENERGISA
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputEnergisaRef}
+                  onChange={(e) => handleFileUpload(e, 'ENERGISA')}
+                  multiple
+                  accept="application/pdf,image/*"
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputElektroRef.current?.click()}
+                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
+                >
+                  <Plus size={16} />
+                  Adicionar Faturas - ELEKTRO
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputElektroRef}
+                  onChange={(e) => handleFileUpload(e, 'ELEKTRO')}
+                  multiple
+                  accept="application/pdf,image/*"
+                  className="hidden"
+                />
+              </>
+            )}
             {bills.length > 0 && activeTab === 'faturas' && (
               <button
                 onClick={startProcessing}
