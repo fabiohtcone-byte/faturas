@@ -1332,7 +1332,6 @@ export default function App() {
           const { data, error } = await supabase
             .from('bills')
             .select('*')
-            .eq('user_id', user.id)
             .range(from, to)
             .order('created_at', { ascending: false });
 
@@ -1486,6 +1485,16 @@ export default function App() {
   const handleDownloadDocx = async () => {
     try {
       const doc = new Document({
+        styles: {
+          default: {
+            document: {
+              run: {
+                font: "Arial",
+                size: 24, // 12pt
+              },
+            },
+          },
+        },
         sections: [{
           properties: {},
           children: [
@@ -2613,7 +2622,6 @@ export default function App() {
           const { data: existingData, error: dbCheckError } = await supabase
             .from('bills')
             .select('id')
-            .eq('user_id', user.id)
             .eq('uc', result.uc)
             .eq('mes_referencia', result.mesReferencia)
             .eq('ano_leitura', result.anoLeitura)
@@ -3651,7 +3659,7 @@ export default function App() {
                 Resetar Travados
               </button>
             )}
-            {bills.some(b => b.status === 'completed') && (
+            {bills.some(b => b.status === 'completed') && activeTab === 'faturas' && (
               <button
                 onClick={exportToCSV}
                 className="flex items-center gap-2 px-6 py-3 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-secondary/20 active:scale-95"
