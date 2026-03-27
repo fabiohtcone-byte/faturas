@@ -8,6 +8,7 @@ import domtoimage from 'dom-to-image-more';
 import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, ShadingType, ImageRun, VerticalAlign } from 'docx';
 import { saveAs } from 'file-saver';
+import localforage from 'localforage';
 import { GoogleGenAI, Type, GenerateContentResponse, ThinkingLevel } from "@google/genai";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { 
@@ -130,6 +131,7 @@ interface BillData {
   file?: File;
   progress?: number;
   abortController?: AbortController;
+  createdAt?: number;
 }
 
 // --- Constants ---
@@ -273,14 +275,14 @@ const ensureApiKey = async () => {
 const generateContentWithRetry = async (
   ai: GoogleGenAI,
   params: any,
-  retries = 2,
+  retries = 3,
   delay = 2000
 ): Promise<GenerateContentResponse> => {
   try {
-    // Add a timeout of 60 seconds to the API call
+    // Add a timeout of 120 seconds to the API call
     let timeoutId: NodeJS.Timeout;
     const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('TIMEOUT_API: A API demorou muito para responder (60s).')), 60000);
+      timeoutId = setTimeout(() => reject(new Error('TIMEOUT_API: A API demorou muito para responder (120s).')), 120000);
     });
 
     try {
@@ -504,7 +506,8 @@ const mapDbToBillData = (dbBill: any): BillData => ({
   subgrupo: dbBill.subgrupo || '',
   tipo: dbBill.tipo || '',
   status: dbBill.status as any,
-  error: dbBill.error || undefined
+  error: dbBill.error || undefined,
+  createdAt: dbBill.created_at ? new Date(dbBill.created_at).getTime() : Date.now()
 });
 
 const mapBillDataToDb = (bill: BillData, userId: string) => ({
@@ -1188,6 +1191,8 @@ export default function App() {
     return localStorage.getItem('sanesul_auth') === 'true';
   });
 
+  const [searchUC, setSearchUC] = useState('');
+
   React.useEffect(() => {
     if (!isSupabaseConfigured) {
       console.warn('Supabase não configurado. Ignorando verificação de sessão.');
@@ -1201,10 +1206,14 @@ export default function App() {
       } else {
         localStorage.removeItem('sanesul_auth');
       }
-    }).catch(err => {
+    }).catch(async err => {
       console.error('Erro ao buscar sessão do Supabase:', err);
       if (err.message?.includes('Refresh Token Not Found') || err.message?.includes('invalid refresh token')) {
-        supabase.auth.signOut();
+        try {
+          await supabase.auth.signOut();
+        } catch (signOutErr) {
+          console.error('Erro ao realizar signOut:', signOutErr);
+        }
         localStorage.removeItem('sanesul_auth');
         setIsAuthenticated(false);
       }
@@ -1316,6 +1325,21 @@ export default function App() {
   });
 
   React.useEffect(() => {
+    localforage.getItem<Record<string, File>>('sanesul_bills_files').then(filesMap => {
+      if (filesMap) {
+        setBills(prev => prev.map(b => {
+          if (filesMap[b.id]) {
+            return { ...b, file: filesMap[b.id] };
+          }
+          return b;
+        }));
+      }
+    }).catch(err => {
+      console.warn('Failed to load files from localforage:', err);
+    });
+  }, []);
+
+  React.useEffect(() => {
     const fetchBills = async () => {
       if (!isSupabaseConfigured || !isAuthenticated) return;
       
@@ -1371,7 +1395,10 @@ export default function App() {
             return b;
           });
 
-          setBills(deduplicateBills(updatedBills));
+          setBills(prev => {
+            const pendingBills = prev.filter(b => b.status === 'pending' || b.status === 'processing' || b.status === 'error');
+            return deduplicateBills([...pendingBills, ...updatedBills]);
+          });
 
           // If changes were made, update Supabase sequentially to avoid locking
           if (hasChanges) {
@@ -1385,6 +1412,11 @@ export default function App() {
               }
             }
           }
+        } else {
+          setBills(prev => {
+            const pendingBills = prev.filter(b => b.status === 'pending' || b.status === 'processing' || b.status === 'error');
+            return deduplicateBills([...pendingBills]);
+          });
         }
       } catch (err) {
         console.error('Erro inesperado ao buscar faturas:', err);
@@ -1402,6 +1434,17 @@ export default function App() {
         return rest;
       });
       localStorage.setItem('sanesul_bills', JSON.stringify(billsToSave));
+
+      // Save files to localforage
+      const filesMap: Record<string, File> = {};
+      bills.forEach(b => {
+        if ((b as any).file) {
+          filesMap[b.id] = (b as any).file;
+        }
+      });
+      localforage.setItem('sanesul_bills_files', filesMap).catch(err => {
+        console.warn('Failed to save files to localforage:', err);
+      });
     } catch (e) {
       console.warn('LocalStorage limit reached, skipping save:', e);
     }
@@ -1738,6 +1781,13 @@ export default function App() {
     if (filterReference !== 'all') {
       filtered = filtered.filter(b => `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` === filterReference);
     }
+
+    // UC Search Filter
+    if (searchUC.trim() !== '') {
+      const search = searchUC.toLowerCase().trim();
+      filtered = filtered.filter(b => (b.uc || '').toLowerCase().includes(search));
+    }
+
     let sortableBills = filtered;
     
     sortableBills.sort((a, b) => {
@@ -1787,11 +1837,13 @@ export default function App() {
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
       }
-      return 0;
+
+      // Default sort by createdAt descending (newest first)
+      return (b.createdAt || 0) - (a.createdAt || 0);
     });
 
     return sortableBills;
-  }, [bills, sortConfig, filterReference]);
+  }, [bills, sortConfig, filterReference, searchUC]);
 
   const [analysisResults, setAnalysisResults] = useState<any>(null);
   const [dashboardSubTab, setDashboardSubTab] = useState<'operacionais' | 'financeiro'>('operacionais');
@@ -1893,7 +1945,7 @@ export default function App() {
     try {
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (30s)')), 30000);
+        const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (60s)')), 60000);
         
         reader.onprogress = (data) => {
           if (data.lengthComputable) {
@@ -1923,10 +1975,10 @@ export default function App() {
       const base64Data = await base64Promise;
 
       let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: Fevereiro/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.";
-      let selectedModel = "gemini-3-flash-preview";
+      let selectedModel = "gemini-3.1-flash-lite-preview";
 
       if (reportType === 'detailed') {
-        selectedModel = "gemini-3-flash-preview";
+        selectedModel = "gemini-3.1-flash-lite-preview";
         prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA EM FATURAS DE ENERGIA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado para consolidar o valor da CIP.\n\nINSTRUÇÕES DETALHADAS:\n1. Percorra TODAS as páginas do documento, sem exceção.\n2. Em cada página, localize a tabela de itens faturados.\n3. Procure pelas descrições: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n4. Extraia o valor monetário associado a cada uma dessas linhas.\n5. SOMA TOTAL: Você deve somar TODOS os valores encontrados em todas as páginas para obter o total da CIP do grupo.\n6. RETORNO: Retorne o JSON preenchendo o campo 'cip' com a soma total calculada. Os campos 'valorTotal', 'pis', 'cofins', 'icms' devem ser preenchidos como 0, a menos que você encontre um valor consolidado claro para eles no documento.\n7. Identifique a 'concessionaria' e o 'mesReferencia'.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.";
       }
 
@@ -2050,8 +2102,10 @@ export default function App() {
   };
 
   const addFiles = (files: FileList | File[], concessionaria?: string) => {
-    const newBills: BillData[] = (Array.from(files) as File[]).map(file => ({
+    const now = Date.now();
+    const newBills: BillData[] = (Array.from(files) as File[]).map((file, index) => ({
       id: crypto.randomUUID(),
+      createdAt: now + index,
       fileName: file.name,
       concessionaria: concessionaria || '',
       uc: '',
@@ -2498,7 +2552,7 @@ export default function App() {
 
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (30s)')), 30000);
+        const timeout = setTimeout(() => reject(new Error('Erro ao ler arquivo: Tempo limite excedido (60s)')), 60000);
         
         reader.onprogress = (data) => {
           if (data.lengthComputable) {
@@ -2782,7 +2836,7 @@ export default function App() {
 
     // Worker pool approach to maintain concurrency limited to 1 to avoid freezing and rate limits
     const queue = [...pendingBills];
-    const maxConcurrency = 1;
+    const maxConcurrency = 2;
     const initialWorkers = Math.min(maxConcurrency, queue.length);
 
     const runWorker = async (workerId: number) => {
@@ -2802,10 +2856,10 @@ export default function App() {
           await processFile({ ...bill, abortController } as any);
           console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
           
-          // Add a 15s delay to stay well within the 15 RPM free tier limit
+          // Add a 5s delay to stay within the 15 RPM free tier limit
           if (queue.length > 0 && isProcessingRef.current) {
-            console.log(`[Worker ${workerId}] Aguardando 15s para respeitar o limite da cota gratuita...`);
-            await new Promise(resolve => setTimeout(resolve, 15000));
+            console.log(`[Worker ${workerId}] Aguardando 5s para respeitar o limite da cota gratuita...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
           }
         } catch (error) {
           console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
@@ -3898,6 +3952,30 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Search Bar */}
+              <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-3xl border border-sanesul-primary/5 shadow-sm">
+                <div className="relative w-full sm:w-96">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Search size={16} className="text-sanesul-muted" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Buscar por Unidade Consumidora (UC)..."
+                    value={searchUC}
+                    onChange={(e) => setSearchUC(e.target.value)}
+                    className="block w-full pl-10 pr-3 py-2 border border-sanesul-primary/10 rounded-xl text-xs focus:ring-sanesul-primary focus:border-sanesul-primary bg-slate-50/50"
+                  />
+                </div>
+                {searchUC && (
+                  <button 
+                    onClick={() => setSearchUC('')}
+                    className="text-[10px] font-bold text-red-500 uppercase tracking-widest hover:text-red-600 transition-colors"
+                  >
+                    Limpar Busca
+                  </button>
+                )}
               </div>
 
               {/* Table Container */}
