@@ -10,6 +10,7 @@ import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Width
 import { saveAs } from 'file-saver';
 import localforage from 'localforage';
 import { GoogleGenAI, Type, GenerateContentResponse, ThinkingLevel } from "@google/genai";
+import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { 
   Upload, 
@@ -135,6 +136,51 @@ interface BillData {
 }
 
 // --- Constants ---
+
+const EXCEL_COLUMNS = [
+  { header: 'UC', key: 'uc' },
+  { header: 'Concessionária', key: 'concessionaria' },
+  { header: 'Cidade', key: 'cidade' },
+  { header: 'Mês Referência', key: 'mesReferencia' },
+  { header: 'Ano Leitura', key: 'anoLeitura' },
+  { header: 'Nota Fiscal', key: 'numeroNotaFiscal' },
+  { header: 'Modalidade Tarifária', key: 'modalidadeTarifaria' },
+  { header: 'Subgrupo', key: 'subgrupo' },
+  { header: 'Valor Total (R$)', key: 'valorTotal' },
+  { header: 'Demanda Contratada Ponta (kW)', key: 'demandaPontaKW' },
+  { header: 'Demanda Contratada Fora Ponta (kW)', key: 'demandaForaPontaKW' },
+  { header: 'Demanda Medida Ponta (kW)', key: 'demandaPotenciaMedidaPonta' },
+  { header: 'Valor Demanda Medida Ponta (R$)', key: 'valorDemandaPotenciaMedidaPonta' },
+  { header: 'Demanda Medida Fora Ponta (kW)', key: 'demandaPotenciaMedidaForaPonta' },
+  { header: 'Valor Demanda Medida Fora Ponta (R$)', key: 'valorDemandaPotenciaMedidaForaPonta' },
+  { header: 'Consumo Ponta (kWh)', key: 'consumoKwhPonta' },
+  { header: 'Valor Consumo Ponta (R$)', key: 'valorConsumoKwhPonta' },
+  { header: 'Consumo Fora Ponta (kWh)', key: 'consumoKwhForaPonta' },
+  { header: 'Valor Consumo Fora Ponta (R$)', key: 'valorConsumoKwhForaPonta' },
+  { header: 'Demanda Não Consumida Ponta (kW)', key: 'demandaPotenciaNaoConsumidaPonta' },
+  { header: 'Valor Demanda Não Consumida Ponta (R$)', key: 'valorDemandaPotenciaNaoConsumidaPonta' },
+  { header: 'Demanda Não Consumida Fora Ponta (kW)', key: 'demandaPotenciaNaoConsumidaFPonta' },
+  { header: 'Valor Demanda Não Consumida Fora Ponta (R$)', key: 'valorDemandaPotenciaNaoConsumidaFPonta' },
+  { header: 'Ultrapassagem Ponta (kW)', key: 'demandaPotenciaAtivaUltrapPonta' },
+  { header: 'Valor Ultrapassagem Ponta (R$)', key: 'valorDemandaPotenciaAtivaUltrapPonta' },
+  { header: 'Ultrapassagem Fora Ponta (kW)', key: 'demandaPotenciaAtivaUltrapFPonta' },
+  { header: 'Valor Ultrapassagem Fora Ponta (R$)', key: 'valorDemandaPotenciaAtivaUltrapFPonta' },
+  { header: 'Reativa Excedente Ponta (kVArh)', key: 'energiaReativaExcedPonta' },
+  { header: 'Valor Reativa Excedente Ponta (R$)', key: 'valorEnergiaReativaExcedPonta' },
+  { header: 'Reativa Excedente Fora Ponta (kVArh)', key: 'energiaReativaExcedFPonta' },
+  { header: 'Valor Reativa Excedente Fora Ponta (R$)', key: 'valorEnergiaReativaExcedFPonta' },
+  { header: 'Energia Injetada (kWh)', key: 'energiaInjetadaKwh' },
+  { header: 'Energia Compensada (kWh)', key: 'energiaCompensadaKwh' },
+  { header: 'GDI oUC (kWh)', key: 'energiaAtvInjetadaGDIOUC' },
+  { header: 'Valor GDI oUC (R$)', key: 'valorEnergiaAtvInjetadaGDIOUC' },
+  { header: 'GDI mUC (kWh)', key: 'energiaAtvInjetadaGDIMUC' },
+  { header: 'Valor GDI mUC (R$)', key: 'valorEnergiaAtvInjetadaGDIMUC' },
+  { header: 'CIP (R$)', key: 'cip' },
+  { header: 'Outros Encargos (R$)', key: 'outrosEncargos' },
+  { header: 'PIS (R$)', key: 'pis' },
+  { header: 'COFINS (R$)', key: 'cofins' },
+  { header: 'ICMS (R$)', key: 'icms' }
+];
 
 const EXTRACTION_SCHEMA = {
   type: Type.OBJECT,
@@ -841,18 +887,6 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
         <Logo className="h-10" />
         <div className="flex items-center gap-4">
           <button
-            onClick={handleSelectKey}
-            className={`flex items-center gap-2 px-4 py-2 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 ${
-              hasApiKey 
-                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
-                : 'bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100'
-            }`}
-            title={hasApiKey ? "Chave Paga Ativa. Clique para trocar." : "Chave Gratuita Ativa. Clique para usar uma chave paga."}
-          >
-            <Key size={16} />
-            {hasApiKey ? "Chave Paga Ativa" : "Chave Gratuita Ativa"}
-          </button>
-          <button
             onClick={() => setCurrentPage('sistema')}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 transition-all rounded-xl text-xs font-bold tracking-wider shadow-md active:scale-95"
           >
@@ -1381,16 +1415,39 @@ export default function App() {
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
           
-          // Apply Elektro UC fix to data from Supabase
+          // Apply fixes to data from Supabase
           let hasChanges = false;
           const updatedBills = mappedBills.map(b => {
+            let updatedBill = { ...b };
+            let changed = false;
+
+            // Fix Elektro UC
             const isElektro = (b.concessionaria || '').toUpperCase().includes('ELEKTRO');
             if (isElektro && b.status === 'completed') {
               const fileNameNumbers = b.fileName.replace(/\.[^/.]+$/, "").replace(/\D/g, "");
               if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
-                hasChanges = true;
-                return { ...b, uc: fileNameNumbers };
+                updatedBill.uc = fileNameNumbers;
+                changed = true;
               }
+            }
+
+            // Fix 45839/2025 or other Excel dates
+            if (updatedBill.mesReferencia === '45839' || updatedBill.mesReferencia === '45839/2025') {
+              updatedBill.mesReferencia = 'Julho';
+              updatedBill.anoLeitura = '2025';
+              changed = true;
+            } else if (/^\d{5}$/.test(updatedBill.mesReferencia) && parseInt(updatedBill.mesReferencia) > 40000) {
+              const excelDate = parseInt(updatedBill.mesReferencia);
+              const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+              const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+              updatedBill.mesReferencia = monthNames[jsDate.getUTCMonth()];
+              updatedBill.anoLeitura = jsDate.getUTCFullYear().toString();
+              changed = true;
+            }
+
+            if (changed) {
+              hasChanges = true;
+              return updatedBill;
             }
             return b;
           });
@@ -1402,13 +1459,17 @@ export default function App() {
 
           // If changes were made, update Supabase sequentially to avoid locking
           if (hasChanges) {
-            const changedBills = updatedBills.filter((b, i) => b.uc !== mappedBills[i].uc);
+            const changedBills = updatedBills.filter((b, i) => 
+              b.uc !== mappedBills[i].uc || 
+              b.mesReferencia !== mappedBills[i].mesReferencia || 
+              b.anoLeitura !== mappedBills[i].anoLeitura
+            );
             for (const billToSave of changedBills) {
               try {
                 const dbData = mapBillDataToDb(billToSave, user.id);
                 await supabase.from('bills').update(dbData).eq('id', billToSave.id);
               } catch (err) {
-                console.error('Erro ao atualizar UC no Supabase:', err);
+                console.error('Erro ao atualizar dados no Supabase:', err);
               }
             }
           }
@@ -1975,10 +2036,8 @@ export default function App() {
       const base64Data = await base64Promise;
 
       let prompt = "Você é um especialista em faturas agrupadoras de energia elétrica. Sua tarefa é extrair os dados consolidados desta fatura.\n\nINSTRUÇÕES:\n1. CONCESSIONÁRIA: Identifique se é ELEKTRO ou ENERGISA.\n2. VALOR TOTAL: Extraia o valor total a pagar da fatura agrupadora.\n3. REFERÊNCIA: Identifique o mês e ano de referência (ex: Fevereiro/2026).\n4. NOTA FISCAL: Procure pelo número da Nota Fiscal ou Fatura (ex: AGP-01... ou similar).\n5. IMPOSTOS: Extraia os valores de PIS, COFINS, ICMS e CIP. Para faturas da Energisa, os impostos federais (PIS/COFINS) podem estar agrupados como 'Imp. Fed.'.\n\nSe algum valor não for encontrado, retorne 0 ou string vazia.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.";
-      let selectedModel = "gemini-3.1-flash-lite-preview";
 
       if (reportType === 'detailed') {
-        selectedModel = "gemini-3.1-flash-lite-preview";
         prompt = "VOCÊ É UM AUDITOR CONTÁBIL ESPECIALISTA EM FATURAS DE ENERGIA. Sua tarefa é analisar TODAS AS PÁGINAS deste relatório detalhado para consolidar o valor da CIP.\n\nINSTRUÇÕES DETALHADAS:\n1. Percorra TODAS as páginas do documento, sem exceção.\n2. Em cada página, localize a tabela de itens faturados.\n3. Procure pelas descrições: 'COBRANCA ILUM PUBLICA', 'CIP', 'ILUMINACAO PUBLICA' ou 'CONTRIBUIÇÃO DE ILUMINAÇÃO PÚBLICA'.\n4. Extraia o valor monetário associado a cada uma dessas linhas.\n5. SOMA TOTAL: Você deve somar TODOS os valores encontrados em todas as páginas para obter o total da CIP do grupo.\n6. RETORNO: Retorne o JSON preenchendo o campo 'cip' com a soma total calculada. Os campos 'valorTotal', 'pis', 'cofins', 'icms' devem ser preenchidos como 0, a menos que você encontre um valor consolidado claro para eles no documento.\n7. Identifique a 'concessionaria' e o 'mesReferencia'.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.";
       }
 
@@ -1997,7 +2056,7 @@ export default function App() {
       let response;
       try {
         response = await generateContentWithRetry(ai, {
-          model: selectedModel,
+          model: "gemini-3.1-flash-lite-preview",
           contents: [
             {
               parts: [
@@ -2099,6 +2158,126 @@ export default function App() {
       if (energisaInputRef.current) energisaInputRef.current.value = '';
       if (detailedElektroInputRef.current) detailedElektroInputRef.current.value = '';
     }
+  };
+
+  const downloadExcelTemplate = () => {
+    const ws = XLSX.utils.json_to_sheet([{}], { header: EXCEL_COLUMNS.map(c => c.header) });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Modelo Faturas");
+    XLSX.writeFile(wb, "Modelo_Importacao_Faturas.xlsx");
+  };
+
+  const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+
+        if (data.length < 2) {
+          alert('A planilha está vazia ou não possui dados.');
+          return;
+        }
+
+        const headers = data[0] as string[];
+        const rows = data.slice(1) as any[][];
+
+        const newBills: BillData[] = rows.map((row, index) => {
+          const billData: any = {
+            id: crypto.randomUUID(),
+            fileName: `Importado_${file.name}_Linha_${index + 1}`,
+            status: 'completed',
+            createdAt: Date.now() + index,
+            tipo: 'normal'
+          };
+
+          headers.forEach((header, colIndex) => {
+            const columnDef = EXCEL_COLUMNS.find(c => c.header === header);
+            if (columnDef) {
+              const value = row[colIndex];
+              billData[columnDef.key] = value !== undefined && value !== null ? String(value) : '';
+            }
+          });
+
+          return billData as BillData;
+        });
+
+        if (isSupabaseConfigured && isAuthenticated) {
+          const { data: userData } = await supabase.auth.getUser();
+          if (userData.user) {
+            const dbData = newBills.map(bill => ({
+              id: bill.id,
+              user_id: userData.user!.id,
+              file_name: bill.fileName,
+              uc: bill.uc || '',
+              demanda_ponta_kw: bill.demandaPontaKW || '',
+              demanda_fora_ponta_kw: bill.demandaForaPontaKW || '',
+              demanda_potencia_medida_ponta: bill.demandaPotenciaMedidaPonta || '',
+              demanda_potencia_medida_fora_ponta: bill.demandaPotenciaMedidaForaPonta || '',
+              ano_leitura: bill.anoLeitura || '',
+              mes_referencia: bill.mesReferencia || '',
+              consumo_kwh_ponta: bill.consumoKwhPonta || '',
+              consumo_kwh_fora_ponta: bill.consumoKwhForaPonta || '',
+              valor_consumo_kwh_ponta: bill.valorConsumoKwhPonta || '',
+              valor_consumo_kwh_fora_ponta: bill.valorConsumoKwhForaPonta || '',
+              valor_total: bill.valorTotal || '',
+              cidade: bill.cidade || '',
+              demanda_potencia_nao_consumida_ponta: bill.demandaPotenciaNaoConsumidaPonta || '',
+              demanda_potencia_nao_consumida_f_ponta: bill.demandaPotenciaNaoConsumidaFPonta || '',
+              demanda_potencia_ativa_ultrap_ponta: bill.demandaPotenciaAtivaUltrapPonta || '',
+              demanda_potencia_ativa_ultrap_f_ponta: bill.demandaPotenciaAtivaUltrapFPonta || '',
+              energia_reativa_exced_ponta: bill.energiaReativaExcedPonta || '',
+              energia_reativa_exced_f_ponta: bill.energiaReativaExcedFPonta || '',
+              energia_injetada_kwh: bill.energiaInjetadaKwh || '',
+              energia_compensada_kwh: bill.energiaCompensadaKwh || '',
+              valor_demanda_potencia_medida_ponta: bill.valorDemandaPotenciaMedidaPonta || '',
+              valor_demanda_potencia_medida_fora_ponta: bill.valorDemandaPotenciaMedidaForaPonta || '',
+              valor_demanda_potencia_nao_consumida_ponta: bill.valorDemandaPotenciaNaoConsumidaPonta || '',
+              valor_demanda_potencia_nao_consumida_f_ponta: bill.valorDemandaPotenciaNaoConsumidaFPonta || '',
+              valor_demanda_potencia_ativa_ultrap_ponta: bill.valorDemandaPotenciaAtivaUltrapPonta || '',
+              valor_demanda_potencia_ativa_ultrap_f_ponta: bill.valorDemandaPotenciaAtivaUltrapFPonta || '',
+              valor_energia_reativa_exced_ponta: bill.valorEnergiaReativaExcedPonta || '',
+              valor_energia_reativa_exced_f_ponta: bill.valorEnergiaReativaExcedFPonta || '',
+              energia_atv_injetada_gdi_ouc: bill.energiaAtvInjetadaGDIOUC || '',
+              valor_energia_atv_injetada_gdi_ouc: bill.valorEnergiaAtvInjetadaGDIOUC || '',
+              energia_atv_injetada_gdi_muc: bill.energiaAtvInjetadaGDIMUC || '',
+              valor_energia_atv_injetada_gdi_muc: bill.valorEnergiaAtvInjetadaGDIMUC || '',
+              cip: bill.cip || '',
+              outros_encargos: bill.outrosEncargos || '',
+              pis: bill.pis || '',
+              cofins: bill.cofins || '',
+              icms: bill.icms || '',
+              concessionaria: bill.concessionaria || '',
+              numero_nota_fiscal: bill.numeroNotaFiscal || '',
+              modalidade_tarifaria: bill.modalidadeTarifaria || '',
+              subgrupo: bill.subgrupo || '',
+              tipo: bill.tipo || 'normal',
+              status: bill.status,
+              created_at: new Date(bill.createdAt || Date.now()).toISOString()
+            }));
+            
+            const { error } = await supabase.from('bills').insert(dbData);
+            if (error) {
+              console.error('Erro ao salvar no Supabase:', error);
+              alert('Erro ao salvar os dados importados no banco de dados.');
+            }
+          }
+        }
+
+        setBills(prev => [...prev, ...newBills]);
+        alert(`${newBills.length} faturas importadas com sucesso!`);
+      } catch (error) {
+        console.error('Erro ao importar planilha:', error);
+        alert('Erro ao processar o arquivo Excel.');
+      }
+    };
+    reader.readAsBinaryString(file);
   };
 
   const addFiles = (files: FileList | File[], concessionaria?: string) => {
@@ -3100,41 +3279,48 @@ export default function App() {
     }
 
     const headers = [
+      "UC",
       "Concessionária",
-      "UC", 
-      "Ano Leitura", 
-      "Mês Referência", 
-      "Consumo em kWh - Ponta",
-      "Valor (R$) - Consumo em kWh - Ponta",
-      "Consumo em kWh - Fora Ponta",
-      "Valor (R$) - Consumo em kWh - Fora Ponta",
-      "Valor R$",
-      "Demanda ponta - kW", 
-      "Demanda fora ponta - kW", 
-      "Demanda de Potência Medida - Ponta", 
-      "Valor (R$) - Demanda de Potência Medida - Ponta",
-      "Demanda de Potência Medida - Fora Ponta", 
-      "Valor (R$) - Demanda de Potência Medida - Fora Ponta",
-      "CIDADE",
-      "Demanda Potência Não Consumida - Ponta", 
-      "Valor (R$) - Demanda Potência Não Consumida - Ponta",
-      "Demanda Potência Não Consumida - F Ponta",
-      "Valor (R$) - Demanda Potência Não Consumida - F Ponta",
-      "Demanda Potência Ativa - Ultrap - Ponta",
-      "Valor (R$) - Demanda Potência Ativa - Ultrap - Ponta",
-      "Demanda Potência Ativa - Ultrap - F Ponta",
-      "Valor (R$) - Demanda Potência Ativa - Ultrap - F Ponta",
-      "Energia Reativa Exced em KWh - Ponta",
-      "Valor (R$) - Energia Reativa Exced em KWh - Ponta",
-      "Energia Reativa Exced em KWh - Fponta",
-      "Valor (R$) - Energia Reativa Exced em KWh - Fponta",
-      "Energia Injetada kWh",
-      "Energia Compensada kWh",
-      "Energia Atv Injetada GDI oUC (kWh)",
-      "Valor (R$) - Energia Atv Injetada GDI oUC",
-      "Energia Atv Injetada GDI mUC (kWh)",
-      "Valor (R$) - Energia Atv Injetada GDI mUC",
-      "Tipo"
+      "Cidade",
+      "Mês Referência",
+      "Ano Leitura",
+      "Nota Fiscal",
+      "Modalidade Tarifária",
+      "Subgrupo",
+      "Valor Total (R$)",
+      "Demanda Contratada Ponta (kW)",
+      "Demanda Contratada Fora Ponta (kW)",
+      "Demanda Medida Ponta (kW)",
+      "Valor Demanda Medida Ponta (R$)",
+      "Demanda Medida Fora Ponta (kW)",
+      "Valor Demanda Medida Fora Ponta (R$)",
+      "Consumo Ponta (kWh)",
+      "Valor Consumo Ponta (R$)",
+      "Consumo Fora Ponta (kWh)",
+      "Valor Consumo Fora Ponta (R$)",
+      "Demanda Não Consumida Ponta (kW)",
+      "Valor Demanda Não Consumida Ponta (R$)",
+      "Demanda Não Consumida Fora Ponta (kW)",
+      "Valor Demanda Não Consumida Fora Ponta (R$)",
+      "Ultrapassagem Ponta (kW)",
+      "Valor Ultrapassagem Ponta (R$)",
+      "Ultrapassagem Fora Ponta (kW)",
+      "Valor Ultrapassagem Fora Ponta (R$)",
+      "Reativa Excedente Ponta (kVArh)",
+      "Valor Reativa Excedente Ponta (R$)",
+      "Reativa Excedente Fora Ponta (kVArh)",
+      "Valor Reativa Excedente Fora Ponta (R$)",
+      "Energia Injetada (kWh)",
+      "Energia Compensada (kWh)",
+      "GDI oUC (kWh)",
+      "Valor GDI oUC (R$)",
+      "GDI mUC (kWh)",
+      "Valor GDI mUC (R$)",
+      "CIP (R$)",
+      "Outros Encargos (R$)",
+      "PIS (R$)",
+      "COFINS (R$)",
+      "ICMS (R$)"
     ];
 
     const formatCSVValue = (val: any) => {
@@ -3150,6 +3336,7 @@ export default function App() {
     };
 
     const rows = completedBills.map(b => [
+      b.uc,
       b.concessionaria 
         ? (b.concessionaria.toUpperCase().includes('ENERGISA') 
             ? 'ENERGISA' 
@@ -3157,13 +3344,12 @@ export default function App() {
               ? 'ELEKTRO' 
               : b.concessionaria)
         : '',
-      b.uc,
-      b.anoLeitura,
+      b.cidade,
       b.mesReferencia,
-      b.consumoKwhPonta,
-      b.valorConsumoKwhPonta,
-      b.consumoKwhForaPonta,
-      b.valorConsumoKwhForaPonta,
+      b.anoLeitura,
+      b.numeroNotaFiscal || '',
+      b.modalidadeTarifaria || '',
+      b.subgrupo || '',
       b.valorTotal,
       b.demandaPontaKW,
       b.demandaForaPontaKW,
@@ -3171,7 +3357,10 @@ export default function App() {
       b.valorDemandaPotenciaMedidaPonta,
       b.demandaPotenciaMedidaForaPonta,
       b.valorDemandaPotenciaMedidaForaPonta,
-      b.cidade,
+      b.consumoKwhPonta,
+      b.valorConsumoKwhPonta,
+      b.consumoKwhForaPonta,
+      b.valorConsumoKwhForaPonta,
       b.demandaPotenciaNaoConsumidaPonta,
       b.valorDemandaPotenciaNaoConsumidaPonta,
       b.demandaPotenciaNaoConsumidaFPonta,
@@ -3190,7 +3379,11 @@ export default function App() {
       b.valorEnergiaAtvInjetadaGDIOUC,
       b.energiaAtvInjetadaGDIMUC,
       b.valorEnergiaAtvInjetadaGDIMUC,
-      b.tipo || ''
+      b.cip,
+      b.outrosEncargos,
+      b.pis || '',
+      b.cofins || '',
+      b.icms || ''
     ]);
 
     // Use semicolon as delimiter for better compatibility with Excel in many locales (like Brazil)
@@ -3613,18 +3806,7 @@ export default function App() {
           <Logo className="h-12" />
           <div className="flex flex-wrap gap-3">
             {activeTab === 'faturas' && (
-              <button
-                onClick={handleSelectKey}
-                className={`flex items-center gap-2 px-6 py-3 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 ${
-                  hasApiKey 
-                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
-                    : 'bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5'
-                }`}
-                title={hasApiKey ? "Chave Paga Ativa. Clique para trocar." : "Chave Gratuita Ativa. Clique para usar uma chave paga."}
-              >
-                <Key size={16} />
-                {hasApiKey ? "Chave Paga Ativa" : "Chave Gratuita Ativa"}
-              </button>
+              <></>
             )}
             <button
               onClick={() => setCurrentPage('visao_geral')}
@@ -3661,6 +3843,23 @@ export default function App() {
                   <Plus size={16} />
                   Nova Fatura Manual
                 </button>
+                <button
+                  onClick={downloadExcelTemplate}
+                  className="flex items-center gap-2 px-6 py-3 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                >
+                  <Download size={16} />
+                  Baixar Modelo
+                </button>
+                <label className="flex items-center gap-2 px-6 py-3 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 cursor-pointer">
+                  <FileSpreadsheet size={16} />
+                  Importar Planilha
+                  <input 
+                    type="file" 
+                    accept=".xlsx, .xls" 
+                    className="hidden" 
+                    onChange={handleExcelImport} 
+                  />
+                </label>
                 <button
                   onClick={() => fileInputEnergisaRef.current?.click()}
                   className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
@@ -3924,6 +4123,28 @@ export default function App() {
                     >
                       Selecionar ELEKTRO
                     </button>
+                  </div>
+
+                  <div className="mt-8 flex flex-col sm:flex-row items-center gap-4 pt-8 border-t border-slate-200 w-full max-w-md">
+                    <p className="text-sm font-bold text-slate-500 w-full text-center sm:text-left">Ou preencha manualmente:</p>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); downloadExcelTemplate(); }}
+                      className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-emerald-100 transition-colors w-full sm:w-auto justify-center"
+                    >
+                      <Download size={16} />
+                      Baixar Modelo
+                    </button>
+                    <label className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-100 transition-colors cursor-pointer w-full sm:w-auto justify-center">
+                      <FileSpreadsheet size={16} />
+                      Importar Planilha
+                      <input 
+                        type="file" 
+                        accept=".xlsx, .xls" 
+                        className="hidden" 
+                        onChange={handleExcelImport} 
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </label>
                   </div>
                 </div>
                 
