@@ -137,6 +137,10 @@ interface BillData {
 
 // --- Constants ---
 
+const UCS_ACL_MERCADO_LIVRE = new Set([
+  "12030", "12031", "30723", "30724", "33836", "74312", "117383", "128413", "138553", "152443", "188105", "206447", "247300", "477410", "503164", "525348", "964549", "1097648", "1313470", "1409760", "1626524", "1717627", "1753181", "1755547", "1850184", "3141598", "3192611", "3209502", "3301031", "3315068", "3321872", "3390621", "3390665", "3408044", "3462151", "9000076", "9000079", "9000210", "9000211", "9000483", "9000941", "9000943", "9001396", "18256767", "18256830", "39038513", "41904974", "41905059"
+]);
+
 const EXCEL_COLUMNS = [
   { header: 'UC', key: 'uc' },
   { header: 'Concessionária', key: 'concessionaria' },
@@ -321,8 +325,8 @@ const ensureApiKey = async () => {
 const generateContentWithRetry = async (
   ai: GoogleGenAI,
   params: any,
-  retries = 3,
-  delay = 2000
+  retries = 5,
+  delay = 5000
 ): Promise<GenerateContentResponse> => {
   try {
     // Add a timeout of 120 seconds to the API call
@@ -388,6 +392,7 @@ const generateContentWithRetry = async (
     const isTimeout = errorStr.includes('TIMEOUT_API');
     const isLockError = errorStr.includes('Lock broken by another request');
     const isHardQuota = errorStr.includes('spending cap') || errorStr.includes('monthly limit');
+    const isRateLimit = errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
     const isExpired = errorStr.includes('API key expired') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('expired');
     const isInvalid = errorStr.includes('invalid API key') || errorStr.includes('invalid key') || (errorCode === 401 && errorStr.includes('invalid'));
     const isNotFound = errorStr.includes('Requested entity was not found') || errorStr.includes('API key not found');
@@ -399,18 +404,16 @@ const generateContentWithRetry = async (
       throw new Error(msg);
     }
 
-    if (retries > 0 && (isTransientError || isTimeout || isLockError) && !isHardQuota) {
-      console.warn(`${isTimeout ? 'Timeout' : isLockError ? 'Lock error' : 'Transient error (' + errorCode + ')'} hit, retrying in ${delay}ms... (${retries} retries left)`);
+    if (retries > 0 && (isTransientError || isTimeout || isLockError || isRateLimit) && !isHardQuota) {
+      console.warn(`${isTimeout ? 'Timeout' : isLockError ? 'Lock error' : isRateLimit ? 'Rate limit' : 'Transient error (' + errorCode + ')'} hit, retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return generateContentWithRetry(ai, params, retries - 1, delay * 2);
     }
     
     // If it's a quota error or we're out of retries, throw
-    if (isHardQuota || isTransientError) {
-      const isQuota = isHardQuota || errorCode === 429 || errorStatus === 'RESOURCE_EXHAUSTED' || errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
-      
-      if (isQuota) {
-        const msg = errorStr.includes('spending cap') 
+    if (isHardQuota || isRateLimit || isTransientError) {
+      if (isHardQuota || isRateLimit) {
+        const msg = isHardQuota 
           ? "O limite de gastos do seu projeto foi atingido. Verifique sua conta do Google Cloud (https://ai.google.dev/gemini-api/docs/billing)."
           : "Cota da API excedida ou limite de taxa atingido. Verifique seu plano e detalhes de faturamento no Google AI Studio (https://ai.google.dev/gemini-api/docs/billing). " + errorStr;
         const quotaError = new Error(msg);
@@ -505,7 +508,17 @@ const formatReference = (ref: string) => {
   return formatMonth(ref);
 };
 
-const mapDbToBillData = (dbBill: any): BillData => ({
+const mapDbToBillData = (dbBill: any): BillData => {
+  let mod = dbBill.modalidade_tarifaria || '';
+  let tipo = dbBill.tipo || '';
+  if (UCS_ACL_MERCADO_LIVRE.has(String(dbBill.uc))) {
+    tipo = 'ACL';
+    if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+      mod = mod ? `${mod} - LIVRE` : 'LIVRE';
+    }
+  }
+
+  return {
   id: dbBill.id,
   fileName: dbBill.file_name,
   uc: dbBill.uc || '',
@@ -548,13 +561,14 @@ const mapDbToBillData = (dbBill: any): BillData => ({
   icms: dbBill.icms || '',
   concessionaria: dbBill.concessionaria || '',
   numeroNotaFiscal: dbBill.numero_nota_fiscal || '',
-  modalidadeTarifaria: dbBill.modalidade_tarifaria || '',
+  modalidadeTarifaria: mod,
   subgrupo: dbBill.subgrupo || '',
-  tipo: dbBill.tipo || '',
+  tipo: tipo,
   status: dbBill.status as any,
   error: dbBill.error || undefined,
   createdAt: dbBill.created_at ? new Date(dbBill.created_at).getTime() : Date.now()
-});
+  };
+};
 
 const mapBillDataToDb = (bill: BillData, userId: string) => ({
   file_name: bill.fileName,
@@ -707,7 +721,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
   const totalSolarInjetada = filteredData.reduce((acc, curr) => acc + (curr.solarInjetadaOUC || 0) + (curr.solarInjetadaMUC || 0), 0);
   const emissoesEvitadas = totalSolarInjetada * 0.0426; // Fator médio do SIN
 
-  const monthlyData = useMemo(() => {
+  const getMonthlyData = (sourceData: any[], filterFn?: (d: any) => boolean) => {
     interface GroupedItem {
       name: string;
       month: number;
@@ -716,7 +730,9 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
       custo: number;
     }
 
-    const grouped = data.reduce((acc, curr) => {
+    const filtered = filterFn ? sourceData.filter(filterFn) : sourceData;
+
+    const grouped = filtered.reduce((acc, curr) => {
       const name = curr.name; // e.g. "Janeiro/2026"
       if (!acc[name]) {
         const [month, year] = name.split('/');
@@ -754,7 +770,9 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
         custo: item.custo
       };
     });
-  }, [data]);
+  };
+
+  const monthlyData = useMemo(() => getMonthlyData(data), [data]);
 
   const chartDomain = useMemo(() => {
     const maxConsumo = Math.max(...monthlyData.map(d => d.consumo), 0);
@@ -763,8 +781,11 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     return [0, Math.ceil(maxVal * 1.1)];
   }, [monthlyData]);
 
-  const sparklineDataAzul = monthlyData.map(m => ({ value: m.custo * 0.6 })); // Mock data for sparkline
-  const sparklineDataVerde = monthlyData.map(m => ({ value: m.custo * 0.4 })); // Mock data for sparkline
+  const monthlyDataAzul = useMemo(() => getMonthlyData(data, d => isGrupoA(d) && isACL(d) && isAzul(d)), [data]);
+  const monthlyDataVerde = useMemo(() => getMonthlyData(data, d => isGrupoA(d) && isACL(d) && isVerde(d)), [data]);
+
+  const sparklineDataAzul = monthlyDataAzul.map(m => ({ value: m.custo }));
+  const sparklineDataVerde = monthlyDataVerde.map(m => ({ value: m.custo }));
 
   const MetricRow = ({ icon: Icon, label, value, unit, isCurrency }: { icon: any, label: string, value: number, unit?: string, isCurrency?: boolean }) => (
     <div className="flex items-center justify-between border-b border-slate-100 pb-1 mb-2 group/row">
@@ -848,7 +869,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     );
   };
 
-  const SparklineCard = ({ title, data, color = "blue", sparklineData }: { title: string, data: any, color?: "blue" | "green", sparklineData: any[] }) => {
+  const SparklineCard = ({ title, data, color = "blue", sparklineData, fullMonthlyData }: { title: string, data: any, color?: "blue" | "green", sparklineData: any[], fullMonthlyData: any[] }) => {
     const colorHex = color === "blue" ? "#3b82f6" : "#10b981";
     const bgClass = color === "blue" ? "bg-blue-50" : "bg-emerald-50";
     const textClass = color === "blue" ? "text-blue-600" : "text-emerald-600";
@@ -857,8 +878,13 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     const hoverBorderClass = color === "blue" ? "hover:border-blue-200 hover:bg-blue-100/50" : "hover:border-emerald-200 hover:bg-emerald-100/50";
     const iconBgClass = color === "blue" ? "bg-blue-100" : "bg-emerald-100";
     
+    const maxConsumo = Math.max(...fullMonthlyData.map(d => d.consumo), 0);
+    const maxCusto = Math.max(...fullMonthlyData.map(d => d.custo), 0);
+    const maxVal = Math.max(maxConsumo, maxCusto);
+    const domain = [0, Math.ceil(maxVal * 1.1)];
+
     return (
-      <div className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex items-center justify-between mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-hidden shadow-sm`}>
+      <div className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex items-center justify-between mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-visible shadow-sm`}>
         <div className="absolute top-0 right-0 w-24 h-24 bg-white/50 rounded-full -translate-y-1/2 translate-x-1/2 opacity-40 group-hover:scale-110 transition-transform duration-500 blur-xl"></div>
         <div className="flex items-center gap-4 relative z-10">
           <div className={`w-10 h-10 rounded-xl ${iconBgClass} flex items-center justify-center shadow-sm border border-white group-hover:scale-110 transition-transform`}>
@@ -869,12 +895,83 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
             <p className={`text-lg font-bold ${valueTextClass}`}>R$ {formatNumber(data.custo, true)}</p>
           </div>
         </div>
-        <div className="w-24 h-12 opacity-80 relative z-10 group-hover:opacity-100 transition-opacity">
+        <div className="w-24 h-12 opacity-80 relative z-10 group-hover:opacity-10 transition-opacity">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={sparklineData}>
               <Line type="monotone" dataKey="value" stroke={colorHex} strokeWidth={2.5} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+
+        {/* Hover Chart */}
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-[450px] bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center gap-3">
+              <div className={`w-2 h-8 rounded-full ${color === 'blue' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-widest">{title}</h4>
+                <p className="text-[10px] text-slate-500 font-medium mt-0.5">Evolução Mensal</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#0ea5e9]"></div>
+                <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Consumo</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#6366f1]"></div>
+                <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Custo</span>
+              </div>
+            </div>
+          </div>
+          <div className="h-[200px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={fullMonthlyData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id={`colorConsumo-${color}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id={`colorCusto-${color}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={true} stroke="#e2e8f0" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} dy={10} />
+                <YAxis 
+                  yAxisId="left" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} 
+                  dx={-10} 
+                  tickFormatter={(val) => formatNumber(val, false, 0)}
+                  domain={domain}
+                />
+                <YAxis 
+                  yAxisId="right" 
+                  orientation="right" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} 
+                  dx={10} 
+                  tickFormatter={(val) => `R$ ${formatNumber(val, true, 0)}`}
+                  domain={domain}
+                />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)', padding: '12px 16px' }}
+                  itemStyle={{ fontSize: '12px', fontWeight: 600, padding: '4px 0' }}
+                  labelStyle={{ fontSize: '11px', fontWeight: 700, color: '#64748b', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+                  formatter={(value: number, name: string) => [
+                    name === 'custo' ? `R$ ${formatNumber(value, true)}` : `${formatNumber(value, false)} kWh`,
+                    name === 'custo' ? 'Custo' : 'Consumo'
+                  ]}
+                />
+                <Area yAxisId="left" type="monotone" dataKey="consumo" stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill={`url(#colorConsumo-${color})`} activeDot={{ r: 6, strokeWidth: 0, fill: '#0ea5e9' }} />
+                <Area yAxisId="right" type="monotone" dataKey="custo" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill={`url(#colorCusto-${color})`} activeDot={{ r: 6, strokeWidth: 0, fill: '#6366f1' }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
     );
@@ -892,6 +989,14 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
           >
             <LayoutDashboard size={16} />
             Acessar Sistema
+          </button>
+          <button
+            onClick={handleSelectKey}
+            className={`flex items-center gap-2 px-4 py-2 ${hasApiKey ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'} border hover:opacity-80 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95`}
+            title={hasApiKey ? "Trocar Chave de API" : "Selecionar Chave de API"}
+          >
+            <Key size={16} />
+            {hasApiKey ? "Trocar Conta" : "Configurar API"}
           </button>
           <button
             onClick={handleLogout}
@@ -1052,8 +1157,10 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
             
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
               {/* ACL Card */}
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
-                <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative group hover:shadow-xl transition-all duration-500">
+                <div className="absolute inset-0 overflow-hidden rounded-[2rem] pointer-events-none">
+                  <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+                </div>
                 
                 <div className="flex justify-between items-center mb-8 relative z-10">
                   <div className="flex items-center gap-5">
@@ -1080,15 +1187,17 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
                     <DetailCard title="Faturas Verde" data={aclVerde} color="green" icon={Zap} />
                   </div>
                   <div className="grid grid-cols-2 gap-6">
-                    <SparklineCard title="Evolução Azul" data={aclAzul} color="blue" sparklineData={sparklineDataAzul} />
-                    <SparklineCard title="Evolução Verde" data={aclVerde} color="green" sparklineData={sparklineDataVerde} />
+                    <SparklineCard title="Evolução Azul" data={aclAzul} color="blue" sparklineData={sparklineDataAzul} fullMonthlyData={monthlyDataAzul} />
+                    <SparklineCard title="Evolução Verde" data={aclVerde} color="green" sparklineData={sparklineDataVerde} fullMonthlyData={monthlyDataVerde} />
                   </div>
                 </div>
               </div>
 
               {/* Cativo Card */}
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
-                <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-slate-100 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative group hover:shadow-xl transition-all duration-500">
+                <div className="absolute inset-0 overflow-hidden rounded-[2rem] pointer-events-none">
+                  <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-slate-100 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
+                </div>
                 
                 <div className="flex justify-between items-center mb-8 relative z-10">
                   <div className="flex items-center gap-5">
@@ -1417,9 +1526,20 @@ export default function App() {
           
           // Apply fixes to data from Supabase
           let hasChanges = false;
-          const updatedBills = mappedBills.map(b => {
+          const updatedBills = mappedBills.map((b, i) => {
             let updatedBill = { ...b };
             let changed = false;
+
+            const dbBill = allData[i];
+            if (UCS_ACL_MERCADO_LIVRE.has(String(b.uc))) {
+              let expectedMod = dbBill.modalidade_tarifaria || '';
+              if (!expectedMod.toUpperCase().includes('LIVRE') && !expectedMod.toUpperCase().includes('ACL')) {
+                expectedMod = expectedMod ? `${expectedMod} - LIVRE` : 'LIVRE';
+              }
+              if (dbBill.modalidade_tarifaria !== expectedMod || dbBill.tipo !== 'ACL') {
+                changed = true;
+              }
+            }
 
             // Fix Elektro UC
             const isElektro = (b.concessionaria || '').toUpperCase().includes('ELEKTRO');
@@ -1462,7 +1582,9 @@ export default function App() {
             const changedBills = updatedBills.filter((b, i) => 
               b.uc !== mappedBills[i].uc || 
               b.mesReferencia !== mappedBills[i].mesReferencia || 
-              b.anoLeitura !== mappedBills[i].anoLeitura
+              b.anoLeitura !== mappedBills[i].anoLeitura ||
+              b.modalidadeTarifaria !== (allData[i].modalidade_tarifaria || '') ||
+              b.tipo !== (allData[i].tipo || '')
             );
             for (const billToSave of changedBills) {
               try {
@@ -2000,7 +2122,7 @@ export default function App() {
       [fileId]: { status: `Lendo ${statusPrefix}...`, percent: 0, fileName: file.name, fileSize: file.size, abortController }
     }));
     
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || '';
+    const apiKey = (typeof process !== 'undefined' ? (process.env.GEMINI_API_KEY || process.env.API_KEY) : '') || import.meta.env.VITE_GEMINI_API_KEY || '';
     const ai = new GoogleGenAI({ apiKey });
 
     try {
@@ -2206,6 +2328,15 @@ export default function App() {
           });
 
           return billData as BillData;
+        }).map(bill => {
+          if (bill.uc && UCS_ACL_MERCADO_LIVRE.has(String(bill.uc))) {
+            let mod = bill.modalidadeTarifaria || '';
+            if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+              bill.modalidadeTarifaria = mod ? `${mod} - LIVRE` : 'LIVRE';
+            }
+            bill.tipo = 'ACL';
+          }
+          return bill;
         });
 
         if (isSupabaseConfigured && isAuthenticated) {
@@ -2706,8 +2837,8 @@ export default function App() {
     }
   };
 
-  const processFile = async (bill: BillData & { file: File }, retryCount = 0) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? (process.env.API_KEY || process.env.GEMINI_API_KEY) : '') || '';
+  const processFile = async (bill: BillData & { file: File }, retryCount = 0, currentUser: any = null) => {
+    const apiKey = (typeof process !== 'undefined' ? (process.env.GEMINI_API_KEY || process.env.API_KEY) : '') || import.meta.env.VITE_GEMINI_API_KEY || '';
     const ai = new GoogleGenAI({ apiKey });
     
     try {
@@ -2715,19 +2846,7 @@ export default function App() {
         throw new Error('Arquivo não encontrado na memória. Por favor, remova esta fatura e faça o upload novamente.');
       }
 
-      let user = null;
-      if (isSupabaseConfigured) {
-        try {
-          const { data: { user: supabaseUser } } = await supabase.auth.getUser();
-          user = supabaseUser;
-        } catch (authError: any) {
-          console.warn('Erro ao obter usuário no processamento:', authError);
-          if (authError.message?.includes('Refresh Token Not Found')) {
-            supabase.auth.signOut();
-            setIsAuthenticated(false);
-          }
-        }
-      }
+      let user = currentUser;
 
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve, reject) => {
@@ -2896,6 +3015,14 @@ export default function App() {
         finalError = 'Fatura repetida (Já salva no banco de dados)';
       }
 
+      if (result.uc && UCS_ACL_MERCADO_LIVRE.has(String(result.uc))) {
+        let mod = result.modalidadeTarifaria || '';
+        if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+          result.modalidadeTarifaria = mod ? `${mod} - LIVRE` : 'LIVRE';
+        }
+        result.tipo = 'ACL';
+      }
+
       const updatedBill: BillData = {
         ...bill,
         ...result,
@@ -2990,7 +3117,7 @@ export default function App() {
           } : b));
 
           await new Promise(resolve => setTimeout(resolve, delay));
-          return await processFile(bill, retryCount + 1);
+          return await processFile(bill, retryCount + 1, currentUser);
         } else {
           console.error(`[Worker] Falha após ${retryCount} tentativas para ${bill.fileName} devido a ${isLockError ? 'erro de trava' : 'limite de taxa'}.`);
         }
@@ -3013,14 +3140,31 @@ export default function App() {
     setIsProcessing(true);
     isProcessingRef.current = true;
 
-    // Worker pool approach to maintain concurrency limited to 1 to avoid freezing and rate limits
+    let currentUser = null;
+    if (isSupabaseConfigured) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        currentUser = user;
+      } catch (authError: any) {
+        console.warn('Erro ao obter usuário no início do processamento:', authError);
+        if (authError.message?.includes('Refresh Token Not Found')) {
+          supabase.auth.signOut();
+          setIsAuthenticated(false);
+          setIsProcessing(false);
+          isProcessingRef.current = false;
+          return;
+        }
+      }
+    }
+
+    // Worker pool approach to maintain concurrency limited to 10 for faster processing
     const queue = [...pendingBills];
-    const maxConcurrency = 2;
+    const maxConcurrency = 10;
     const initialWorkers = Math.min(maxConcurrency, queue.length);
 
     const runWorker = async (workerId: number) => {
       // Add a small staggered start for workers to avoid simultaneous requests
-      await new Promise(resolve => setTimeout(resolve, workerId * 1000));
+      await new Promise(resolve => setTimeout(resolve, workerId * 500));
       
       while (queue.length > 0 && isProcessingRef.current) {
         const bill = queue.shift();
@@ -3032,16 +3176,17 @@ export default function App() {
         
         try {
           console.log(`[Worker ${workerId}] Iniciando processamento de: ${bill.fileName} (Restam: ${queue.length})`);
-          await processFile({ ...bill, abortController } as any);
+          await processFile({ ...bill, abortController } as any, 0, currentUser);
           console.log(`[Worker ${workerId}] Concluído processamento de: ${bill.fileName}`);
           
-          // Add a 5s delay to stay within the 15 RPM free tier limit
+          // Add a 1s delay to avoid overwhelming the API
           if (queue.length > 0 && isProcessingRef.current) {
-            console.log(`[Worker ${workerId}] Aguardando 5s para respeitar o limite da cota gratuita...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            console.log(`[Worker ${workerId}] Aguardando 1s para o próximo arquivo...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error(`[Worker ${workerId}] Erro crítico no processamento de ${bill.fileName}:`, error);
+          setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: 'error', error: error.message || 'Erro crítico' } : b));
         }
       }
     };
@@ -3814,6 +3959,14 @@ export default function App() {
             >
               <ArrowLeft size={16} />
               Voltar para Visão Geral
+            </button>
+            <button
+              onClick={handleSelectKey}
+              className={`flex items-center gap-2 px-4 py-3 ${hasApiKey ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'} border hover:opacity-80 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95`}
+              title={hasApiKey ? "Trocar Chave de API" : "Selecionar Chave de API"}
+            >
+              <Key size={16} />
+              {hasApiKey ? "Trocar Conta" : "Configurar API"}
             </button>
             <button
               onClick={handleLogout}
@@ -6837,6 +6990,9 @@ export default function App() {
             <div className="p-6 overflow-y-auto flex-1">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {/* Basic Info */}
+                <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-2 mb-1">
+                  <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Informações Básicas</h3>
+                </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">UC</label>
                   <input
@@ -6858,16 +7014,60 @@ export default function App() {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Mês/Ano</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="MM/AAAA"
-                      value={editingBill.mesReferencia || ''}
-                      onChange={e => setEditingBill({ ...editingBill, mesReferencia: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
-                    />
-                  </div>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Cidade</label>
+                  <input
+                    type="text"
+                    value={editingBill.cidade || ''}
+                    onChange={e => setEditingBill({ ...editingBill, cidade: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Mês Referência</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Janeiro"
+                    value={editingBill.mesReferencia || ''}
+                    onChange={e => setEditingBill({ ...editingBill, mesReferencia: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Ano Leitura</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: 2024"
+                    value={editingBill.anoLeitura || ''}
+                    onChange={e => setEditingBill({ ...editingBill, anoLeitura: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Nota Fiscal</label>
+                  <input
+                    type="text"
+                    value={editingBill.numeroNotaFiscal || ''}
+                    onChange={e => setEditingBill({ ...editingBill, numeroNotaFiscal: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Modalidade Tarifária</label>
+                  <input
+                    type="text"
+                    value={editingBill.modalidadeTarifaria || ''}
+                    onChange={e => setEditingBill({ ...editingBill, modalidadeTarifaria: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Subgrupo</label>
+                  <input
+                    type="text"
+                    value={editingBill.subgrupo || ''}
+                    onChange={e => setEditingBill({ ...editingBill, subgrupo: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Tipo</label>
@@ -6878,6 +7078,7 @@ export default function App() {
                   >
                     <option value="OPERACIONAL">OPERACIONAL</option>
                     <option value="ADMINISTRATIVO">ADMINISTRATIVO</option>
+                    <option value="ACL">ACL</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -6891,8 +7092,11 @@ export default function App() {
                 </div>
                 
                 {/* Demanda */}
+                <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
+                  <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Demanda</h3>
+                </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Contratada P (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Contratada Ponta (kW)</label>
                   <input
                     type="text"
                     value={editingBill.demandaPontaKW || ''}
@@ -6901,7 +7105,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Contratada FP (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Contratada Fora Ponta (kW)</label>
                   <input
                     type="text"
                     value={editingBill.demandaForaPontaKW || ''}
@@ -6910,7 +7114,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Medida P (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Medida Ponta (kW)</label>
                   <input
                     type="text"
                     value={editingBill.demandaPotenciaMedidaPonta || ''}
@@ -6919,7 +7123,16 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Demanda Medida FP (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Medida Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorDemandaPotenciaMedidaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorDemandaPotenciaMedidaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Medida Fora Ponta (kW)</label>
                   <input
                     type="text"
                     value={editingBill.demandaPotenciaMedidaForaPonta || ''}
@@ -6927,14 +7140,107 @@ export default function App() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Medida Fora Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorDemandaPotenciaMedidaForaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorDemandaPotenciaMedidaForaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Não Consumida Ponta (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaNaoConsumidaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaNaoConsumidaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Não Consumida Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorDemandaPotenciaNaoConsumidaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorDemandaPotenciaNaoConsumidaPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Não Consumida Fora Ponta (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaNaoConsumidaFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaNaoConsumidaFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Não Consumida Fora Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorDemandaPotenciaNaoConsumidaFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorDemandaPotenciaNaoConsumidaFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Ultrapassagem Ponta (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaAtivaUltrapPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaAtivaUltrapPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Ultrapassagem Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorDemandaPotenciaAtivaUltrapPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorDemandaPotenciaAtivaUltrapPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Ultrapassagem Fora Ponta (kW)</label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaPotenciaAtivaUltrapFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaAtivaUltrapFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Ultrapassagem Fora Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorDemandaPotenciaAtivaUltrapFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorDemandaPotenciaAtivaUltrapFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
 
                 {/* Consumo */}
+                <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
+                  <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Consumo</h3>
+                </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Consumo Ponta (kWh)</label>
                   <input
                     type="text"
                     value={editingBill.consumoKwhPonta || ''}
                     onChange={e => setEditingBill({ ...editingBill, consumoKwhPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Consumo Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorConsumoKwhPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorConsumoKwhPonta: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
@@ -6947,30 +7253,22 @@ export default function App() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
-
-                {/* Ultrapassagem */}
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Ultrapassagem P (kW)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Consumo Fora Ponta (R$)</label>
                   <input
                     type="text"
-                    value={editingBill.demandaPotenciaAtivaUltrapPonta || ''}
-                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaAtivaUltrapPonta: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Ultrapassagem FP (kW)</label>
-                  <input
-                    type="text"
-                    value={editingBill.demandaPotenciaAtivaUltrapFPonta || ''}
-                    onChange={e => setEditingBill({ ...editingBill, demandaPotenciaAtivaUltrapFPonta: e.target.value })}
+                    value={editingBill.valorConsumoKwhForaPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorConsumoKwhForaPonta: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
 
                 {/* Reativa */}
+                <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
+                  <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Energia Reativa</h3>
+                </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Reativa P (kVArh)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Reativa Ponta (kVArh)</label>
                   <input
                     type="text"
                     value={editingBill.energiaReativaExcedPonta || ''}
@@ -6979,7 +7277,16 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Reativa FP (kVArh)</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Reativa Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorEnergiaReativaExcedPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorEnergiaReativaExcedPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Reativa Fora Ponta (kVArh)</label>
                   <input
                     type="text"
                     value={editingBill.energiaReativaExcedFPonta || ''}
@@ -6987,8 +7294,79 @@ export default function App() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor Reativa Fora Ponta (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorEnergiaReativaExcedFPonta || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorEnergiaReativaExcedFPonta: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
 
-                {/* Encargos */}
+                {/* Geração Distribuída */}
+                <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
+                  <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Geração Distribuída</h3>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Energia Injetada (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaInjetadaKwh || ''}
+                    onChange={e => setEditingBill({ ...editingBill, energiaInjetadaKwh: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Energia Compensada (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaCompensadaKwh || ''}
+                    onChange={e => setEditingBill({ ...editingBill, energiaCompensadaKwh: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">GDI oUC (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaAtvInjetadaGDIOUC || ''}
+                    onChange={e => setEditingBill({ ...editingBill, energiaAtvInjetadaGDIOUC: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor GDI oUC (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorEnergiaAtvInjetadaGDIOUC || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorEnergiaAtvInjetadaGDIOUC: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">GDI mUC (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaAtvInjetadaGDIMUC || ''}
+                    onChange={e => setEditingBill({ ...editingBill, energiaAtvInjetadaGDIMUC: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Valor GDI mUC (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.valorEnergiaAtvInjetadaGDIMUC || ''}
+                    onChange={e => setEditingBill({ ...editingBill, valorEnergiaAtvInjetadaGDIMUC: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+
+                {/* Encargos e Impostos */}
+                <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
+                  <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Encargos e Impostos</h3>
+                </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">CIP (R$)</label>
                   <input
@@ -7007,6 +7385,33 @@ export default function App() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">PIS (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.pis || ''}
+                    onChange={e => setEditingBill({ ...editingBill, pis: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">COFINS (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.cofins || ''}
+                    onChange={e => setEditingBill({ ...editingBill, cofins: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">ICMS (R$)</label>
+                  <input
+                    type="text"
+                    value={editingBill.icms || ''}
+                    onChange={e => setEditingBill({ ...editingBill, icms: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
               </div>
             </div>
             <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
@@ -7018,7 +7423,14 @@ export default function App() {
               </button>
               <button
                 onClick={async () => {
-                  const billToSave = editingBill as BillData;
+                  let billToSave = { ...editingBill } as BillData;
+                  if (billToSave.uc && UCS_ACL_MERCADO_LIVRE.has(String(billToSave.uc))) {
+                    let mod = billToSave.modalidadeTarifaria || '';
+                    if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+                      billToSave.modalidadeTarifaria = mod ? `${mod} - LIVRE` : 'LIVRE';
+                    }
+                    billToSave.tipo = 'ACL';
+                  }
                   const isExisting = bills.some(b => b.id === billToSave.id);
                   
                   if (isSupabaseConfigured && isAuthenticated) {
