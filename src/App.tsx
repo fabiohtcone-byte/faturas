@@ -127,6 +127,7 @@ interface BillData {
   modalidadeTarifaria?: string;
   subgrupo?: string;
   tipo?: string;
+  dataVencimento?: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   error?: string;
   file?: File;
@@ -147,6 +148,7 @@ const EXCEL_COLUMNS = [
   { header: 'Cidade', key: 'cidade' },
   { header: 'Mês Referência', key: 'mesReferencia' },
   { header: 'Ano Leitura', key: 'anoLeitura' },
+  { header: 'Vencimento', key: 'dataVencimento' },
   { header: 'Nota Fiscal', key: 'numeroNotaFiscal' },
   { header: 'Modalidade Tarifária', key: 'modalidadeTarifaria' },
   { header: 'Subgrupo', key: 'subgrupo' },
@@ -229,6 +231,7 @@ const EXTRACTION_SCHEMA = {
     icms: { type: Type.STRING, description: "Valor em R$ do ICMS." },
     concessionaria: { type: Type.STRING, description: "Nome da empresa concessionária (ex: ENERGISA, ELEKTRO, CPFL)." },
     numeroNotaFiscal: { type: Type.STRING, description: "Número da Nota Fiscal ou Número da Fatura." },
+    dataVencimento: { type: Type.STRING, description: "Data de vencimento da fatura (ex: 15/08/2025)." },
     modalidadeTarifaria: { type: Type.STRING, description: "Modalidade Tarifária (ex: AZUL, VERDE, BRANCA, CONVENCIONAL)." },
     subgrupo: { type: Type.STRING, description: "Subgrupo tarifário (ex: A4, B1, B3)." }
   },
@@ -301,12 +304,29 @@ const Logo = ({ className = "h-10", showText = true, isLogin = false }: { classN
 };
 
 const deduplicateBills = (bills: BillData[]) => {
-  const seen = new Set();
-  return bills.filter(bill => {
-    if (!bill.id || seen.has(bill.id)) return false;
-    seen.add(bill.id);
-    return true;
-  });
+  const seenIds = new Set();
+  const uniqueBills = [];
+  const seenKeys = new Set();
+
+  // Iterate backwards to keep the latest processed bill for a given UC + Mes + Ano
+  for (let i = bills.length - 1; i >= 0; i--) {
+    const bill = bills[i];
+    if (!bill.id || seenIds.has(bill.id)) continue;
+    
+    // Deduplicate completed bills based on content
+    if (bill.status === 'completed' && bill.uc && bill.mesReferencia && bill.anoLeitura) {
+      const key = `${bill.uc}-${bill.mesReferencia}-${bill.anoLeitura}`;
+      if (seenKeys.has(key)) {
+        continue; // Skip older duplicate
+      }
+      seenKeys.add(key);
+    }
+    
+    seenIds.add(bill.id);
+    uniqueBills.unshift(bill); // Add to front to maintain original order
+  }
+  
+  return uniqueBills;
 };
 
 const ensureApiKey = async () => {
@@ -564,6 +584,7 @@ const mapDbToBillData = (dbBill: any): BillData => {
   modalidadeTarifaria: mod,
   subgrupo: dbBill.subgrupo || '',
   tipo: tipo,
+  dataVencimento: dbBill.data_vencimento || '',
   status: dbBill.status as any,
   error: dbBill.error || undefined,
   createdAt: dbBill.created_at ? new Date(dbBill.created_at).getTime() : Date.now()
@@ -615,6 +636,7 @@ const mapBillDataToDb = (bill: BillData, userId: string) => ({
   modalidade_tarifaria: bill.modalidadeTarifaria || '',
   subgrupo: bill.subgrupo || '',
   tipo: bill.tipo || '',
+  data_vencimento: bill.dataVencimento || '',
   status: bill.status,
   error: bill.error || null,
   user_id: userId
@@ -2389,6 +2411,7 @@ export default function App() {
               modalidade_tarifaria: bill.modalidadeTarifaria || '',
               subgrupo: bill.subgrupo || '',
               tipo: bill.tipo || 'normal',
+              data_vencimento: bill.dataVencimento || '',
               status: bill.status,
               created_at: new Date(bill.createdAt || Date.now()).toISOString()
             }));
@@ -2486,6 +2509,7 @@ export default function App() {
       }
 
       return {
+        fileName: b.fileName,
         mes: b.mesReferencia || 'N/A',
         ano: b.anoLeitura || '',
         uc: b.uc || 'N/A',
@@ -2588,6 +2612,7 @@ export default function App() {
       const subForaPonta = dmfp < dcfp ? dcfp - dmfp : 0;
 
       return [{
+        fileName: row.fileName,
         mes,
         ano,
         uc,
@@ -2967,7 +2992,7 @@ export default function App() {
         }
 
       // --- CHECK FOR DUPLICATES IN DB AFTER EXTRACTION ---
-      let isDuplicateInDb = false;
+      let existingDbId: string | null = null;
 
       if (isSupabaseConfigured && user && result.uc && result.mesReferencia && result.anoLeitura) {
         try {
@@ -2980,7 +3005,7 @@ export default function App() {
             .limit(1);
           
           if (!dbCheckError && existingData && existingData.length > 0) {
-            isDuplicateInDb = true;
+            existingDbId = existingData[0].id;
           }
         } catch (dbCheckErr) {
           console.warn('Erro ao verificar duplicatas no banco de dados:', dbCheckErr);
@@ -3010,9 +3035,7 @@ export default function App() {
       });
 
       if (isDuplicateInCurrentList) {
-        finalError = 'Fatura repetida (Duplicada na lista atual)';
-      } else if (isDuplicateInDb) {
-        finalError = 'Fatura repetida (Já salva no banco de dados)';
+        // We allow duplicates to proceed to update the DB and list
       }
 
       if (result.uc && UCS_ACL_MERCADO_LIVRE.has(String(result.uc))) {
@@ -3030,18 +3053,36 @@ export default function App() {
         error: finalError
       };
 
-      if (isSupabaseConfigured && user && !isDuplicateInDb && !isDuplicateInCurrentList) {
+      if (isSupabaseConfigured && user) {
         const dbData = mapBillDataToDb(updatedBill, user.id);
-        const { error: insertError } = await supabase
-          .from('bills')
-          .insert(dbData);
-          
-        if (insertError) {
-          console.error('Erro ao salvar fatura no Supabase:', insertError);
+        
+        if (existingDbId) {
+          // Delete existing record and insert new one to "give place" to the new one
+          await supabase
+            .from('bills')
+            .delete()
+            .eq('id', existingDbId);
+            
+          const { error: insertError } = await supabase
+            .from('bills')
+            .insert(dbData);
+            
+          if (insertError) {
+            console.error('Erro ao substituir fatura no Supabase:', insertError);
+          }
+        } else if (!isDuplicateInCurrentList) {
+          // Insert new record
+          const { error: insertError } = await supabase
+            .from('bills')
+            .insert(dbData);
+            
+          if (insertError) {
+            console.error('Erro ao salvar fatura no Supabase:', insertError);
+          }
         }
       }
       
-      setBills(prev => prev.map(b => b.id === bill.id ? { ...updatedBill, progress: 100 } : b));
+      setBills(prev => deduplicateBills(prev.map(b => b.id === bill.id ? { ...updatedBill, progress: 100 } : b)));
 
     } catch (error: any) {
       if (error.message === 'Upload cancelado') {
@@ -3293,83 +3334,11 @@ export default function App() {
     setSelectedBills(prev => prev.filter(id => !first223Ids.includes(id)));
   };
 
-  const removeDuplicateUCs = async () => {
-    // Se estiver em "Todas as Referências", limpamos duplicados considerando UC + Mês + Ano em todo o sistema
-    // Se estiver em uma referência específica, limpamos apenas naquela referência
-    
-    const billsToProcess = filterReference === 'all' 
-      ? bills 
-      : bills.filter(b => `${String(b.mesReferencia || '').trim()}/${String(b.anoLeitura || '').trim()}` === filterReference.trim());
-
-    const ucMap = new Map<string, BillData[]>();
-
-    billsToProcess.forEach(bill => {
-      const normalizedUC = String(bill.uc || '').trim();
-      const month = String(bill.mesReferencia || '').trim();
-      const year = String(bill.anoLeitura || '').trim();
-      
-      if (normalizedUC && normalizedUC !== '---' && month && year) {
-        // A chave da duplicata é a combinação única de UC + Mês + Ano
-        const key = `${normalizedUC}_${month}_${year}`;
-        const list = ucMap.get(key) || [];
-        list.push(bill);
-        ucMap.set(key, list);
-      }
-    });
-
-    const idsToDelete: string[] = [];
-    const duplicateKeys: string[] = [];
-
-    ucMap.forEach((billsList, key) => {
-      if (billsList.length > 1) {
-        duplicateKeys.push(key);
-        // Prioridade: manter a que está 'completed' (processada), senão a primeira encontrada
-        // Isso garante que se houver 2, 3 ou mais, sempre sobrará apenas 1
-        const bestToKeep = billsList.find(b => b.status === 'completed') || billsList[0];
-        billsList.forEach(b => {
-          if (b.id !== bestToKeep.id) {
-            idsToDelete.push(b.id);
-          }
-        });
-      }
-    });
-
-    if (idsToDelete.length === 0) {
-      showAlert(
-        'Limpeza de Duplicados',
-        filterReference === 'all' 
-          ? 'Nenhuma fatura duplicada encontrada em todo o sistema.' 
-          : 'Nenhuma fatura duplicada encontrada para esta referência.'
-      );
-      return;
-    }
-
-    const confirmMsg = `Foram encontradas duplicatas para ${duplicateKeys.length} combinações de UC/Mês/Ano.\n\nNo total, ${idsToDelete.length} faturas repetidas serão excluídas, deixando sempre apenas uma de cada. Deseja continuar?`;
-    
-    showConfirm(
-      'Confirmar Exclusão',
-      confirmMsg,
-      async () => {
-        if (isSupabaseConfigured && isAuthenticated) {
-          try {
-            const { error } = await supabase.from('bills').delete().in('id', idsToDelete);
-            if (error) console.error('Erro ao deletar duplicados do Supabase:', error);
-          } catch (err) {
-            console.error('Erro inesperado ao deletar duplicados:', err);
-          }
-        }
-        setBills(prev => prev.filter(b => !idsToDelete.includes(b.id)));
-        setSelectedBills(prev => prev.filter(id => !idsToDelete.includes(id)));
-      },
-      'danger'
-    );
-  };
-
   const exportAnalysisToCSV = () => {
     if (!analysisResults || analysisResults.length === 0) return;
 
     const headers = [
-      "UC", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
+      "Nome do Arquivo", "UC", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
       "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Gasto Real (R$)", "Economia (R$)", "Status",
       "Grupo Tarifário", "Tarifa Branca", "Optante B"
     ];
@@ -3385,6 +3354,7 @@ export default function App() {
       const optanteB = "N/A"; // Need to determine how to identify this
 
       return [
+        r.fileName,
         r.uc, r.ano, r.mes, r.dmp, r.dmfp,
         r.optimizedPonta, r.optimizedForaPonta, 
         String((r.currentTotal || 0).toFixed(2)).replace('.', ','),
@@ -3424,11 +3394,13 @@ export default function App() {
     }
 
     const headers = [
+      "Nome do Arquivo",
       "UC",
       "Concessionária",
       "Cidade",
       "Mês Referência",
       "Ano Leitura",
+      "Vencimento",
       "Nota Fiscal",
       "Modalidade Tarifária",
       "Subgrupo",
@@ -3481,6 +3453,7 @@ export default function App() {
     };
 
     const rows = completedBills.map(b => [
+      b.fileName,
       b.uc,
       b.concessionaria 
         ? (b.concessionaria.toUpperCase().includes('ENERGISA') 
@@ -3492,6 +3465,7 @@ export default function App() {
       b.cidade,
       b.mesReferencia,
       b.anoLeitura,
+      b.dataVencimento || '',
       b.numeroNotaFiscal || '',
       b.modalidadeTarifaria || '',
       b.subgrupo || '',
@@ -4091,16 +4065,6 @@ export default function App() {
             )}
             {bills.length > 0 && activeTab === 'faturas' && (
               <button
-                onClick={removeDuplicateUCs}
-                className="flex items-center gap-2 px-6 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                title="Remove faturas duplicadas (mesma UC) para a referência selecionada"
-              >
-                <Trash2 size={16} />
-                Remover Duplicados
-              </button>
-            )}
-            {bills.length > 0 && activeTab === 'faturas' && (
-              <button
                 onClick={() => setSelectedBills(bills.filter(b => b.status === 'error' || b.status === 'pending').map(b => b.id))}
                 className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
               >
@@ -4370,6 +4334,7 @@ export default function App() {
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('uc')}>UC</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('concessionaria')}>Concessionária</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('referencia')}>Referência</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('dataVencimento')}>Vencimento</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Medida</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Contratada</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
@@ -4422,14 +4387,6 @@ export default function App() {
                             <td className="px-4 py-3">
                               <div className="flex flex-col">
                                 <span className="text-xs font-mono font-bold text-sanesul-primary">{bill.uc || '---'}</span>
-                                {bill.uc && bills.filter(b => 
-                                  String(b.uc).trim() === String(bill.uc).trim() && 
-                                  `${formatMonth(b.mesReferencia)}/${String(b.anoLeitura).trim()}` === `${formatMonth(bill.mesReferencia)}/${String(bill.anoLeitura).trim()}`
-                                ).length > 1 && (
-                                  <span className="text-[9px] text-red-500 font-bold flex items-center gap-1 mt-1">
-                                    <AlertCircle size={10} /> DUPLICADA
-                                  </span>
-                                )}
                               </div>
                             </td>
                             <td className="px-4 py-3">
@@ -4446,6 +4403,11 @@ export default function App() {
                             <td className="px-4 py-3">
                               <span className="text-xs text-slate-600">
                                 {bill.mesReferencia && bill.anoLeitura ? `${formatMonth(bill.mesReferencia)}/${bill.anoLeitura}` : '---'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="text-xs text-slate-600">
+                                {bill.dataVencimento || '---'}
                               </span>
                             </td>
                             <td className="px-4 py-3">
@@ -7039,6 +7001,16 @@ export default function App() {
                     placeholder="Ex: 2024"
                     value={editingBill.anoLeitura || ''}
                     onChange={e => setEditingBill({ ...editingBill, anoLeitura: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Data de Vencimento</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: 15/08/2025"
+                    value={editingBill.dataVencimento || ''}
+                    onChange={e => setEditingBill({ ...editingBill, dataVencimento: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
