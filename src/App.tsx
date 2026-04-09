@@ -127,6 +127,7 @@ interface BillData {
   modalidadeTarifaria?: string;
   subgrupo?: string;
   tipo?: string;
+  mercado?: string;
   dataVencimento?: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   error?: string;
@@ -138,12 +139,30 @@ interface BillData {
 
 // --- Constants ---
 
-const UCS_ACL_MERCADO_LIVRE = new Set([
-  "12030", "12031", "30723", "30724", "33836", "74312", "117383", "128413", "138553", "152443", "188105", "206447", "247300", "477410", "503164", "525348", "964549", "1097648", "1313470", "1409760", "1626524", "1717627", "1753181", "1755547", "1850184", "3141598", "3192611", "3209502", "3301031", "3315068", "3321872", "3390621", "3390665", "3408044", "3462151", "9000076", "9000079", "9000210", "9000211", "9000483", "9000941", "9000943", "9001396", "18256767", "18256830", "39038513", "41904974", "41905059"
+const UCS_LIVRE_MERCADO_LIVRE = new Set([
+  "33836", "74312", "117383", "128413", "138553", "152443", "188105", "206447", "247300", "477410", 
+  "503164", "525348", "964549", "1097648", "1313470", "1409760", "1626524", "1717627", "1753181", "1755547", 
+  "1850184", "3141598", "3192611", "3209502", "3301031", "3315068", "3321872", "3390621", "3390665", "3408044", 
+  "3462151", "9000076", "9000079", "9000210", "9000211", "9000483", "9000941", "9000943", "9001396", "12030", 
+  "12031", "30723", "30724", "39038513", "41904974", "41905059", "18256767", "18256830"
+]);
+
+const UCS_OPER = new Set([
+  "1069", "12010", "12018", "12030", "12031", "30723", "30724", "33836", "34548", "34724", "36245", "36246", "36247", "74245", "74246", "74255", "74256", "74262", "74265", "74304", "74305", "74307", "74310", "74312", "74313", "79418", "83685", "94005", "94006", "94009", "94018", "99484", "101432", "101434", "101435", "101436", "102336", "102438", "102690", "105115", "105116", "105120", "108130", "108131", "108132", "108134", "112153", "112154", "112156", "112157", "112158", "112159", "112160", "112161", "117377", "117383", "117384", "121252", "121253", "121254", "121600", "128387", "128389", "128392", "128393", "128394", "128395", "128397", "128413", "132652", "132666", "132670", "132671", "132887", "138550", "138551", "138553", "138555", "138556", "138557", "138558", "152425", "152427", "152428", "152434", "152438", "152439", "152440", "152443", "152444", "152445", "152446", "152447", "152480", "152481", "158691", "158694", "158697", "158717", "163515", "163517", "163520", "163522", "163524", "171999", "172000", "172001", "172002", "172003", "172004", "172005", "172006", "172007", "176812", "176813", "176817", "176819", "179855", "179857", "179858", "179859", "180129", "188105", "188107", "188116", "188117", "189729", "189730", "189731", "189732", "197711", "197712", "197713", "206446", "206447", "209223", "209225", "209226", "209227", "211933", "211934", "211935", "211936", "211937", "216226", "216229", "220535", "220536", "220539", "220542", "220546", "222648", "222650", "223697", "231302", "231303", "231304", "231305", "231306", "233303", "233304", "233306", "238383", "238385", "238407", "244193", "244194", "244195", "244196", "244199", "244200", "244202", "244204", "244205", "244206", "244209", "247298", "247299", "247300", "249349", "249353", "249354", "249355", "249356", "249545", "252248", "252249", "252250", "252251", "253245", "253246", "256199", "256200", "256201", "258183", "258184", "264010", "264986", "264988", "269110", "269118", "270079", "270080", "272605", "272951", "273988", "273989", "274331", "274332", "276549", "276552", "277100", "277101", "279006", "279007", "280857", "280858", "280860", "281808", "281809", "282012", "283247", "283248", "283352", "283480", "283507", "453683", "453827", "455028", "455300", "456560", "456731", "457351", "457765", "457891", "458050", "458289", "458661", "460570", "460571", "461216", "461759", "462534", "462964", "462965", "463730", "463783", "463908", "464215", "464406", "464453", "464549", "464764", "464765", "465134", "465135", "465971", "465974", "466787", "467063", "467064", "467145", "471659", "477410", "477421", "482891", "502682", "511994", "518898", "525348", "525890", "527978", "530714", "533217", "534928", "905272", "908728", "910387", "924494", "925640", "934044", "934045", "938246", "943615", "947571", "964549", "966936", "968191", "973292", "978192", "978395", "983857", "984681", "988341", "996818", "1000652", "1021334", "1029172", "1030939", "1034959", "1047248", "1047259", "1084731", "1089791", "1095819", "1097648", "1101962", "1113637", "1115969", "1126680", "1126687", "1127638", "1136937", "1141976", "1142030", "1142916", "1144446", "1148016", "1151043", "1155477", "1204522", "1223492", "1257197", "1273099", "1273120", "1273146", "1292715", "1306946", "1309765", "1313470", "1320065", "1352920", "1361474", "1388271", "1409760", "1467369", "1479647", "1479890", "1491784", "1543691", "1548221", "1565771", "1572158", "1600326", "1602335", "1617283", "1617386", "1626524", "1626678", "1650695", "1656911", "1665340", "1666808", "1673014", "1673468", "1677710", "1686836", "1687606", "1687779", "1690088", "1698882", "1698936", "1698960", "1699438", "1701676", "1702111", "1717627", "1721067", "1722992", "1741897", "1743417", "1745575", "1745856", "1745857", "1748386", "1753181", "1755547", "1821234", "1822779", "1846263", "1850184", "1877305", "1879309", "1879837", "1893630", "1899594", "1901647", "1908604", "1908949", "1916616", "1923325", "1924437", "1926536", "1936660", "1975585", "2065093", "2093921", "2140053", "2172369", "2188959", "2199504", "2199895", "2203819", "2213694", "2218803", "2243641", "2250642", "2283427", "2337244", "2339906", "2342909", "2392852", "2398903", "2400975", "2414930", "2420193", "2451844", "2480085", "2498097", "2524079", "2527881", "2532624", "2558334", "2559619", "2563141", "2578479", "2588841", "2589075", "2601678", "2601732", "2611984", "2613087", "2656959", "2657735", "2659601", "2664911", "2700471", "2712151", "2713805", "2754088", "2765031", "2797860", "2858514", "2861580", "2868808", "2878685", "2884288", "2884288", "2916984", "2918742", "2922080", "2934674", "2936673", "2941716", "2941788", "2954787", "2963688", "2965103", "2968124", "2993670", "2995984", "2999073", "3000898", "3001597", "3001613", "3005931", "3005999", "3011291", "3017560", "3024170", "3026610", "3026782", "3035283", "3036982", "3047887", "3048079", "3049042", "3062915", "3065851", "3066798", "3066903", "3066996", "3070666", "3074559", "3080035", "3091306", "3092484", "3094151", "3096891", "3101742", "3102586", "3102869", "3106362", "3118096", "3141335", "3141598", "3145893", "3147125", "3149991", "3154041", "3166697", "3175195", "3176636", "3178147", "3181887", "3188966", "3192195", "3192583", "3192611", "3197354", "3197368", "3202095", "3202323", "3204970", "3206144", "3207043", "3209502", "3216941", "3227756", "3228332", "3234575", "3234876", "3235300", "3244861", "3245811", "3248099", "3275218", "3275502", "3282876", "3296302", "3300719", "3301031", "3301943", "3302837", "3310090", "3313761", "3315068", "3320484", "3321872", "3324168", "3331751", "3337032", "3338046", "3338689", "3341371", "3341373", "3341380", "3343169", "3348432", "3351605", "3355489", "3356368", "3356380", "3357484", "3357491", "3362329", "3362339", "3366554", "3366558", "3366584", "3367248", "3367575", "3367708", "3371198", "3375315", "3378194", "3389001", "3389705", "3390621", "3390659", "3390665", "3390948", "3398011", "3401807", "3408044", "3409248", "3409655", "3412949", "3414263", "3417002", "3418302", "3421139", "3422802", "3426808", "3433559", "3440686", "3443659", "3453805", "3462151", "3481163", "3481691", "3498071", "3498079", "3530681", "3537726", "3538203", "3545512", "3560022", "3584509", "3587946", "3617822", "3633305", "3633473", "3635126", "3640464", "3659120", "3706867", "3710835", "3725144", "3727956", "3730751", "3739981", "3762346", "9000076", "9000079", "9000210", "9000211", "9000469", "9000483", "9000941", "9000943"
+]);
+
+const UCS_ADM = new Set([
+  "158690", "152441", "216228", "2863310", "163521", "280856", "209397", "172705", "3310057", "3344018", 
+  "2233618", "254634", "112581", "3181", "457892", "3302798", "456907", "2765050", "3211", "495695", 
+  "34643", "34594", "457766", "3645948", "3680569", "277102", "3058557", "3045978", "2632342", "189790", 
+  "3331889", "139161", "3280232", "33857", "3243926", "75226", "163944", "128898", "3330204", "189791", 
+  "2716454", "3360238", "153011", "108347", "3342396", "3495962", "3214000", "931227", "3263428", "3341702",
+  "457352", "3242", "3324892", "216861", "503164", "9001396"
 ]);
 
 const EXCEL_COLUMNS = [
   { header: 'UC', key: 'uc' },
+  { header: 'Tipo', key: 'tipo' },
   { header: 'Concessionária', key: 'concessionaria' },
   { header: 'Cidade', key: 'cidade' },
   { header: 'Mês Referência', key: 'mesReferencia' },
@@ -531,9 +550,13 @@ const formatReference = (ref: string) => {
 const mapDbToBillData = (dbBill: any): BillData => {
   let mod = dbBill.modalidade_tarifaria || '';
   let tipo = dbBill.tipo || '';
-  if (UCS_ACL_MERCADO_LIVRE.has(String(dbBill.uc))) {
-    tipo = 'ACL';
-    if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+  if (UCS_OPER.has(String(dbBill.uc))) {
+    tipo = 'OPER';
+  } else if (UCS_ADM.has(String(dbBill.uc))) {
+    tipo = 'ADM';
+  } else if (UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc))) {
+    tipo = 'LIVRE';
+    if (!mod.toUpperCase().includes('LIVRE')) {
       mod = mod ? `${mod} - LIVRE` : 'LIVRE';
     }
   }
@@ -584,6 +607,7 @@ const mapDbToBillData = (dbBill: any): BillData => {
   modalidadeTarifaria: mod,
   subgrupo: dbBill.subgrupo || '',
   tipo: tipo,
+  mercado: UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc)) ? 'LIVRE' : 'CATIVO',
   dataVencimento: dbBill.data_vencimento || '',
   status: dbBill.status as any,
   error: dbBill.error || undefined,
@@ -636,6 +660,7 @@ const mapBillDataToDb = (bill: BillData, userId: string) => ({
   modalidade_tarifaria: bill.modalidadeTarifaria || '',
   subgrupo: bill.subgrupo || '',
   tipo: bill.tipo || '',
+  mercado: bill.mercado || '',
   data_vencimento: bill.dataVencimento || '',
   status: bill.status,
   error: bill.error || null,
@@ -675,7 +700,7 @@ const MetricCard = ({ title, custo, consumo, isReference = false, rightElement, 
 };
 
 const UCS_PPP = new Set([
-  "12018", "33857", "34548", "34594", "34724", "36245", "36246", "74255", "74256", "75226", "94009", "101432", "101434", "101435", "102438", "108130", "108132", "112154", "112156", "112157", "112158", "112160", "112581", "121252", "121253", "121254", "121600", "128389", "128392", "128394", "128898", "132652", "132666", "132671", "138551", "138555", "138557", "152427", "152434", "152446", "153011", "158690", "163517", "163521", "163944", "172004", "172005", "172705", "179857", "179858", "179859", "189729", "189730", "189731", "189732", "189790", "197712", "206446", "209223", "209225", "209226", "209227", "209397", "211934", "211935", "211936", "211937", "216228", "216229", "216861", "220535", "220546", "222648", "222650", "223697", "231303", "231304", "231305", "231306", "233304", "233306", "238383", "244193", "244194", "244199", "244200", "244205", "244206", "244209", "247298", "247299", "249353", "249354", "252248", "252249", "252250", "252251", "253245", "253246", "256200", "258183", "264010", "264986", "264988", "269110", "269118", "270079", "274331", "464406", "1047259", "1084731", "1113637", "1126680", "1151043", "2414930", "2420193", "2558334", "2657735", "2700471", "2716454", "2754088", "2765050", "2797860", "2858514", "2884288", "2954787", "2999073", "3047887", "3058557", "3070666", "3102869", "3141335", "3175195", "3181887", "3188966", "3206144", "3207043", "3214000", "3234876", "3235300", "3248099", "3275502", "3301943", "3302837", "3310090", "3313761", "3324892", "3331889", "3341371", "3341373", "3341380", "3343169", "3348432", "3366558", "3367575", "3371198", "3375315", "3390948", "3409248", "3412949", "3414263", "3417002", "3418302", "3421139", "3426808", "3481691", "3498079", "272605", "272951", "273988", "273989", "274332", "276549", "277100", "277101", "279007", "280858", "280860", "281808", "281809", "283247", "283248", "283352", "283480", "453683", "453827", "456560", "456731", "456907", "457351", "457765", "457766", "457891", "458050", "458289", "458661", "460570", "460571", "461216", "461759", "462534", "462964", "463730", "463783", "463908", "464549", "464764", "464765", "465134", "465135", "465971", "466787", "467063", "467064", "467145", "482891", "518898", "527978", "533217", "905272", "925640", "938246", "973292", "978395", "984681", "988341", "996818", "1000652", "1034959", "1047248", "1089791", "1126687", "1127638", "1136937", "1142030", "1142916", "1144446", "1148016", "1204522", "1223492", "1273099", "1273146", "1292715", "1309765", "1320065", "1352920", "1361474", "1388271", "1467369", "1479890", "1491784", "1543691", "1548221", "1600326", "1650695", "1656911", "1673468", "1677710", "1686836", "1690088", "1698936", "1698960", "1699438", "1701676", "1702111", "1745575", "1745856", "1748386", "1821234", "1877305", "1879309", "1879837", "1899594", "1901647", "1916616", "1923325", "1924437", "1936660", "1975585", "2065093", "2093921", "2140053", "2188959", "2203819", "2233618", "2283427", "2337244", "2342909", "2392852", "2398903", "2480085", "2524079", "2527881", "2563141", "2613087", "2632342", "3001597", "3001613", "3005931", "3005999", "3011291", "3036982", "3422802", "3443659", "3495962", "2601732", "2601678"
+  "12018", "33857", "34548", "34594", "34724", "36245", "36246", "74255", "74256", "75226", "94009", "101432", "101434", "101435", "102438", "108130", "108132", "112154", "112156", "112157", "112158", "112160", "112581", "121252", "121253", "121254", "121600", "128389", "128392", "128394", "128898", "132652", "132666", "132671", "138551", "138555", "138557", "152427", "152434", "152446", "153011", "158690", "163517", "163521", "163944", "172004", "172005", "172705", "179857", "179858", "179859", "189729", "189730", "189731", "189732", "189790", "197712", "206446", "209223", "209225", "209226", "209227", "209397", "211934", "211935", "211936", "211937", "216228", "216229", "220535", "220546", "222648", "222650", "223697", "231303", "231304", "231305", "231306", "233304", "233306", "238383", "244193", "244194", "244199", "244200", "244205", "244206", "244209", "247298", "247299", "249353", "249354", "252248", "252249", "252250", "252251", "253245", "253246", "256200", "258183", "264010", "264986", "264988", "269110", "269118", "270079", "274331", "464406", "1047259", "1084731", "1113637", "1126680", "1151043", "2414930", "2420193", "2558334", "2657735", "2700471", "2716454", "2754088", "2765050", "2797860", "2858514", "2884288", "2954787", "2999073", "3047887", "3058557", "3070666", "3102869", "3141335", "3175195", "3181887", "3188966", "3206144", "3207043", "3214000", "3234876", "3235300", "3248099", "3275502", "3301943", "3302837", "3310090", "3313761", "3331889", "3341371", "3341373", "3341380", "3343169", "3348432", "3366558", "3367575", "3371198", "3375315", "3390948", "3409248", "3412949", "3414263", "3417002", "3418302", "3421139", "3426808", "3481691", "3498079", "272605", "272951", "273988", "273989", "274332", "276549", "277100", "277101", "279007", "280858", "280860", "281808", "281809", "283247", "283248", "283352", "283480", "453683", "453827", "456560", "456731", "456907", "457351", "457765", "457766", "457891", "458050", "458289", "458661", "460570", "460571", "461216", "461759", "462534", "462964", "463730", "463783", "463908", "464549", "464764", "464765", "465134", "465135", "465971", "466787", "467063", "467064", "467145", "482891", "518898", "527978", "533217", "905272", "925640", "938246", "973292", "978395", "984681", "988341", "996818", "1000652", "1034959", "1047248", "1089791", "1126687", "1127638", "1136937", "1142030", "1142916", "1144446", "1148016", "1204522", "1223492", "1273099", "1273146", "1292715", "1309765", "1320065", "1352920", "1361474", "1388271", "1467369", "1479890", "1491784", "1543691", "1548221", "1600326", "1650695", "1656911", "1673468", "1677710", "1686836", "1690088", "1698936", "1698960", "1699438", "1701676", "1702111", "1745575", "1745856", "1748386", "1821234", "1877305", "1879309", "1879837", "1899594", "1901647", "1916616", "1923325", "1924437", "1936660", "1975585", "2065093", "2093921", "2140053", "2188959", "2203819", "2233618", "2283427", "2337244", "2342909", "2392852", "2398903", "2480085", "2524079", "2527881", "2563141", "2613087", "2632342", "3001597", "3001613", "3005931", "3005999", "3011291", "3036982", "3422802", "3443659", "3495962", "2601732", "2601678"
 ]);
 
 const UCS_USINA = new Set([
@@ -684,6 +709,7 @@ const UCS_USINA = new Set([
 
 const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, handleSelectKey }: { data: any[], setCurrentPage: (page: string) => void, handleLogout: () => void, hasApiKey: boolean, handleSelectKey: () => void }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [hoveredLivreType, setHoveredLivreType] = useState<'azul' | 'verde' | null>(null);
 
   const availableMonths = Array.from(new Set(data.map(d => d.name))).filter(Boolean).sort((a, b) => {
     const [mA, yA] = String(a).split('/');
@@ -703,8 +729,8 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
 
   const isGrupoA = (d: any) => d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
   const isGrupoB = (d: any) => !isGrupoA(d);
-  const isACL = (d: any) => d.modalidadeTarifaria.includes('LIVRE') || d.modalidadeTarifaria.includes('ACL') || d.tipo === 'ACL';
-  const isCativo = (d: any) => !isACL(d);
+  const isLivre = (d: any) => d.modalidadeTarifaria.includes('LIVRE') || d.tipo === 'LIVRE';
+  const isCativo = (d: any) => !isLivre(d);
   
   const isAzul = (d: any) => d.modalidadeTarifaria.includes('AZUL');
   const isVerde = (d: any) => d.modalidadeTarifaria.includes('VERDE');
@@ -722,9 +748,9 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
   const grupoA = calc(isGrupoA);
   const grupoB = calc(isGrupoB);
 
-  const acl = calc(d => isGrupoA(d) && isACL(d));
-  const aclAzul = calc(d => isGrupoA(d) && isACL(d) && isAzul(d));
-  const aclVerde = calc(d => isGrupoA(d) && isACL(d) && isVerde(d));
+  const livre = calc(d => isGrupoA(d) && isLivre(d));
+  const livreAzul = calc(d => isGrupoA(d) && isLivre(d) && isAzul(d));
+  const livreVerde = calc(d => isGrupoA(d) && isLivre(d) && isVerde(d));
 
   const cativo = calc(d => isGrupoA(d) && isCativo(d));
   const cativoAzul = calc(d => isGrupoA(d) && isCativo(d) && isAzul(d));
@@ -803,8 +829,8 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     return [0, Math.ceil(maxVal * 1.1)];
   }, [monthlyData]);
 
-  const monthlyDataAzul = useMemo(() => getMonthlyData(data, d => isGrupoA(d) && isACL(d) && isAzul(d)), [data]);
-  const monthlyDataVerde = useMemo(() => getMonthlyData(data, d => isGrupoA(d) && isACL(d) && isVerde(d)), [data]);
+  const monthlyDataAzul = useMemo(() => getMonthlyData(data, d => isGrupoA(d) && isLivre(d) && isAzul(d)), [data]);
+  const monthlyDataVerde = useMemo(() => getMonthlyData(data, d => isGrupoA(d) && isLivre(d) && isVerde(d)), [data]);
 
   const sparklineDataAzul = monthlyDataAzul.map(m => ({ value: m.custo }));
   const sparklineDataVerde = monthlyDataVerde.map(m => ({ value: m.custo }));
@@ -891,7 +917,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     );
   };
 
-  const SparklineCard = ({ title, data, color = "blue", sparklineData, fullMonthlyData }: { title: string, data: any, color?: "blue" | "green", sparklineData: any[], fullMonthlyData: any[] }) => {
+  const SparklineCard = ({ title, data, color = "blue", sparklineData, fullMonthlyData, onMouseEnter, onMouseLeave }: { title: string, data: any, color?: "blue" | "green", sparklineData: any[], fullMonthlyData: any[], onMouseEnter?: () => void, onMouseLeave?: () => void }) => {
     const colorHex = color === "blue" ? "#3b82f6" : "#10b981";
     const bgClass = color === "blue" ? "bg-blue-50" : "bg-emerald-50";
     const textClass = color === "blue" ? "text-blue-600" : "text-emerald-600";
@@ -906,7 +932,11 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     const domain = [0, Math.ceil(maxVal * 1.1)];
 
     return (
-      <div className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex items-center justify-between mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-visible shadow-sm`}>
+      <div 
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex items-center justify-between mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-visible shadow-sm`}
+      >
         <div className="absolute top-0 right-0 w-24 h-24 bg-white/50 rounded-full -translate-y-1/2 translate-x-1/2 opacity-40 group-hover:scale-110 transition-transform duration-500 blur-xl"></div>
         <div className="flex items-center gap-4 relative z-10">
           <div className={`w-10 h-10 rounded-xl ${iconBgClass} flex items-center justify-center shadow-sm border border-white group-hover:scale-110 transition-transform`}>
@@ -1178,41 +1208,182 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
             </div>
             
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-              {/* ACL Card */}
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative group hover:shadow-xl transition-all duration-500">
+              {/* LIVRE Card */}
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-blue-100 relative group hover:shadow-xl transition-all duration-500 min-h-[500px] flex flex-col">
                 <div className="absolute inset-0 overflow-hidden rounded-[2rem] pointer-events-none">
                   <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
                 </div>
                 
-                <div className="flex justify-between items-center mb-8 relative z-10">
-                  <div className="flex items-center gap-5">
-                    <div className="w-3 h-12 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-md"></div>
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">ACL - Mercado Livre</h3>
-                      <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Livre</p>
-                    </div>
-                  </div>
-                  <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
-                    <Activity size={24} className="text-blue-600" />
-                  </div>
-                </div>
-                
-                <div className="space-y-1 relative z-10 mb-8">
-                  <MetricRow icon={DollarSign} label="Custo Total" value={acl.custo} isCurrency />
-                  <MetricRow icon={Zap} label="Consumo Total" value={acl.consumo} unit="kWh" />
-                  <MetricRow icon={Calculator} label="Tarifa Média" value={acl.tarifa} isCurrency />
-                </div>
+                <AnimatePresence mode="wait">
+                  {!hoveredLivreType ? (
+                    <motion.div
+                      key="content"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="flex-1 flex flex-col"
+                    >
+                      <div className="flex justify-between items-center mb-8 relative z-10">
+                        <div className="flex items-center gap-5">
+                          <div className="w-3 h-12 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-md"></div>
+                          <div>
+                            <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">MERCADO LIVRE</h3>
+                            <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Livre</p>
+                          </div>
+                        </div>
+                        <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                          <Activity size={24} className="text-blue-600" />
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-1 relative z-10 mb-8">
+                        <MetricRow icon={DollarSign} label="Custo Total" value={livre.custo} isCurrency />
+                        <MetricRow icon={Zap} label="Consumo Total" value={livre.consumo} unit="kWh" />
+                        <MetricRow icon={Calculator} label="Tarifa Média" value={livre.tarifa} isCurrency />
+                      </div>
 
-                <div className="space-y-6 relative z-10">
-                  <div className="grid grid-cols-2 gap-6">
-                    <DetailCard title="Faturas Azul" data={aclAzul} color="blue" icon={Zap} />
-                    <DetailCard title="Faturas Verde" data={aclVerde} color="green" icon={Zap} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-6">
-                    <SparklineCard title="Evolução Azul" data={aclAzul} color="blue" sparklineData={sparklineDataAzul} fullMonthlyData={monthlyDataAzul} />
-                    <SparklineCard title="Evolução Verde" data={aclVerde} color="green" sparklineData={sparklineDataVerde} fullMonthlyData={monthlyDataVerde} />
-                  </div>
-                </div>
+                      <div className="space-y-6 relative z-10 mt-auto">
+                        <div className="grid grid-cols-2 gap-6">
+                          <DetailCard title="Faturas Azul" data={livreAzul} color="blue" icon={Zap} />
+                          <DetailCard title="Faturas Verde" data={livreVerde} color="green" icon={Zap} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-6">
+                          <SparklineCard 
+                            title="Evolução Azul" 
+                            data={livreAzul} 
+                            color="blue" 
+                            sparklineData={sparklineDataAzul} 
+                            fullMonthlyData={monthlyDataAzul} 
+                            onMouseEnter={() => setHoveredLivreType('azul')}
+                          />
+                          <SparklineCard 
+                            title="Evolução Verde" 
+                            data={livreVerde} 
+                            color="green" 
+                            sparklineData={sparklineDataVerde} 
+                            fullMonthlyData={monthlyDataVerde} 
+                            onMouseEnter={() => setHoveredLivreType('verde')}
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="chart"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="absolute inset-0 p-8 flex flex-col z-20 bg-white rounded-[2rem]"
+                      onMouseLeave={() => setHoveredLivreType(null)}
+                    >
+                      <div className="flex justify-between items-center mb-8">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-3 h-10 rounded-full ${hoveredLivreType === 'azul' ? 'bg-blue-500' : 'bg-emerald-500'} shadow-lg`}></div>
+                          <div>
+                            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">
+                              Evolução {hoveredLivreType === 'azul' ? 'Azul' : 'Verde'}
+                            </h3>
+                            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest opacity-60">Análise Detalhada de Mercado Livre</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setHoveredLivreType(null)}
+                          className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
+                        >
+                          <X size={20} />
+                        </button>
+                      </div>
+
+                      <div className="flex-1 w-full min-h-[250px] bg-slate-50/50 rounded-3xl p-4 border border-slate-100">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart 
+                            data={hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde} 
+                            margin={{ top: 20, right: 30, bottom: 20, left: 10 }}
+                          >
+                            <defs>
+                              <linearGradient id="colorConsumoLivre" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                              </linearGradient>
+                              <linearGradient id="colorCustoLivre" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <XAxis 
+                              dataKey="name" 
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fill: '#64748b', fontSize: 11, fontWeight: 700 }} 
+                              dy={15}
+                            />
+                            <YAxis 
+                              yAxisId="left"
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                              tickFormatter={(val) => formatNumber(val, false, 0)}
+                            />
+                            <YAxis 
+                              yAxisId="right"
+                              orientation="right"
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                              tickFormatter={(val) => `R$ ${formatNumber(val, true, 0)}`}
+                            />
+                            <Tooltip 
+                              contentStyle={{ 
+                                backgroundColor: 'rgba(255, 255, 255, 0.95)', 
+                                borderRadius: '16px', 
+                                border: 'none', 
+                                boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' 
+                              }}
+                              itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                            />
+                            <Area 
+                              yAxisId="left"
+                              type="monotone" 
+                              dataKey="consumo" 
+                              name="Consumo (kWh)"
+                              stroke="#0ea5e9" 
+                              strokeWidth={3}
+                              fillOpacity={1} 
+                              fill="url(#colorConsumoLivre)" 
+                            />
+                            <Area 
+                              yAxisId="right"
+                              type="monotone" 
+                              dataKey="custo" 
+                              name="Custo (R$)"
+                              stroke="#6366f1" 
+                              strokeWidth={3}
+                              fillOpacity={1} 
+                              fill="url(#colorCustoLivre)" 
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                      
+                      <div className="mt-6 grid grid-cols-2 gap-4">
+                        <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/50">
+                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-1">Consumo Médio</p>
+                          <p className="text-xl font-black text-blue-900">
+                            {formatNumber((hoveredLivreType === 'azul' ? livreAzul : livreVerde).consumo / (hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde).length || 0, false, 0)} <span className="text-xs font-bold opacity-60">kWh</span>
+                          </p>
+                        </div>
+                        <div className="bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100/50">
+                          <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mb-1">Custo Médio</p>
+                          <p className="text-xl font-black text-indigo-900">
+                            <span className="text-xs font-bold opacity-60 mr-1">R$</span>
+                            {formatNumber((hoveredLivreType === 'azul' ? livreAzul : livreVerde).custo / (hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde).length || 0, true, 2)}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* Cativo Card */}
@@ -1553,12 +1724,16 @@ export default function App() {
             let changed = false;
 
             const dbBill = allData[i];
-            if (UCS_ACL_MERCADO_LIVRE.has(String(b.uc))) {
+            if (UCS_OPER.has(String(b.uc))) {
+              if (dbBill.tipo !== 'OPER') {
+                changed = true;
+              }
+            } else if (UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc))) {
               let expectedMod = dbBill.modalidade_tarifaria || '';
-              if (!expectedMod.toUpperCase().includes('LIVRE') && !expectedMod.toUpperCase().includes('ACL')) {
+              if (!expectedMod.toUpperCase().includes('LIVRE')) {
                 expectedMod = expectedMod ? `${expectedMod} - LIVRE` : 'LIVRE';
               }
-              if (dbBill.modalidade_tarifaria !== expectedMod || dbBill.tipo !== 'ACL') {
+              if (dbBill.modalidade_tarifaria !== expectedMod || dbBill.tipo !== 'LIVRE') {
                 changed = true;
               }
             }
@@ -1786,7 +1961,13 @@ export default function App() {
             new Paragraph({}),
             new Paragraph({
               alignment: AlignmentType.LEFT,
-              children: [new TextRun({ text: "ASSUNTO: ", bold: true, size: 24 }), new TextRun({ text: `Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — ${selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}.`, size: 24 })]
+              children: [
+                new TextRun({ text: "ASSUNTO: ", bold: true, size: 24 }), 
+                new TextRun({ 
+                  text: `Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — ${selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}${!selectedRelatorioType.includes('all') ? ` (${selectedRelatorioType.join(', ')})` : ''}.`, 
+                  size: 24 
+                })
+              ]
             }),
             new Paragraph({}),
             
@@ -1798,6 +1979,7 @@ export default function App() {
               children: [
                 new TextRun({ text: "        Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da concessionária Elektro — todas referentes ao mês de ", size: 24 }),
                 new TextRun({ text: selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth, bold: true, color: "0070C0", size: 24 }),
+                new TextRun({ text: !selectedRelatorioType.includes('all') ? ` (Tipo: ${selectedRelatorioType.join(', ')})` : '', size: 24 }),
                 new TextRun({ text: " e correspondentes às unidades operacionais da SANESUL.", size: 24 })
               ] 
             }),
@@ -2058,6 +2240,8 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedConcessionaria, setSelectedConcessionaria] = useState<string>('all');
   const [selectedRelatorioMonth, setSelectedRelatorioMonth] = useState<string>('all');
+  const [selectedRelatorioType, setSelectedRelatorioType] = useState<string[]>(['all']);
+  const [isRelatorioTypeDropdownOpen, setIsRelatorioTypeDropdownOpen] = useState(false);
   const [selectedReactiveMonth, setSelectedReactiveMonth] = useState<string>('all');
   const [reactiveSortField, setReactiveSortField] = useState<string>('totalGeral');
   const [reactiveSortDirection, setReactiveSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -2351,12 +2535,15 @@ export default function App() {
 
           return billData as BillData;
         }).map(bill => {
-          if (bill.uc && UCS_ACL_MERCADO_LIVRE.has(String(bill.uc))) {
+          bill.mercado = bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc)) ? 'LIVRE' : 'CATIVO';
+          if (bill.uc && UCS_OPER.has(String(bill.uc))) {
+            bill.tipo = 'OPER';
+          } else if (bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc))) {
             let mod = bill.modalidadeTarifaria || '';
-            if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+            if (!mod.toUpperCase().includes('LIVRE')) {
               bill.modalidadeTarifaria = mod ? `${mod} - LIVRE` : 'LIVRE';
             }
-            bill.tipo = 'ACL';
+            bill.tipo = 'LIVRE';
           }
           return bill;
         });
@@ -2411,12 +2598,24 @@ export default function App() {
               modalidade_tarifaria: bill.modalidadeTarifaria || '',
               subgrupo: bill.subgrupo || '',
               tipo: bill.tipo || 'normal',
+              mercado: bill.mercado || '',
               data_vencimento: bill.dataVencimento || '',
               status: bill.status,
               created_at: new Date(bill.createdAt || Date.now()).toISOString()
             }));
             
-            const { error } = await supabase.from('bills').insert(dbData);
+            let { error } = await supabase.from('bills').insert(dbData);
+            
+            if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
+              console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
+              const fallbackData = dbData.map((d: any) => {
+                const { data_vencimento, mercado, ...rest } = d;
+                return rest;
+              });
+              const fallbackRes = await supabase.from('bills').insert(fallbackData);
+              error = fallbackRes.error;
+            }
+            
             if (error) {
               console.error('Erro ao salvar no Supabase:', error);
               alert('Erro ao salvar os dados importados no banco de dados.');
@@ -2524,7 +2723,9 @@ export default function App() {
         vUltrapP: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
         vUltrapFP: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
         vNaoConsP: parseValue(b.valorDemandaPotenciaNaoConsumidaPonta),
-        vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta)
+        vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta),
+        tipo: b.tipo || '',
+        mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO'
       };
     }).filter(d => d.dcp > 0 || d.dcfp > 0);
 
@@ -2630,7 +2831,9 @@ export default function App() {
         subPonta,
         subForaPonta,
         isOverrun: overrunPonta > 0 || overrunForaPonta > 0,
-        isSub: subPonta > 0 || subForaPonta > 0
+        isSub: subPonta > 0 || subForaPonta > 0,
+        tipo: row.tipo,
+        mercado: row.mercado
       }];
     });
 
@@ -2891,7 +3094,8 @@ export default function App() {
         };
         reader.onerror = () => {
           clearTimeout(timeout);
-          reject(new Error('Erro ao ler arquivo'));
+          console.error("FileReader error:", reader.error);
+          reject(new Error(`Erro ao ler arquivo: ${reader.error?.message || 'Erro desconhecido'}`));
         };
         if (bill.file instanceof Blob) {
           reader.readAsDataURL(bill.file);
@@ -3038,13 +3242,16 @@ export default function App() {
         // We allow duplicates to proceed to update the DB and list
       }
 
-      if (result.uc && UCS_ACL_MERCADO_LIVRE.has(String(result.uc))) {
+      if (result.uc && UCS_OPER.has(String(result.uc))) {
+        result.tipo = 'OPER';
+      } else if (result.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(result.uc))) {
         let mod = result.modalidadeTarifaria || '';
-        if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+        if (!mod.toUpperCase().includes('LIVRE')) {
           result.modalidadeTarifaria = mod ? `${mod} - LIVRE` : 'LIVRE';
         }
-        result.tipo = 'ACL';
+        result.tipo = 'LIVRE';
       }
+      result.mercado = result.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(result.uc)) ? 'LIVRE' : 'CATIVO';
 
       const updatedBill: BillData = {
         ...bill,
@@ -3063,18 +3270,32 @@ export default function App() {
             .delete()
             .eq('id', existingDbId);
             
-          const { error: insertError } = await supabase
+          let { error: insertError } = await supabase
             .from('bills')
             .insert(dbData);
+            
+          if (insertError && (insertError.message.includes('data_vencimento') || insertError.message.includes('mercado') || insertError.details?.includes('data_vencimento') || insertError.details?.includes('mercado') || insertError.code === 'PGRST204')) {
+            console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
+            const { data_vencimento, mercado, ...fallbackData } = dbData;
+            const fallbackRes = await supabase.from('bills').insert(fallbackData);
+            insertError = fallbackRes.error;
+          }
             
           if (insertError) {
             console.error('Erro ao substituir fatura no Supabase:', insertError);
           }
         } else if (!isDuplicateInCurrentList) {
           // Insert new record
-          const { error: insertError } = await supabase
+          let { error: insertError } = await supabase
             .from('bills')
             .insert(dbData);
+            
+          if (insertError && (insertError.message.includes('data_vencimento') || insertError.message.includes('mercado') || insertError.details?.includes('data_vencimento') || insertError.details?.includes('mercado') || insertError.code === 'PGRST204')) {
+            console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
+            const { data_vencimento, mercado, ...fallbackData } = dbData;
+            const fallbackRes = await supabase.from('bills').insert(fallbackData);
+            insertError = fallbackRes.error;
+          }
             
           if (insertError) {
             console.error('Erro ao salvar fatura no Supabase:', insertError);
@@ -3338,7 +3559,7 @@ export default function App() {
     if (!analysisResults || analysisResults.length === 0) return;
 
     const headers = [
-      "Nome do Arquivo", "UC", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
+      "Nome do Arquivo", "UC", "Tipo", "Mercado", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
       "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Gasto Real (R$)", "Economia (R$)", "Status",
       "Grupo Tarifário", "Tarifa Branca", "Optante B"
     ];
@@ -3355,7 +3576,10 @@ export default function App() {
 
       return [
         r.fileName,
-        r.uc, r.ano, r.mes, r.dmp, r.dmfp,
+        r.uc, 
+        r.tipo,
+        r.mercado,
+        r.ano, r.mes, r.dmp, r.dmfp,
         r.optimizedPonta, r.optimizedForaPonta, 
         String((r.currentTotal || 0).toFixed(2)).replace('.', ','),
         String((r.economy || 0).toFixed(2)).replace('.', ','),
@@ -3396,6 +3620,8 @@ export default function App() {
     const headers = [
       "Nome do Arquivo",
       "UC",
+      "Tipo",
+      "Mercado",
       "Concessionária",
       "Cidade",
       "Mês Referência",
@@ -3455,6 +3681,8 @@ export default function App() {
     const rows = completedBills.map(b => [
       b.fileName,
       b.uc,
+      b.tipo || '',
+      UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO',
       b.concessionaria 
         ? (b.concessionaria.toUpperCase().includes('ENERGISA') 
             ? 'ENERGISA' 
@@ -3521,6 +3749,101 @@ export default function App() {
     
     link.setAttribute("href", url);
     link.setAttribute("download", fileName);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportRelatorioToCSV = () => {
+    if (filteredRelatorioData.length === 0) {
+      showAlert('Exportação', 'Não há dados para exportar com os filtros selecionados.');
+      return;
+    }
+
+    const headers = [
+      "Nome do Arquivo",
+      "Mês/Ano",
+      "UC",
+      "Tipo",
+      "Mercado",
+      "Concessionária",
+      "Cidade",
+      "Nota Fiscal",
+      "Modalidade Tarifária",
+      "Subgrupo",
+      "Valor Total (R$)",
+      "Consumo Ponta (kWh)",
+      "Consumo Fora Ponta (kWh)",
+      "Demanda Medida Ponta (kW)",
+      "Demanda Medida Fora Ponta (kW)",
+      "Demanda Contratada Ponta (kW)",
+      "Demanda Contratada Fora Ponta (kW)",
+      "Ultrapassagem Ponta (kW)",
+      "Ultrapassagem Fora Ponta (kW)",
+      "Reativa Ponta (kVArh)",
+      "Reativa Fora Ponta (kVArh)",
+      "Solar Injetada OUC (kWh)",
+      "Solar Injetada MUC (kWh)",
+      "CIP (R$)",
+      "Outros Encargos (R$)",
+      "PIS (R$)",
+      "COFINS (R$)",
+      "ICMS (R$)"
+    ];
+
+    const formatCSVValue = (val: any) => {
+      if (val === null || val === undefined) return '';
+      let str = String(val);
+      if (!isNaN(Number(val)) && str.includes('.') && !str.includes(',')) {
+        str = str.replace('.', ',');
+      }
+      str = str.replace(/;/g, ',');
+      return `"${str}"`;
+    };
+
+    const rows = filteredRelatorioData.map(d => [
+      d.fileName,
+      d.name,
+      d.uc,
+      d.tipo,
+      d.mercado,
+      d.concessionaria,
+      d.cidade,
+      d.numeroNotaFiscal,
+      d.modalidadeTarifaria,
+      d.subgrupo,
+      d.valorTotal,
+      d.consumoPonta,
+      d.consumoForaPonta,
+      d.demandaMedidaPonta,
+      d.demandaMedidaForaPonta,
+      d.demandaContratadaPonta,
+      d.demandaContratadaForaPonta,
+      d.ultrapassagemPonta,
+      d.ultrapassagemForaPonta,
+      d.reativaPonta,
+      d.reativaForaPonta,
+      d.solarInjetadaOUC,
+      d.solarInjetadaMUC,
+      d.cip,
+      d.outrosEncargos,
+      d.pis,
+      d.cofins,
+      d.icms
+    ]);
+
+    const csvContent = "\uFEFF" + [
+      headers.join(';'),
+      ...rows.map(row => row.map(formatCSVValue).join(';'))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Relatorio_Financeiro_${selectedRelatorioMonth.replace('/', '_')}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -3631,6 +3954,9 @@ export default function App() {
     concessionaria: b.concessionaria || '',
     numeroNotaFiscal: b.numeroNotaFiscal || '',
     cidade: b.cidade,
+    tipo: b.tipo || '',
+    mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO',
+    fileName: b.fileName || '',
     modalidadeTarifaria: (b.modalidadeTarifaria || '').toString().toUpperCase(),
     subgrupo: (b.subgrupo || '').toString().toUpperCase()
   }));
@@ -3643,6 +3969,8 @@ export default function App() {
     if (yA !== yB) return Number(yB) - Number(yA);
     return getMonthNumber(mB) - getMonthNumber(mA);
   });
+
+  const availableRelatorioTypes = Array.from(new Set(dashboardData.map(d => d.tipo))).filter(Boolean).sort();
 
   const filteredDashboardData = dashboardData.filter(d => {
     const matchesUC = !selectedUC || selectedUC === 'all' || d.uc.toString().includes(selectedUC);
@@ -3692,7 +4020,9 @@ export default function App() {
   });
 
   const filteredRelatorioData = dashboardData.filter(d => {
-    return selectedRelatorioMonth === 'all' || d.name === selectedRelatorioMonth;
+    const matchesMonth = selectedRelatorioMonth === 'all' || d.name === selectedRelatorioMonth;
+    const matchesType = selectedRelatorioType.includes('all') || selectedRelatorioType.includes(d.tipo);
+    return matchesMonth && matchesType && d.uc !== '31383580';
   });
 
   const filteredUcs = Array.from(new Set(filteredDashboardData.map(d => d.uc))).filter(Boolean);
@@ -3745,47 +4075,35 @@ export default function App() {
 
     const sum = (arr: any[], field: string) => arr.reduce((acc, curr) => acc + (curr[field] || 0), 0);
 
-    const energisaData = agrupadoraFiles['ENERGISA'] ? {
-      total: agrupadoraFiles['ENERGISA'].valorTotal || 0,
-      pis: agrupadoraFiles['ENERGISA'].pis || 0,
-      cofins: agrupadoraFiles['ENERGISA'].cofins || 0,
-      icms: agrupadoraFiles['ENERGISA'].icms || 0,
-      cip: agrupadoraFiles['ENERGISA'].cip || 0,
-      nf: memoNfEnergisa || '-',
-      mesRef: formatReference(agrupadoraFiles['ENERGISA'].mesReferencia)
-    } : {
+    const energisaData = {
       total: sum(energisa, 'valorTotal'),
       pis: sum(energisa, 'pis'),
       cofins: sum(energisa, 'cofins'),
       icms: sum(energisa, 'icms'),
       cip: sum(energisa, 'cip'),
-      nf: memoNfEnergisa || '-',
-      mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
+      nf: memoNfEnergisa || agrupadoraFiles['ENERGISA']?.numeroNotaFiscal || '-',
+      mesRef: selectedRelatorioMonth === 'all' 
+        ? (agrupadoraFiles['ENERGISA'] ? formatReference(agrupadoraFiles['ENERGISA'].mesReferencia) : '-')
+        : selectedRelatorioMonth
     };
 
-    const elektroData = agrupadoraFiles['ELEKTRO'] ? {
-      total: agrupadoraFiles['ELEKTRO'].valorTotal || 0,
-      pis: agrupadoraFiles['ELEKTRO'].pis || 0,
-      cofins: agrupadoraFiles['ELEKTRO'].cofins || 0,
-      icms: agrupadoraFiles['ELEKTRO'].icms || 0,
-      cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || agrupadoraFiles['ELEKTRO'].cip || 0,
-      nf: memoNfElektro || '-',
-      mesRef: formatReference(agrupadoraFiles['ELEKTRO'].mesReferencia)
-    } : {
+    const elektroData = {
       total: sum(elektro, 'valorTotal'),
       pis: sum(elektro, 'pis'),
       cofins: sum(elektro, 'cofins'),
       icms: sum(elektro, 'icms'),
       cip: agrupadoraFiles['ELEKTRO_DETALHADO']?.cip || sum(elektro, 'cip') || 0,
-      nf: memoNfElektro || '-',
-      mesRef: selectedRelatorioMonth === 'all' ? '-' : selectedRelatorioMonth
+      nf: memoNfElektro || agrupadoraFiles['ELEKTRO']?.numeroNotaFiscal || '-',
+      mesRef: selectedRelatorioMonth === 'all' 
+        ? (agrupadoraFiles['ELEKTRO'] ? formatReference(agrupadoraFiles['ELEKTRO'].mesReferencia) : '-')
+        : selectedRelatorioMonth
     };
 
     return {
       energisa: energisaData,
       elektro: elektroData
     };
-  }, [filteredRelatorioData, agrupadoraFiles, memoNfEnergisa, memoNfElektro]);
+  }, [filteredRelatorioData, agrupadoraFiles, memoNfEnergisa, memoNfElektro, selectedRelatorioMonth]);
 
   // Group by month/year for charts
   const timeSeriesData = Object.values(filteredDashboardData.reduce((acc: any, curr) => {
@@ -4337,6 +4655,7 @@ export default function App() {
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('dataVencimento')}>Vencimento</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Medida</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Contratada</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('mercado')}>Mercado</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Status</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 text-right">
@@ -4421,6 +4740,15 @@ export default function App() {
                                 <span className="text-[9px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPontaKW || '0'} kW</span>
                                 <span className="text-[9px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaForaPontaKW || '0'} kW</span>
                               </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                (bill.mercado || (bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc)) ? 'LIVRE' : 'CATIVO')) === 'LIVRE' 
+                                  ? 'bg-blue-100 text-blue-700' 
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {bill.mercado || (bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc)) ? 'LIVRE' : 'CATIVO')}
+                              </span>
                             </td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
@@ -5252,6 +5580,7 @@ export default function App() {
                                 Mês/Ano {dashboardSort.key === 'name' && (dashboardSort.direction === 'asc' ? '↑' : '↓')}
                               </th>
                               <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Classificação</th>
+                              <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Mercado</th>
                               <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Modalidade</th>
                               {dashboardSubTab === 'operacionais' ? (
                                 <>
@@ -5358,6 +5687,11 @@ export default function App() {
                                 <td className="px-8 py-5 text-sm text-slate-600">{row.name}</td>
                                 <td className="px-8 py-5 text-sm font-medium text-slate-600">
                                   {UCS_PPP.has(String(row.uc)) ? 'PPP Fotovoltaica' : (UCS_USINA.has(String(row.uc)) ? 'Usinas SANESUL' : 'Geral')}
+                                </td>
+                                <td className="px-8 py-5 text-sm font-bold">
+                                  <span className={`px-3 py-1 rounded-full text-[10px] uppercase tracking-wider ${row.mercado === 'LIVRE' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                                    {row.mercado}
+                                  </span>
                                 </td>
                                 <td className="px-8 py-5 text-sm font-medium text-slate-600">
                                   {row.modalidadeTarifaria || '-'}
@@ -6360,52 +6694,74 @@ export default function App() {
                     ))}
                   </select>
                 </div>
+
+                <div className="relative">
+                  <button 
+                    onClick={() => setIsRelatorioTypeDropdownOpen(!isRelatorioTypeDropdownOpen)}
+                    className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-sanesul-primary/10 shadow-sm text-xs font-bold text-sanesul-primary uppercase tracking-wider outline-none cursor-pointer"
+                  >
+                    <Filter size={16} className="text-sanesul-primary" />
+                    <span>
+                      {selectedRelatorioType.includes('all') 
+                        ? 'Todos os Tipos' 
+                        : selectedRelatorioType.length > 1 
+                          ? `${selectedRelatorioType.length} Selecionados` 
+                          : selectedRelatorioType[0]}
+                    </span>
+                    <ChevronDown size={14} className={`transition-transform ${isRelatorioTypeDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {isRelatorioTypeDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsRelatorioTypeDropdownOpen(false)} />
+                      <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-100 z-50 py-2">
+                        <label className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 cursor-pointer transition-colors">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedRelatorioType.includes('all')}
+                            onChange={() => {
+                              setSelectedRelatorioType(['all']);
+                            }}
+                            className="rounded border-slate-300 text-sanesul-primary focus:ring-sanesul-primary"
+                          />
+                          <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Todos os Tipos</span>
+                        </label>
+                        <div className="h-px bg-slate-100 my-1" />
+                        {availableRelatorioTypes.map(type => (
+                          <label key={type} className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 cursor-pointer transition-colors">
+                            <input 
+                              type="checkbox" 
+                              checked={selectedRelatorioType.includes(type)}
+                              onChange={() => {
+                                let newTypes = [...selectedRelatorioType].filter(t => t !== 'all');
+                                if (newTypes.includes(type)) {
+                                  newTypes = newTypes.filter(t => t !== type);
+                                } else {
+                                  newTypes.push(type);
+                                }
+                                if (newTypes.length === 0) {
+                                  setSelectedRelatorioType(['all']);
+                                } else {
+                                  setSelectedRelatorioType(newTypes);
+                                }
+                              }}
+                              className="rounded border-slate-300 text-sanesul-primary focus:ring-sanesul-primary"
+                            />
+                            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">{type}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
                 <div className="flex gap-2">
-
                   <button 
-                    onClick={() => agrupadoraInputRef.current?.click()}
+                    onClick={exportRelatorioToCSV}
                     className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
                   >
-                    <Upload size={16} />
-                    Anexar Agrupadora (Elektro)
+                    <Download size={16} />
+                    Exportar CSV
                   </button>
-                  <input 
-                    type="file" 
-                    ref={agrupadoraInputRef} 
-                    className="hidden" 
-                    accept=".pdf,.jpg,.jpeg,.png"
-                    onChange={(e) => handleAgrupadoraUpload(e, 'summary')}
-                  />
-
-                  <button 
-                    onClick={() => energisaInputRef.current?.click()}
-                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
-                  >
-                    <Upload size={16} />
-                    Anexar Agrupadora (Energisa)
-                  </button>
-                  <input 
-                    type="file" 
-                    ref={energisaInputRef} 
-                    className="hidden" 
-                    accept=".pdf,.jpg,.jpeg,.png"
-                    onChange={(e) => handleAgrupadoraUpload(e, 'summary')}
-                  />
-
-                  <button 
-                    onClick={() => detailedElektroInputRef.current?.click()}
-                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
-                  >
-                    <FileText size={16} />
-                    Anexar Relatório Detalhado (Elektro)
-                  </button>
-                  <input 
-                    type="file" 
-                    ref={detailedElektroInputRef} 
-                    className="hidden" 
-                    accept=".pdf,.jpg,.jpeg,.png"
-                    onChange={(e) => handleAgrupadoraUpload(e, 'detailed')}
-                  />
                   <button 
                     id="btn-gerar-relatorio"
                     onClick={() => {
@@ -6828,12 +7184,12 @@ export default function App() {
               <div className="space-y-4 mb-12 text-sm border-l-4 border-sanesul-primary/20 pl-6 py-2">
                 <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">DE:</span> <br />GEDEO - Gerência de Desenvolvimento Operacional</p>
                 <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">PARA:</span> <br />GEFI - Gerência Financeira e Gestão de Recursos</p>
-                <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">ASSUNTO:</span> <br />Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — {selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}.</p>
+                <p><span className="font-bold text-sanesul-primary uppercase tracking-wider text-[10px]">ASSUNTO:</span> <br />Faturas Agrupadora Operacional Energisa e Agrupadora Elektro — {selectedRelatorioMonth === 'all' ? 'Consolidado' : selectedRelatorioMonth}{!selectedRelatorioType.includes('all') ? ` (${selectedRelatorioType.join(', ')})` : ''}.</p>
               </div>
 
               <p className="mb-6 font-medium">Prezado(a),</p>
               <p className="mb-10 text-justify">
-                Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da concessionária Elektro — todas referentes ao mês de <span className="font-bold underline decoration-sanesul-primary/30 underline-offset-4">{selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth}</span> e correspondentes às unidades operacionais da SANESUL.
+                Seguem anexas para pagamento as faturas de energia elétrica Agrupadora da concessionária Energisa MS, e Agrupadora da concessionária Elektro — todas referentes ao mês de <span className="font-bold underline decoration-sanesul-primary/30 underline-offset-4">{selectedRelatorioMonth === 'all' ? 'todos os períodos' : selectedRelatorioMonth}</span>{!selectedRelatorioType.includes('all') ? ` (Tipo: ${selectedRelatorioType.join(', ')})` : ''} e correspondentes às unidades operacionais da SANESUL.
               </p>
 
               <div className="mb-6 flex items-center gap-3">
@@ -7050,7 +7406,7 @@ export default function App() {
                   >
                     <option value="OPERACIONAL">OPERACIONAL</option>
                     <option value="ADMINISTRATIVO">ADMINISTRATIVO</option>
-                    <option value="ACL">ACL</option>
+                    <option value="LIVRE">LIVRE</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -7396,13 +7752,16 @@ export default function App() {
               <button
                 onClick={async () => {
                   let billToSave = { ...editingBill } as BillData;
-                  if (billToSave.uc && UCS_ACL_MERCADO_LIVRE.has(String(billToSave.uc))) {
+                  if (billToSave.uc && UCS_OPER.has(String(billToSave.uc))) {
+                    billToSave.tipo = 'OPER';
+                  } else if (billToSave.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc))) {
                     let mod = billToSave.modalidadeTarifaria || '';
-                    if (!mod.toUpperCase().includes('LIVRE') && !mod.toUpperCase().includes('ACL')) {
+                    if (!mod.toUpperCase().includes('LIVRE')) {
                       billToSave.modalidadeTarifaria = mod ? `${mod} - LIVRE` : 'LIVRE';
                     }
-                    billToSave.tipo = 'ACL';
+                    billToSave.tipo = 'LIVRE';
                   }
+                  billToSave.mercado = billToSave.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc)) ? 'LIVRE' : 'CATIVO';
                   const isExisting = bills.some(b => b.id === billToSave.id);
                   
                   if (isSupabaseConfigured && isAuthenticated) {
@@ -7411,14 +7770,27 @@ export default function App() {
                       if (user) {
                         const dbData = mapBillDataToDb(billToSave, user.id);
                         if (isExisting) {
-                          const { error } = await supabase.from('bills').update(dbData).eq('id', billToSave.id);
+                          let { error } = await supabase.from('bills').update(dbData).eq('id', billToSave.id);
+                          if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
+                            console.warn('Coluna data_vencimento ou mercado não encontrada. Atualizando sem elas...');
+                            const { data_vencimento, mercado, ...fallbackData } = dbData;
+                            const fallbackRes = await supabase.from('bills').update(fallbackData).eq('id', billToSave.id);
+                            error = fallbackRes.error;
+                          }
                           if (error) {
                             console.error('Erro ao atualizar fatura no Supabase:', error);
                             return;
                           }
                           setBills(prev => prev.map(b => b.id === billToSave.id ? billToSave : b));
                         } else {
-                          const { data, error } = await supabase.from('bills').insert(dbData).select().single();
+                          let { data, error } = await supabase.from('bills').insert(dbData).select().single();
+                          if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
+                            console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
+                            const { data_vencimento, mercado, ...fallbackData } = dbData;
+                            const fallbackRes = await supabase.from('bills').insert(fallbackData).select().single();
+                            error = fallbackRes.error;
+                            data = fallbackRes.data;
+                          }
                           if (error) {
                             console.error('Erro ao inserir fatura no Supabase:', error);
                             return;

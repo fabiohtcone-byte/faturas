@@ -57,8 +57,8 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
 
   const isGrupoA = (d: any) => d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
   const isGrupoB = (d: any) => !isGrupoA(d);
-  const isACL = (d: any) => (d.modalidadeTarifaria || '').includes('LIVRE') || (d.modalidadeTarifaria || '').includes('ACL') || d.tipo === 'ACL';
-  const isCativo = (d: any) => !isACL(d);
+  const isLivre = (d: any) => (d.modalidadeTarifaria || '').includes('LIVRE') || d.tipo === 'LIVRE';
+  const isCativo = (d: any) => !isLivre(d);
   
   const isAzul = (d: any) => (d.modalidadeTarifaria || '').includes('AZUL');
   const isVerde = (d: any) => (d.modalidadeTarifaria || '').includes('VERDE');
@@ -76,9 +76,9 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   const grupoA = calc(isGrupoA);
   const grupoB = calc(isGrupoB);
 
-  const acl = calc(d => isGrupoA(d) && isACL(d));
-  const aclAzul = calc(d => isGrupoA(d) && isACL(d) && isAzul(d));
-  const aclVerde = calc(d => isGrupoA(d) && isACL(d) && isVerde(d));
+  const livre = calc(d => isGrupoA(d) && isLivre(d));
+  const livreAzul = calc(d => isGrupoA(d) && isLivre(d) && isAzul(d));
+  const livreVerde = calc(d => isGrupoA(d) && isLivre(d) && isVerde(d));
 
   const cativo = calc(d => isGrupoA(d) && isCativo(d));
   const cativoAzul = calc(d => isGrupoA(d) && isCativo(d) && isAzul(d));
@@ -453,13 +453,13 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
             </div>
             
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-              {/* ACL Card */}
+              {/* LIVRE Card */}
               <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-xl transition-all duration-500">
                 <div className="flex justify-between items-center mb-8 relative z-10">
                   <div className="flex items-center gap-5">
                     <div className="w-3 h-12 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-md"></div>
                     <div>
-                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">ACL - Mercado Livre</h3>
+                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">MERCADO LIVRE</h3>
                       <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Livre</p>
                     </div>
                   </div>
@@ -469,19 +469,19 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                 </div>
                 
                 <div className="space-y-1 relative z-10 mb-8">
-                  <MetricRow icon={DollarSign} label="Custo Total" value={acl.custo} isCurrency />
-                  <MetricRow icon={Zap} label="Consumo Total" value={acl.consumo} unit="kWh" />
-                  <MetricRow icon={Calculator} label="Tarifa Média" value={acl.tarifa} isCurrency />
+                  <MetricRow icon={DollarSign} label="Custo Total" value={livre.custo} isCurrency />
+                  <MetricRow icon={Zap} label="Consumo Total" value={livre.consumo} unit="kWh" />
+                  <MetricRow icon={Calculator} label="Tarifa Média" value={livre.tarifa} isCurrency />
                 </div>
 
                 <div className="space-y-6 relative z-10">
                   <div className="grid grid-cols-2 gap-6">
-                    <DetailCard title="Faturas Azul" data={aclAzul} color="blue" icon={Zap} />
-                    <DetailCard title="Faturas Verde" data={aclVerde} color="green" icon={Zap} />
+                    <DetailCard title="Faturas Azul" data={livreAzul} color="blue" icon={Zap} />
+                    <DetailCard title="Faturas Verde" data={livreVerde} color="green" icon={Zap} />
                   </div>
                   <div className="grid grid-cols-2 gap-6">
-                    <SparklineCard title="Evolução Azul" data={aclAzul} color="blue" sparklineData={sparklineDataAzul} />
-                    <SparklineCard title="Evolução Verde" data={aclVerde} color="green" sparklineData={sparklineDataVerde} />
+                    <SparklineCard title="Evolução Azul" data={livreAzul} color="blue" sparklineData={sparklineDataAzul} />
+                    <SparklineCard title="Evolução Verde" data={livreVerde} color="green" sparklineData={sparklineDataVerde} />
                   </div>
                 </div>
               </div>
