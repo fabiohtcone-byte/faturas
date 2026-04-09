@@ -167,7 +167,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
       <div className="text-right">
         <span className="text-2xl font-black text-slate-900 tracking-tight">
           {isCurrency && <span className="text-base text-slate-400 font-bold mr-1.5">R$</span>}
-          {formatNumber(value, isCurrency, isCurrency ? 2 : 0)}
+          {formatNumber(value, isCurrency, 2)}
           {unit && <span className="text-base text-slate-400 font-bold ml-1.5">{unit}</span>}
         </span>
       </div>
@@ -228,7 +228,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
           </div>
           <div className="flex justify-between items-center bg-white/50 p-1.5 rounded-lg border border-slate-100">
             <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Consumo</span>
-            <span className={`text-xs font-bold ${colorStyles.valueText}`}>{formatNumber(data.consumo, false, 0)} <span className="text-[9px] text-slate-400 font-medium">kWh</span></span>
+            <span className={`text-xs font-bold ${colorStyles.valueText}`}>{formatNumber(data.consumo, false, 2)} <span className="text-[9px] text-slate-400 font-medium">kWh</span></span>
           </div>
           <div className="flex justify-between items-center pt-1.5 border-t border-slate-100">
             <span className={`text-[9px] font-bold uppercase tracking-wider ${colorStyles.text}`}>Tarifa Média</span>
@@ -596,7 +596,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                       </div>
                       <div className="flex justify-between items-center bg-white/60 p-1.5 rounded-lg border border-emerald-100/50">
                         <span className="text-[9px] font-bold text-emerald-600/70 uppercase tracking-wider">Geração Solar</span>
-                        <span className="text-xs font-bold text-emerald-900">{formatNumber(totalSolarInjetada, false, 0)} <span className="text-[9px] text-emerald-600/70">kWh</span></span>
+                        <span className="text-xs font-bold text-emerald-900">{formatNumber(totalSolarInjetada, false, 2)} <span className="text-[9px] text-emerald-600/70">kWh</span></span>
                       </div>
                       <div className="flex justify-between items-center bg-white/60 p-1.5 rounded-lg border border-emerald-100/50">
                         <span className="text-[9px] font-bold text-emerald-600/70 uppercase tracking-wider">Emissões Evitadas</span>

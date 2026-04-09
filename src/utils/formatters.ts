@@ -49,7 +49,7 @@ export const formatReference = (ref: string) => {
 
 export const formatNumber = (val: number, isCurrency: boolean = false, precision: number = 2) => {
   return val.toLocaleString('pt-BR', {
-    minimumFractionDigits: isCurrency ? precision : 0,
+    minimumFractionDigits: precision,
     maximumFractionDigits: precision
   });
 };

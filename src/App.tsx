@@ -194,8 +194,6 @@ const EXCEL_COLUMNS = [
   { header: 'Valor Reativa Excedente Ponta (R$)', key: 'valorEnergiaReativaExcedPonta' },
   { header: 'Reativa Excedente Fora Ponta (kVArh)', key: 'energiaReativaExcedFPonta' },
   { header: 'Valor Reativa Excedente Fora Ponta (R$)', key: 'valorEnergiaReativaExcedFPonta' },
-  { header: 'Energia Injetada (kWh)', key: 'energiaInjetadaKwh' },
-  { header: 'Energia Compensada (kWh)', key: 'energiaCompensadaKwh' },
   { header: 'GDI oUC (kWh)', key: 'energiaAtvInjetadaGDIOUC' },
   { header: 'Valor GDI oUC (R$)', key: 'valorEnergiaAtvInjetadaGDIOUC' },
   { header: 'GDI mUC (kWh)', key: 'energiaAtvInjetadaGDIMUC' },
@@ -844,7 +842,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
       <div className="text-right flex items-baseline gap-1">
         {isCurrency && <span className="text-[10px] text-slate-400 font-bold">R$</span>}
         <span className="text-lg font-black text-slate-900 tracking-tight">
-          {formatNumber(value, isCurrency, isCurrency ? 2 : 0)}
+          {formatNumber(value, isCurrency, 2)}
         </span>
         {unit && <span className="text-[10px] text-slate-400 font-bold ml-1">{unit}</span>}
       </div>
@@ -906,7 +904,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
           </div>
           <div className="flex justify-between items-end bg-white/50 p-1.5 rounded-xl border border-slate-100">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Consumo</span>
-            <span className={`text-sm font-bold ${colorStyles.valueText}`}>{formatNumber(data.consumo, false, 0)} <span className="text-[10px] text-slate-400 font-medium">kWh</span></span>
+            <span className={`text-sm font-bold ${colorStyles.valueText}`}>{formatNumber(data.consumo, false, 2)} <span className="text-[10px] text-slate-400 font-medium">kWh</span></span>
           </div>
           <div className="flex justify-between items-end pt-2 border-t border-slate-100">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${colorStyles.text}`}>Tarifa Média</span>
@@ -917,8 +915,22 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
     );
   };
 
-  const SparklineCard = ({ title, data, color = "blue", sparklineData, fullMonthlyData, onMouseEnter, onMouseLeave }: { title: string, data: any, color?: "blue" | "green", sparklineData: any[], fullMonthlyData: any[], onMouseEnter?: () => void, onMouseLeave?: () => void }) => {
-    const colorHex = color === "blue" ? "#3b82f6" : "#10b981";
+  const SparklineCard = ({ 
+    title, 
+    data, 
+    color = "blue", 
+    fullMonthlyData,
+    onMouseEnter,
+    onMouseLeave
+  }: { 
+    title: string, 
+    data: any, 
+    color?: "blue" | "green", 
+    sparklineData: any[], 
+    fullMonthlyData: any[], 
+    onMouseEnter?: () => void, 
+    onMouseLeave?: () => void 
+  }) => {
     const bgClass = color === "blue" ? "bg-blue-50" : "bg-emerald-50";
     const textClass = color === "blue" ? "text-blue-600" : "text-emerald-600";
     const valueTextClass = "text-slate-900";
@@ -935,95 +947,99 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
       <div 
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex items-center justify-between mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-visible shadow-sm`}
+        className={`rounded-2xl p-4 border ${borderClass} ${bgClass} flex flex-col mt-3 transition-all duration-300 ${hoverBorderClass} group relative overflow-hidden shadow-sm h-[220px] cursor-pointer`}
       >
         <div className="absolute top-0 right-0 w-24 h-24 bg-white/50 rounded-full -translate-y-1/2 translate-x-1/2 opacity-40 group-hover:scale-110 transition-transform duration-500 blur-xl"></div>
-        <div className="flex items-center gap-4 relative z-10">
-          <div className={`w-10 h-10 rounded-xl ${iconBgClass} flex items-center justify-center shadow-sm border border-white group-hover:scale-110 transition-transform`}>
-            <TrendingUp size={20} className={textClass} />
+        <div className="flex items-center justify-between mb-4 relative z-10">
+          <div className="flex items-center gap-3">
+            <div className={`w-8 h-8 rounded-lg ${iconBgClass} flex items-center justify-center shadow-sm border border-white group-hover:scale-110 transition-transform`}>
+              <TrendingUp size={16} className={textClass} />
+            </div>
+            <div>
+              <h4 className={`text-[10px] font-bold uppercase tracking-wider text-slate-500`}>{title}</h4>
+              <p className={`text-sm font-bold ${valueTextClass}`}>R$ {formatNumber(data.custo, true, 2)}</p>
+            </div>
           </div>
-          <div>
-            <h4 className={`text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1`}>{title}</h4>
-            <p className={`text-lg font-bold ${valueTextClass}`}>R$ {formatNumber(data.custo, true)}</p>
+          <div className="flex items-center gap-3 bg-white/50 px-2 py-1 rounded-lg border border-slate-100">
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-[#0ea5e9]"></div>
+              <span className="text-[8px] font-bold text-slate-500 uppercase">Consumo</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-[#6366f1]"></div>
+              <span className="text-[8px] font-bold text-slate-500 uppercase">Custo</span>
+            </div>
           </div>
         </div>
-        <div className="w-24 h-12 opacity-80 relative z-10 group-hover:opacity-10 transition-opacity">
+        
+        <div className="flex-1 w-full relative z-10">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={sparklineData}>
-              <Line type="monotone" dataKey="value" stroke={colorHex} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-            </LineChart>
+            <AreaChart data={fullMonthlyData} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
+              <defs>
+                <linearGradient id={`colorConsumo-${color}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.2}/>
+                  <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id={`colorCusto-${color}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" opacity={0.5} />
+              <XAxis 
+                dataKey="name" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#64748b', fontSize: 8, fontWeight: 600 }} 
+                dy={5}
+              />
+              <YAxis 
+                yAxisId="left" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#64748b', fontSize: 8, fontWeight: 600 }} 
+                tickFormatter={(val) => formatNumber(val, false, 0)}
+                domain={domain}
+                hide
+              />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: 'rgba(255, 255, 255, 0.95)', 
+                  borderRadius: '12px', 
+                  border: 'none', 
+                  boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                  fontSize: '10px'
+                }}
+                itemStyle={{ padding: '2px 0' }}
+                formatter={(value: number, name: string) => [
+                  name === 'custo' ? `R$ ${formatNumber(value, true, 2)}` : `${formatNumber(value, false, 2)} kWh`,
+                  name === 'custo' ? 'Custo' : 'Consumo'
+                ]}
+              />
+              <Area 
+                yAxisId="left"
+                type="monotone" 
+                dataKey="consumo" 
+                name="consumo"
+                stroke="#0ea5e9" 
+                strokeWidth={2}
+                fillOpacity={1} 
+                fill={`url(#colorConsumo-${color})`}
+                isAnimationActive={false}
+              />
+              <Area 
+                yAxisId="left"
+                type="monotone" 
+                dataKey="custo" 
+                name="custo"
+                stroke="#6366f1" 
+                strokeWidth={2}
+                fillOpacity={1} 
+                fill={`url(#colorCusto-${color})`}
+                isAnimationActive={false}
+              />
+            </AreaChart>
           </ResponsiveContainer>
-        </div>
-
-        {/* Hover Chart */}
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-[450px] bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50">
-          <div className="flex justify-between items-center mb-6">
-            <div className="flex items-center gap-3">
-              <div className={`w-2 h-8 rounded-full ${color === 'blue' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-widest">{title}</h4>
-                <p className="text-[10px] text-slate-500 font-medium mt-0.5">Evolução Mensal</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#0ea5e9]"></div>
-                <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Consumo</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#6366f1]"></div>
-                <span className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Custo</span>
-              </div>
-            </div>
-          </div>
-          <div className="h-[200px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={fullMonthlyData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
-                <defs>
-                  <linearGradient id={`colorConsumo-${color}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id={`colorCusto-${color}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={true} stroke="#e2e8f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} dy={10} />
-                <YAxis 
-                  yAxisId="left" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} 
-                  dx={-10} 
-                  tickFormatter={(val) => formatNumber(val, false, 0)}
-                  domain={domain}
-                />
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} 
-                  dx={10} 
-                  tickFormatter={(val) => `R$ ${formatNumber(val, true, 0)}`}
-                  domain={domain}
-                />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)', padding: '12px 16px' }}
-                  itemStyle={{ fontSize: '12px', fontWeight: 600, padding: '4px 0' }}
-                  labelStyle={{ fontSize: '11px', fontWeight: 700, color: '#64748b', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}
-                  formatter={(value: number, name: string) => [
-                    name === 'custo' ? `R$ ${formatNumber(value, true)}` : `${formatNumber(value, false)} kWh`,
-                    name === 'custo' ? 'Custo' : 'Consumo'
-                  ]}
-                />
-                <Area yAxisId="left" type="monotone" dataKey="consumo" stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill={`url(#colorConsumo-${color})`} activeDot={{ r: 6, strokeWidth: 0, fill: '#0ea5e9' }} />
-                <Area yAxisId="right" type="monotone" dataKey="custo" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill={`url(#colorCusto-${color})`} activeDot={{ r: 6, strokeWidth: 0, fill: '#6366f1' }} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
         </div>
       </div>
     );
@@ -1214,175 +1230,167 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
                   <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
                 </div>
                 
-                <AnimatePresence mode="wait">
-                  {!hoveredLivreType ? (
+                <AnimatePresence>
+                  {hoveredLivreType && (
                     <motion.div
-                      key="content"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex-1 flex flex-col"
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="absolute inset-x-0 top-0 z-50 bg-white/98 backdrop-blur-md rounded-t-[2rem] p-8 border-b border-slate-100 shadow-2xl overflow-hidden"
+                      style={{ height: '50%' }}
                     >
-                      <div className="flex justify-between items-center mb-8 relative z-10">
-                        <div className="flex items-center gap-5">
-                          <div className="w-3 h-12 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-md"></div>
-                          <div>
-                            <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">MERCADO LIVRE</h3>
-                            <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Livre</p>
+                      <div className="flex justify-between items-center mb-6">
+                        <div>
+                          <h4 className="text-lg font-bold text-slate-800 uppercase tracking-wider">
+                            Projeção Detalhada: {hoveredLivreType === 'azul' ? 'Evolução Azul' : 'Evolução Verde'}
+                          </h4>
+                          <p className="text-xs text-slate-500">Análise comparativa de consumo e custo mensal</p>
+                        </div>
+                        <div className="flex gap-6">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-[#0ea5e9]"></div>
+                            <span className="text-[10px] font-bold text-slate-600 uppercase">Consumo (kWh)</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-[#6366f1]"></div>
+                            <span className="text-[10px] font-bold text-slate-600 uppercase">Custo (R$)</span>
                           </div>
                         </div>
-                        <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
-                          <Activity size={24} className="text-blue-600" />
-                        </div>
                       </div>
-                      
-                      <div className="space-y-1 relative z-10 mb-8">
-                        <MetricRow icon={DollarSign} label="Custo Total" value={livre.custo} isCurrency />
-                        <MetricRow icon={Zap} label="Consumo Total" value={livre.consumo} unit="kWh" />
-                        <MetricRow icon={Calculator} label="Tarifa Média" value={livre.tarifa} isCurrency />
-                      </div>
-
-                      <div className="space-y-6 relative z-10 mt-auto">
-                        <div className="grid grid-cols-2 gap-6">
-                          <DetailCard title="Faturas Azul" data={livreAzul} color="blue" icon={Zap} />
-                          <DetailCard title="Faturas Verde" data={livreVerde} color="green" icon={Zap} />
-                        </div>
-                        <div className="grid grid-cols-2 gap-6">
-                          <SparklineCard 
-                            title="Evolução Azul" 
-                            data={livreAzul} 
-                            color="blue" 
-                            sparklineData={sparklineDataAzul} 
-                            fullMonthlyData={monthlyDataAzul} 
-                            onMouseEnter={() => setHoveredLivreType('azul')}
-                          />
-                          <SparklineCard 
-                            title="Evolução Verde" 
-                            data={livreVerde} 
-                            color="green" 
-                            sparklineData={sparklineDataVerde} 
-                            fullMonthlyData={monthlyDataVerde} 
-                            onMouseEnter={() => setHoveredLivreType('verde')}
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="chart"
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      className="absolute inset-0 p-8 flex flex-col z-20 bg-white rounded-[2rem]"
-                      onMouseLeave={() => setHoveredLivreType(null)}
-                    >
-                      <div className="flex justify-between items-center mb-8">
-                        <div className="flex items-center gap-4">
-                          <div className={`w-3 h-10 rounded-full ${hoveredLivreType === 'azul' ? 'bg-blue-500' : 'bg-emerald-500'} shadow-lg`}></div>
-                          <div>
-                            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">
-                              Evolução {hoveredLivreType === 'azul' ? 'Azul' : 'Verde'}
-                            </h3>
-                            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest opacity-60">Análise Detalhada de Mercado Livre</p>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => setHoveredLivreType(null)}
-                          className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
-                        >
-                          <X size={20} />
-                        </button>
-                      </div>
-
-                      <div className="flex-1 w-full min-h-[250px] bg-slate-50/50 rounded-3xl p-4 border border-slate-100">
+                      <div className="flex-1 w-full h-[calc(100%-60px)]">
                         <ResponsiveContainer width="100%" height="100%">
                           <AreaChart 
-                            data={hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde} 
-                            margin={{ top: 20, right: 30, bottom: 20, left: 10 }}
+                            data={hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde}
+                            margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                           >
                             <defs>
-                              <linearGradient id="colorConsumoLivre" x1="0" y1="0" x2="0" y2="1">
+                              <linearGradient id="colorConsumoProj" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
                                 <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
                               </linearGradient>
-                              <linearGradient id="colorCustoLivre" x1="0" y1="0" x2="0" y2="1">
+                              <linearGradient id="colorCustoProj" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
                                 <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
                               </linearGradient>
                             </defs>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                             <XAxis 
                               dataKey="name" 
                               axisLine={false} 
                               tickLine={false} 
-                              tick={{ fill: '#64748b', fontSize: 11, fontWeight: 700 }} 
-                              dy={15}
+                              tick={{ fontSize: 10, fontWeight: 600, fill: '#64748b' }} 
                             />
                             <YAxis 
-                              yAxisId="left"
+                              yAxisId="left" 
+                              orientation="left" 
                               axisLine={false} 
                               tickLine={false} 
-                              tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
-                              tickFormatter={(val) => formatNumber(val, false, 0)}
+                              tick={{ fontSize: 10, fontWeight: 600, fill: '#0ea5e9' }}
+                              tickFormatter={(val) => formatNumber(val, false, 2)}
+                              label={{ value: 'Consumo (kWh)', angle: -90, position: 'insideLeft', style: { fontSize: '10px', fontWeight: 'bold', fill: '#0ea5e9' } }}
                             />
                             <YAxis 
-                              yAxisId="right"
-                              orientation="right"
+                              yAxisId="right" 
+                              orientation="right" 
                               axisLine={false} 
                               tickLine={false} 
-                              tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
-                              tickFormatter={(val) => `R$ ${formatNumber(val, true, 0)}`}
+                              tick={{ fontSize: 10, fontWeight: 600, fill: '#6366f1' }}
+                              tickFormatter={(val) => `R$ ${formatNumber(val, true, 2)}`}
+                              label={{ value: 'Custo (R$)', angle: 90, position: 'insideRight', style: { fontSize: '10px', fontWeight: 'bold', fill: '#6366f1' } }}
                             />
                             <Tooltip 
                               contentStyle={{ 
                                 backgroundColor: 'rgba(255, 255, 255, 0.95)', 
-                                borderRadius: '16px', 
+                                borderRadius: '12px', 
                                 border: 'none', 
-                                boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' 
+                                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' 
                               }}
-                              itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                              formatter={(val: any, name: string) => [
+                                name === 'custo' ? `R$ ${formatNumber(val, true, 2)}` : `${formatNumber(val, false, 2)} kWh`,
+                                name === 'custo' ? 'Custo' : 'Consumo'
+                              ]}
                             />
                             <Area 
                               yAxisId="left"
                               type="monotone" 
                               dataKey="consumo" 
-                              name="Consumo (kWh)"
+                              name="consumo"
                               stroke="#0ea5e9" 
-                              strokeWidth={3}
                               fillOpacity={1} 
-                              fill="url(#colorConsumoLivre)" 
+                              fill="url(#colorConsumoProj)" 
+                              strokeWidth={3}
                             />
                             <Area 
                               yAxisId="right"
                               type="monotone" 
                               dataKey="custo" 
-                              name="Custo (R$)"
+                              name="custo"
                               stroke="#6366f1" 
-                              strokeWidth={3}
                               fillOpacity={1} 
-                              fill="url(#colorCustoLivre)" 
+                              fill="url(#colorCustoProj)" 
+                              strokeWidth={3}
                             />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
-                      
-                      <div className="mt-6 grid grid-cols-2 gap-4">
-                        <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/50">
-                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-1">Consumo Médio</p>
-                          <p className="text-xl font-black text-blue-900">
-                            {formatNumber((hoveredLivreType === 'azul' ? livreAzul : livreVerde).consumo / (hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde).length || 0, false, 0)} <span className="text-xs font-bold opacity-60">kWh</span>
-                          </p>
-                        </div>
-                        <div className="bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100/50">
-                          <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mb-1">Custo Médio</p>
-                          <p className="text-xl font-black text-indigo-900">
-                            <span className="text-xs font-bold opacity-60 mr-1">R$</span>
-                            {formatNumber((hoveredLivreType === 'azul' ? livreAzul : livreVerde).custo / (hoveredLivreType === 'azul' ? monthlyDataAzul : monthlyDataVerde).length || 0, true, 2)}
-                          </p>
-                        </div>
-                      </div>
                     </motion.div>
                   )}
+                </AnimatePresence>
+                
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key="content"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex-1 flex flex-col"
+                  >
+                    <div className="flex justify-between items-center mb-8 relative z-10">
+                      <div className="flex items-center gap-5">
+                        <div className="w-3 h-12 bg-gradient-to-b from-blue-500 to-blue-700 rounded-full shadow-md"></div>
+                        <div>
+                          <h3 className="text-lg font-bold text-slate-800 uppercase tracking-widest">MERCADO LIVRE</h3>
+                          <p className="text-xs text-slate-500 font-medium mt-1">Ambiente de Contratação Livre</p>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100/50 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                        <Activity size={24} className="text-blue-600" />
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-1 relative z-10 mb-8">
+                      <MetricRow icon={DollarSign} label="Custo Total" value={livre.custo} isCurrency />
+                      <MetricRow icon={Zap} label="Consumo Total" value={livre.consumo} unit="kWh" />
+                      <MetricRow icon={Calculator} label="Tarifa Média" value={livre.tarifa} isCurrency />
+                    </div>
+
+                    <div className="space-y-6 relative z-10 mt-auto">
+                      <div className="grid grid-cols-2 gap-6">
+                        <DetailCard title="Faturas Azul" data={livreAzul} color="blue" icon={Zap} />
+                        <DetailCard title="Faturas Verde" data={livreVerde} color="green" icon={Zap} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-6">
+                        <SparklineCard 
+                          title="Evolução Azul" 
+                          data={livreAzul} 
+                          color="blue" 
+                          sparklineData={sparklineDataAzul} 
+                          fullMonthlyData={monthlyDataAzul} 
+                          onMouseEnter={() => setHoveredLivreType('azul')}
+                          onMouseLeave={() => setHoveredLivreType(null)}
+                        />
+                        <SparklineCard 
+                          title="Evolução Verde" 
+                          data={livreVerde} 
+                          color="green" 
+                          sparklineData={sparklineDataVerde} 
+                          fullMonthlyData={monthlyDataVerde} 
+                          onMouseEnter={() => setHoveredLivreType('verde')}
+                          onMouseLeave={() => setHoveredLivreType(null)}
+                        />
+                      </div>
+                    </div>
+                  </motion.div>
                 </AnimatePresence>
               </div>
 
@@ -3653,8 +3661,6 @@ export default function App() {
       "Valor Reativa Excedente Ponta (R$)",
       "Reativa Excedente Fora Ponta (kVArh)",
       "Valor Reativa Excedente Fora Ponta (R$)",
-      "Energia Injetada (kWh)",
-      "Energia Compensada (kWh)",
       "GDI oUC (kWh)",
       "Valor GDI oUC (R$)",
       "GDI mUC (kWh)",
@@ -3720,8 +3726,6 @@ export default function App() {
       b.valorEnergiaReativaExcedPonta,
       b.energiaReativaExcedFPonta,
       b.valorEnergiaReativaExcedFPonta,
-      b.energiaInjetadaKwh,
-      b.energiaCompensadaKwh,
       b.energiaAtvInjetadaGDIOUC,
       b.valorEnergiaAtvInjetadaGDIOUC,
       b.energiaAtvInjetadaGDIMUC,
@@ -3970,7 +3974,16 @@ export default function App() {
     return getMonthNumber(mB) - getMonthNumber(mA);
   });
 
-  const availableRelatorioTypes = Array.from(new Set(dashboardData.map(d => d.tipo))).filter(Boolean).sort();
+  const availableRelatorioTypes = React.useMemo(() => {
+    const types = Array.from(new Set(dashboardData.map(d => d.tipo))).filter(Boolean).sort();
+    if (types.includes('OPER') && !types.includes('INJETADO')) {
+      const operIndex = types.indexOf('OPER');
+      types.splice(operIndex + 1, 0, 'INJETADO');
+    } else if (!types.includes('INJETADO')) {
+      types.push('INJETADO');
+    }
+    return types;
+  }, [dashboardData]);
 
   const filteredDashboardData = dashboardData.filter(d => {
     const matchesUC = !selectedUC || selectedUC === 'all' || d.uc.toString().includes(selectedUC);
@@ -4021,7 +4034,9 @@ export default function App() {
 
   const filteredRelatorioData = dashboardData.filter(d => {
     const matchesMonth = selectedRelatorioMonth === 'all' || d.name === selectedRelatorioMonth;
-    const matchesType = selectedRelatorioType.includes('all') || selectedRelatorioType.includes(d.tipo);
+    const matchesType = selectedRelatorioType.includes('all') || 
+                       selectedRelatorioType.includes(d.tipo) ||
+                       (selectedRelatorioType.includes('INJETADO') && (d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0));
     return matchesMonth && matchesType && d.uc !== '31383580';
   });
 
@@ -5700,44 +5715,44 @@ export default function App() {
                                   <>
                                     {operationalSubTab === 'consumo' && (
                                       <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.consumoPonta.toLocaleString('pt-BR')} kWh</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.consumoForaPonta.toLocaleString('pt-BR')} kWh</td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.consumoPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.consumoForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
                                       </>
                                     )}
                                     {operationalSubTab === 'ultrapassagem' && (
                                       <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaForaPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.ultrapassagemPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.ultrapassagemForaPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-red-600">{(row.ultrapassagemPonta + row.ultrapassagemForaPonta).toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.ultrapassagemPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.ultrapassagemForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-red-600">{(row.ultrapassagemPonta + row.ultrapassagemForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
                                       </>
                                     )}
                                     {operationalSubTab === 'subutilizacao' && (
                                       <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaForaPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaMedidaPonta.toLocaleString('pt-BR')} kW</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaMedidaForaPonta.toLocaleString('pt-BR')} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaContratadaForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaMedidaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.demandaMedidaForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kW</td>
                                         <td className={`px-8 py-5 text-sm font-bold text-right ${row.demandaMedidaPonta < (row.demandaContratadaPonta * 0.8) ? 'text-orange-600' : 'text-slate-600'}`}>
-                                          {((row.demandaMedidaPonta / (row.demandaContratadaPonta || 1)) * 100).toFixed(1)}%
+                                          {((row.demandaMedidaPonta / (row.demandaContratadaPonta || 1)) * 100).toFixed(2)}%
                                         </td>
                                       </>
                                     )}
                                     {operationalSubTab === 'reativa' && (
                                       <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.reativaPonta.toLocaleString('pt-BR')} kVArh</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.reativaForaPonta.toLocaleString('pt-BR')} kVArh</td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">{(row.reativaPonta + row.reativaForaPonta).toLocaleString('pt-BR')} kVArh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.reativaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kVArh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.reativaForaPonta.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kVArh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">{(row.reativaPonta + row.reativaForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kVArh</td>
                                       </>
                                     )}
                                     {operationalSubTab === 'solar' && (
                                       <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR')} kWh</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.solarInjetadaOUC.toLocaleString('pt-BR')} kWh</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.solarInjetadaMUC.toLocaleString('pt-BR')} kWh</td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-green-600">{((row.solarInjetadaOUC + row.solarInjetadaMUC) - (row.consumoPonta + row.consumoForaPonta)).toLocaleString('pt-BR')} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.solarInjetadaOUC.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{row.solarInjetadaMUC.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-green-600">{((row.solarInjetadaOUC + row.solarInjetadaMUC) - (row.consumoPonta + row.consumoForaPonta)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
                                       </>
                                     )}
                                   </>
@@ -5766,8 +5781,8 @@ export default function App() {
                                     {financialSubTab === 'tarifa_media' && (
                                       <>
                                         <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">R$ {row.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR')} kWh</td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">R$ {(row.valorTotal / (row.consumoPonta + row.consumoForaPonta || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 3 })}</td>
+                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">{(row.consumoPonta + row.consumoForaPonta).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh</td>
+                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">R$ {(row.valorTotal / (row.consumoPonta + row.consumoForaPonta || 1)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                       </>
                                     )}
                                     {financialSubTab === 'energia_solar' && (
