@@ -128,6 +128,8 @@ interface BillData {
   tipo?: string;
   mercado?: string;
   dataVencimento?: string;
+  gerencia?: string;
+  locin?: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   error?: string;
   file?: File;
@@ -171,6 +173,8 @@ const EXCEL_COLUMNS = [
   { header: 'Tipo', key: 'tipo' },
   { header: 'Concessionária', key: 'concessionaria' },
   { header: 'Cidade', key: 'cidade' },
+  { header: 'Gerência', key: 'gerencia' },
+  { header: 'LOCINS', key: 'locin' },
   { header: 'Mês Referência', key: 'mesReferencia' },
   { header: 'Ano Leitura', key: 'anoLeitura' },
   { header: 'Vencimento', key: 'dataVencimento' },
@@ -608,6 +612,8 @@ const mapDbToBillData = (dbBill: any): BillData => {
   subgrupo: dbBill.subgrupo || '',
   tipo: tipo,
   mercado: UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc)) ? 'LIVRE' : 'CATIVO',
+  gerencia: dbBill.gerencia || '',
+  locin: dbBill.locins || '',
   dataVencimento: dbBill.data_vencimento || '',
   status: dbBill.status as any,
   error: dbBill.error || undefined,
@@ -659,6 +665,8 @@ const mapBillDataToDb = (bill: BillData, userId: string) => ({
   subgrupo: bill.subgrupo || '',
   tipo: bill.tipo || '',
   mercado: bill.mercado || '',
+  gerencia: bill.gerencia || '',
+  locins: bill.locin || '',
   data_vencimento: bill.dataVencimento || '',
   status: bill.status,
   error: bill.error || null,
@@ -2632,6 +2640,14 @@ export default function App() {
 
           return billData as BillData;
         }).map(bill => {
+          // Enriquecer com mapeamentos de Gerência e LOCIN
+          const mapping = ucMappings.find(m => m.uc === String(bill.uc));
+          if (mapping) {
+            bill.gerencia = mapping.gerencia;
+            bill.locin = mapping.locin;
+            if (!bill.cidade) bill.cidade = mapping.cidade;
+          }
+          
           bill.mercado = bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc)) ? 'LIVRE' : 'CATIVO';
           if (bill.uc && UCS_OPER.has(String(bill.uc))) {
             bill.tipo = 'OPER';
@@ -2694,6 +2710,8 @@ export default function App() {
               subgrupo: bill.subgrupo || '',
               tipo: bill.tipo || 'normal',
               mercado: bill.mercado || '',
+              gerencia: bill.gerencia || '',
+              locins: bill.locin || '',
               data_vencimento: bill.dataVencimento || '',
               status: bill.status,
               created_at: new Date(bill.createdAt || Date.now()).toISOString()
@@ -2701,10 +2719,10 @@ export default function App() {
             
             let { error } = await supabase.from('bills').insert(dbData);
             
-            if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
-              console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
+            if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.message.includes('gerencia') || error.message.includes('locins') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.details?.includes('gerencia') || error.details?.includes('locins') || error.code === 'PGRST204')) {
+              console.warn('Colunas novas não encontradas no Supabase. Inserindo sem elas...');
               const fallbackData = dbData.map((d: any) => {
-                const { data_vencimento, mercado, ...rest } = d;
+                const { data_vencimento, mercado, gerencia, locins, ...rest } = d;
                 return rest;
               });
               const fallbackRes = await supabase.from('bills').insert(fallbackData);
@@ -3348,6 +3366,14 @@ export default function App() {
       }
       result.mercado = result.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(result.uc)) ? 'LIVRE' : 'CATIVO';
 
+      // Enriquecer com Gerência e LOCIN do mapeamento
+      const mapping = ucMappings.find(m => m.uc === String(result.uc || bill.uc));
+      if (mapping) {
+        result.gerencia = mapping.gerencia;
+        result.locin = mapping.locin;
+        if (!result.cidade) result.cidade = mapping.cidade;
+      }
+
       const updatedBill: BillData = {
         ...bill,
         ...result,
@@ -3369,9 +3395,9 @@ export default function App() {
             .from('bills')
             .insert(dbData);
             
-          if (insertError && (insertError.message.includes('data_vencimento') || insertError.message.includes('mercado') || insertError.details?.includes('data_vencimento') || insertError.details?.includes('mercado') || insertError.code === 'PGRST204')) {
-            console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
-            const { data_vencimento, mercado, ...fallbackData } = dbData;
+          if (insertError && (insertError.message.includes('data_vencimento') || insertError.message.includes('mercado') || insertError.message.includes('gerencia') || insertError.message.includes('locins') || insertError.details?.includes('data_vencimento') || insertError.details?.includes('mercado') || insertError.code === 'PGRST204')) {
+            console.warn('Colunas novas não encontradas no Supabase. Inserindo sem elas...');
+            const { data_vencimento, mercado, gerencia, locins, ...fallbackData } = dbData;
             const fallbackRes = await supabase.from('bills').insert(fallbackData);
             insertError = fallbackRes.error;
           }
@@ -3385,9 +3411,9 @@ export default function App() {
             .from('bills')
             .insert(dbData);
             
-          if (insertError && (insertError.message.includes('data_vencimento') || insertError.message.includes('mercado') || insertError.details?.includes('data_vencimento') || insertError.details?.includes('mercado') || insertError.code === 'PGRST204')) {
-            console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
-            const { data_vencimento, mercado, ...fallbackData } = dbData;
+          if (insertError && (insertError.message.includes('data_vencimento') || insertError.message.includes('mercado') || insertError.message.includes('gerencia') || insertError.message.includes('locins') || insertError.details?.includes('data_vencimento') || insertError.details?.includes('mercado') || insertError.code === 'PGRST204')) {
+            console.warn('Colunas novas não encontradas no Supabase. Inserindo sem elas...');
+            const { data_vencimento, mercado, gerencia, locins, ...fallbackData } = dbData;
             const fallbackRes = await supabase.from('bills').insert(fallbackData);
             insertError = fallbackRes.error;
           }
@@ -8312,6 +8338,15 @@ export default function App() {
                     billToSave.tipo = 'LIVRE';
                   }
                   billToSave.mercado = billToSave.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc)) ? 'LIVRE' : 'CATIVO';
+                  
+                  // Enriquecer com Gerência e LOCIN
+                  const mapping = ucMappings.find(m => m.uc === String(billToSave.uc));
+                  if (mapping) {
+                    billToSave.gerencia = mapping.gerencia;
+                    billToSave.locin = mapping.locin;
+                    if (!billToSave.cidade) billToSave.cidade = mapping.cidade;
+                  }
+                  
                   const isExisting = bills.some(b => b.id === billToSave.id);
                   
                   if (isSupabaseConfigured && isAuthenticated) {
@@ -8321,9 +8356,9 @@ export default function App() {
                         const dbData = mapBillDataToDb(billToSave, user.id);
                         if (isExisting) {
                           let { error } = await supabase.from('bills').update(dbData).eq('id', billToSave.id);
-                          if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
-                            console.warn('Coluna data_vencimento ou mercado não encontrada. Atualizando sem elas...');
-                            const { data_vencimento, mercado, ...fallbackData } = dbData;
+                          if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.message.includes('gerencia') || error.message.includes('locins') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
+                            console.warn('Colunas novas não encontradas no Supabase. Atualizando sem elas...');
+                            const { data_vencimento, mercado, gerencia, locins, ...fallbackData } = dbData;
                             const fallbackRes = await supabase.from('bills').update(fallbackData).eq('id', billToSave.id);
                             error = fallbackRes.error;
                           }
@@ -8334,9 +8369,9 @@ export default function App() {
                           setBills(prev => prev.map(b => b.id === billToSave.id ? billToSave : b));
                         } else {
                           let { data, error } = await supabase.from('bills').insert(dbData).select().single();
-                          if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
-                            console.warn('Coluna data_vencimento ou mercado não encontrada. Inserindo sem elas...');
-                            const { data_vencimento, mercado, ...fallbackData } = dbData;
+                          if (error && (error.message.includes('data_vencimento') || error.message.includes('mercado') || error.message.includes('gerencia') || error.message.includes('locins') || error.details?.includes('data_vencimento') || error.details?.includes('mercado') || error.code === 'PGRST204')) {
+                            console.warn('Colunas novas não encontradas no Supabase. Inserindo sem elas...');
+                            const { data_vencimento, mercado, gerencia, locins, ...fallbackData } = dbData;
                             const fallbackRes = await supabase.from('bills').insert(fallbackData).select().single();
                             error = fallbackRes.error;
                             data = fallbackRes.data;
