@@ -48,6 +48,7 @@ import {
   ArrowDown,
   Menu,
   User,
+  Database,
   Home,
   BarChart2,
   GitCompare,
@@ -2386,6 +2387,50 @@ export default function App() {
       e.target.value = '';
     };
     reader.readAsText(file);
+  };
+
+  const [isSyncingMappings, setIsSyncingMappings] = useState(false);
+
+  const syncMappingsToSupabase = () => {
+    if (!isSupabaseConfigured || !isAuthenticated) {
+      showAlert('Erro', 'Você precisa estar logado e com o Supabase configurado para sincronizar.');
+      return;
+    }
+
+    showConfirm(
+      'Sincronizar com Banco de Dados',
+      'Isso irá atualizar as colunas Gerência e LOCIN de TODAS as faturas no banco de dados. Este processo pode demorar alguns minutos. Deseja continuar?',
+      async () => {
+        setIsSyncingMappings(true);
+        let successCount = 0;
+        let errorCount = 0;
+
+        try {
+          for (const mapping of ucMappings) {
+            const { error } = await supabase
+              .from('bills')
+              .update({ 
+                gerencia: mapping.gerencia, 
+                locins: mapping.locin 
+              })
+              .eq('uc', mapping.uc);
+
+            if (error) {
+              console.error(`Erro ao sincronizar UC ${mapping.uc}:`, error);
+              errorCount++;
+            } else {
+              successCount++;
+            }
+          }
+          showAlert('Sincronização Finalizada', `Sucesso: ${successCount} UCs atualizados. Falhas: ${errorCount}.`);
+        } catch (err: any) {
+             showAlert('Erro', `Falha durante a sincronização: ${err.message}`);
+        } finally {
+          setIsSyncingMappings(false);
+        }
+      },
+      'info'
+    );
   };
 
   const showAlert = (title: string, message: string) => {
@@ -7731,6 +7776,14 @@ export default function App() {
                     >
                       <Trash2 size={14} />
                       Excluir Todos
+                    </button>
+                    <button
+                      onClick={syncMappingsToSupabase}
+                      disabled={isSyncingMappings}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-2 ${isSyncingMappings ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
+                    >
+                      <Database size={14} className={isSyncingMappings ? 'opacity-50' : ''} />
+                      {isSyncingMappings ? 'Sincronizando...' : 'Sincronizar com Banco'}
                     </button>
                     <label className="cursor-pointer px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-bold transition-colors flex items-center gap-2">
                       <Upload size={14} />
