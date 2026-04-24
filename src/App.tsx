@@ -56,7 +56,8 @@ import {
   ZapOff,
   Leaf,
   Key,
-  AlertTriangle
+  AlertTriangle,
+  Building
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -103,8 +104,6 @@ interface BillData {
   demandaPotenciaAtivaUltrapFPonta: string;
   energiaReativaExcedPonta: string;
   energiaReativaExcedFPonta: string;
-  energiaInjetadaKwh: string;
-  energiaCompensadaKwh: string;
   valorDemandaPotenciaMedidaPonta: string;
   valorDemandaPotenciaMedidaForaPonta: string;
   valorDemandaPotenciaNaoConsumidaPonta: string;
@@ -135,6 +134,13 @@ interface BillData {
   progress?: number;
   abortController?: AbortController;
   createdAt?: number;
+}
+
+export interface UCLocinMapping {
+  uc: string;
+  gerencia: string;
+  locin: string;
+  cidade: string;
 }
 
 // --- Constants ---
@@ -227,8 +233,6 @@ const EXTRACTION_SCHEMA = {
     demandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Demanda de Potência Ativa - Ultrapassagem - Fora Ponta (kW)." },
     energiaReativaExcedPonta: { type: Type.STRING, description: "Energia Reativa Excedente - Ponta (kVArh)." },
     energiaReativaExcedFPonta: { type: Type.STRING, description: "Energia Reativa Excedente - Fora Ponta (kVArh)." },
-    energiaInjetadaKwh: { type: Type.STRING, description: "Energia Injetada em kWh (Geração Distribuída). Procure por 'Energia Injetada' ou 'GD'." },
-    energiaCompensadaKwh: { type: Type.STRING, description: "Energia Compensada em kWh (Geração Distribuída). Procure por 'Energia Compensada' ou 'Consumo Reaturado'." },
     valorDemandaPotenciaMedidaPonta: { type: Type.STRING, description: "Valor em R$ da Demanda de Potência Medida - Ponta." },
     valorDemandaPotenciaMedidaForaPonta: { type: Type.STRING, description: "Valor em R$ da Demanda de Potência Medida - Fora Ponta." },
     valorDemandaPotenciaNaoConsumidaPonta: { type: Type.STRING, description: "Valor em R$ da Demanda Potência Não Consumida - Ponta." },
@@ -237,10 +241,10 @@ const EXTRACTION_SCHEMA = {
     valorDemandaPotenciaAtivaUltrapFPonta: { type: Type.STRING, description: "Valor em R$ da Demanda Potência Ativa - Ultrapassagem - Fora Ponta." },
     valorEnergiaReativaExcedPonta: { type: Type.STRING, description: "Valor em R$ da Energia Reativa Excedente - Ponta." },
     valorEnergiaReativaExcedFPonta: { type: Type.STRING, description: "Valor em R$ da Energia Reativa Excedente - Fora Ponta." },
-    energiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Energia Ativa Injetada GDI oUC (kWh)." },
-    valorEnergiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Valor em R$ da Energia Ativa Injetada GDI oUC." },
-    energiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Energia Ativa Injetada GDI mUC (kWh)." },
-    valorEnergiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Valor em R$ da Energia Ativa Injetada GDI mUC." },
+    energiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Energia Ativa Injetada GDI oUC (kWh). IMPORTANTE: Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor." },
+    valorEnergiaAtvInjetadaGDIOUC: { type: Type.STRING, description: "Valor em R$ da Energia Ativa Injetada GDI oUC. IMPORTANTE: Este valor é frequentemente negativo na fatura (ex: -3.822,92). Extraia EXATAMENTE como aparece, incluindo o sinal negativo. Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor." },
+    energiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Energia Ativa Injetada GDI mUC (kWh). IMPORTANTE: Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor." },
+    valorEnergiaAtvInjetadaGDIMUC: { type: Type.STRING, description: "Valor em R$ da Energia Ativa Injetada GDI mUC. IMPORTANTE: Este valor é frequentemente negativo na fatura (ex: -124,39). Extraia EXATAMENTE como aparece, incluindo o sinal negativo. Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor." },
     cip: { type: Type.STRING, description: "Valor em R$ da Contribuição de Iluminação Pública (CIP ou COSIP)." },
     outrosEncargos: { type: Type.STRING, description: "Soma de outros encargos, multas, juros ou adicionais de bandeira tarifária." },
     pis: { type: Type.STRING, description: "Valor em R$ do PIS." },
@@ -581,8 +585,6 @@ const mapDbToBillData = (dbBill: any): BillData => {
   demandaPotenciaAtivaUltrapFPonta: dbBill.demanda_potencia_ativa_ultrap_f_ponta || '',
   energiaReativaExcedPonta: dbBill.energia_reativa_exced_ponta || '',
   energiaReativaExcedFPonta: dbBill.energia_reativa_exced_f_ponta || '',
-  energiaInjetadaKwh: dbBill.energia_injetada_kwh || '',
-  energiaCompensadaKwh: dbBill.energia_compensada_kwh || '',
   valorDemandaPotenciaMedidaPonta: dbBill.valor_demanda_potencia_medida_ponta || '',
   valorDemandaPotenciaMedidaForaPonta: dbBill.valor_demanda_potencia_medida_fora_ponta || '',
   valorDemandaPotenciaNaoConsumidaPonta: dbBill.valor_demanda_potencia_nao_consumida_ponta || '',
@@ -634,8 +636,6 @@ const mapBillDataToDb = (bill: BillData, userId: string) => ({
   demanda_potencia_ativa_ultrap_f_ponta: bill.demandaPotenciaAtivaUltrapFPonta,
   energia_reativa_exced_ponta: bill.energiaReativaExcedPonta,
   energia_reativa_exced_f_ponta: bill.energiaReativaExcedFPonta,
-  energia_injetada_kwh: bill.energiaInjetadaKwh,
-  energia_compensada_kwh: bill.energiaCompensadaKwh,
   valor_demanda_potencia_medida_ponta: bill.valorDemandaPotenciaMedidaPonta,
   valor_demanda_potencia_medida_fora_ponta: bill.valorDemandaPotenciaMedidaForaPonta,
   valor_demanda_potencia_nao_consumida_ponta: bill.valorDemandaPotenciaNaoConsumidaPonta,
@@ -698,12 +698,14 @@ const MetricCard = ({ title, custo, consumo, isReference = false, rightElement, 
 };
 
 const UCS_PPP = new Set([
-  "12018", "33857", "34548", "34594", "34724", "36245", "36246", "74255", "74256", "75226", "94009", "101432", "101434", "101435", "102438", "108130", "108132", "112154", "112156", "112157", "112158", "112160", "112581", "121252", "121253", "121254", "121600", "128389", "128392", "128394", "128898", "132652", "132666", "132671", "138551", "138555", "138557", "152427", "152434", "152446", "153011", "158690", "163517", "163521", "163944", "172004", "172005", "172705", "179857", "179858", "179859", "189729", "189730", "189731", "189732", "189790", "197712", "206446", "209223", "209225", "209226", "209227", "209397", "211934", "211935", "211936", "211937", "216228", "216229", "220535", "220546", "222648", "222650", "223697", "231303", "231304", "231305", "231306", "233304", "233306", "238383", "244193", "244194", "244199", "244200", "244205", "244206", "244209", "247298", "247299", "249353", "249354", "252248", "252249", "252250", "252251", "253245", "253246", "256200", "258183", "264010", "264986", "264988", "269110", "269118", "270079", "274331", "464406", "1047259", "1084731", "1113637", "1126680", "1151043", "2414930", "2420193", "2558334", "2657735", "2700471", "2716454", "2754088", "2765050", "2797860", "2858514", "2884288", "2954787", "2999073", "3047887", "3058557", "3070666", "3102869", "3141335", "3175195", "3181887", "3188966", "3206144", "3207043", "3214000", "3234876", "3235300", "3248099", "3275502", "3301943", "3302837", "3310090", "3313761", "3331889", "3341371", "3341373", "3341380", "3343169", "3348432", "3366558", "3367575", "3371198", "3375315", "3390948", "3409248", "3412949", "3414263", "3417002", "3418302", "3421139", "3426808", "3481691", "3498079", "272605", "272951", "273988", "273989", "274332", "276549", "277100", "277101", "279007", "280858", "280860", "281808", "281809", "283247", "283248", "283352", "283480", "453683", "453827", "456560", "456731", "456907", "457351", "457765", "457766", "457891", "458050", "458289", "458661", "460570", "460571", "461216", "461759", "462534", "462964", "463730", "463783", "463908", "464549", "464764", "464765", "465134", "465135", "465971", "466787", "467063", "467064", "467145", "482891", "518898", "527978", "533217", "905272", "925640", "938246", "973292", "978395", "984681", "988341", "996818", "1000652", "1034959", "1047248", "1089791", "1126687", "1127638", "1136937", "1142030", "1142916", "1144446", "1148016", "1204522", "1223492", "1273099", "1273146", "1292715", "1309765", "1320065", "1352920", "1361474", "1388271", "1467369", "1479890", "1491784", "1543691", "1548221", "1600326", "1650695", "1656911", "1673468", "1677710", "1686836", "1690088", "1698936", "1698960", "1699438", "1701676", "1702111", "1745575", "1745856", "1748386", "1821234", "1877305", "1879309", "1879837", "1899594", "1901647", "1916616", "1923325", "1924437", "1936660", "1975585", "2065093", "2093921", "2140053", "2188959", "2203819", "2233618", "2283427", "2337244", "2342909", "2392852", "2398903", "2480085", "2524079", "2527881", "2563141", "2613087", "2632342", "3001597", "3001613", "3005931", "3005999", "3011291", "3036982", "3422802", "3443659", "3495962", "2601732", "2601678"
+  "272605", "272951", "273988", "273989", "274332", "276549", "277100", "277101", "279007", "280858", "280860", "281808", "281809", "283247", "283248", "283352", "283480", "453683", "453827", "456560", "456731", "456907", "457351", "457765", "457766", "457891", "458050", "458289", "458661", "460570", "460571", "461216", "461759", "462534", "462964", "463730", "463783", "463908", "464549", "464764", "464765", "465134", "465135", "465971", "466787", "467063", "467064", "467145", "482891", "518898", "527978", "533217", "905272", "925640", "938246", "973292", "978395", "984681", "988341", "996818", "1000652", "1034959", "1047248", "1089791", "1126687", "1127638", "1136937", "1142030", "1142916", "1144446", "1148016", "1204522", "1223492", "1273099", "1273146", "1292715", "1309765", "1320065", "1352920", "1361474", "1388271", "1467369", "1479890", "1491784", "1543691", "1548221", "1600326", "1650695", "1656911", "1673468", "1677710", "1686836", "1690088", "1698936", "1698960", "1699438", "1701676", "1702111", "1745575", "1745856", "1748386", "1821234", "1877305", "1879309", "1879837", "1899594", "1901647", "1916616", "1923325", "1924437", "1936660", "1975585", "2065093", "2093921", "2140053", "2188959", "2203819", "2233618", "2283427", "2337244", "2342909", "2392852", "2398903", "2480085", "2524079", "2527881", "2563141", "2613087", "2632342", "3001597", "3001613", "3005931", "3005999", "3011291", "3036982", "3422802", "3443659", "3495962", "12018", "33857", "34548", "34594", "34724", "36245", "36246", "74255", "74256", "75226", "94009", "101432", "101434", "101435", "102438", "108130", "108132", "112154", "112156", "112157", "112158", "112160", "112581", "121252", "121253", "121254", "121600", "128389", "128392", "128394", "128898", "132652", "132666", "132671", "138551", "138555", "138557", "152427", "152434", "152446", "153011", "158690", "163517", "163521", "163944", "172004", "172005", "172705", "179857", "179858", "179859", "189729", "189730", "189731", "189732", "189790", "197712", "206446", "209223", "209225", "209226", "209227", "209397", "211934", "211935", "211936", "211937", "216228", "216229", "216861", "220535", "220546", "222648", "222650", "223697", "231303", "231304", "231305", "231306", "233304", "233306", "238383", "244193", "244194", "244199", "244200", "244205", "244206", "244209", "247298", "247299", "249353", "249354", "252248", "252249", "252250", "252251", "253245", "253246", "256200", "258183", "264010", "264986", "264988", "269110", "269118", "270079", "274331", "464406", "1047259", "1084731", "1113637", "1126680", "1151043", "2414930", "2420193", "2558334", "2657735", "2700471", "2716454", "2754088", "2765050", "2797860", "2858514", "2884288", "2954787", "2999073", "3047887", "3058557", "3070666", "3102869", "3141335", "3175195", "3181887", "3188966", "3206144", "3207043", "3214000", "3234876", "3235300", "3248099", "3275502", "3301943", "3302837", "3310090", "3313761", "3324892", "3331889", "3341371", "3341373", "3341380", "3343169", "3348432", "3366558", "3367575", "3371198", "3375315", "3390948", "3409248", "3412949", "3414263", "3417002", "3418302", "3421139", "3426808", "3481691", "3498079"
 ]);
 
 const UCS_USINA = new Set([
   "2400975", "1602335", "279006", "176817", "176812", "102690", "3211"
 ]);
+
+const hasCompensacao = (d: any) => d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0 || UCS_PPP.has(String(d.uc)) || UCS_USINA.has(String(d.uc));
 
 const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, handleSelectKey }: { data: any[], setCurrentPage: (page: string) => void, handleLogout: () => void, hasApiKey: boolean, handleSelectKey: () => void }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
@@ -734,11 +736,9 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
   const isVerde = (d: any) => d.modalidadeTarifaria.includes('VERDE');
   const isOutrosGrupoA = (d: any) => isGrupoA(d) && !isAzul(d) && !isVerde(d);
   
-  const hasCompensacao = (d: any) => d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0;
-  
   const isConsumoMinimo = (d: any) => isGrupoB(d) && (d.consumoPonta + d.consumoForaPonta) <= 100 && d.valorTotal < 150;
-  const isPPP = (d: any) => isGrupoB(d) && UCS_PPP.has(String(d.uc));
-  const isUsina = (d: any) => isGrupoB(d) && UCS_USINA.has(String(d.uc));
+  const isPPP = (d: any) => UCS_PPP.has(String(d.uc));
+  const isUsina = (d: any) => UCS_USINA.has(String(d.uc));
   const isOptanteB = (d: any) => isGrupoB(d) && (d.modalidadeTarifaria || '').toUpperCase().includes('OPTANTE');
   const isGeral = (d: any) => isGrupoB(d) && !isConsumoMinimo(d) && !isPPP(d) && !isUsina(d) && !isOptanteB(d);
 
@@ -1225,7 +1225,10 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
             
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
               {/* LIVRE Card */}
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-blue-100 relative group hover:shadow-xl transition-all duration-500 min-h-[500px] flex flex-col">
+              <div 
+                onMouseLeave={() => setHoveredLivreType(null)}
+                className="bg-white rounded-[2rem] p-6 shadow-sm border border-blue-100 relative group hover:shadow-xl transition-all duration-500 min-h-[500px] flex flex-col"
+              >
                 <div className="absolute inset-0 overflow-hidden rounded-[2rem] pointer-events-none">
                   <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-blue-50 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:scale-110 transition-transform duration-700"></div>
                 </div>
@@ -1233,10 +1236,11 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
                 <AnimatePresence>
                   {hoveredLivreType && (
                     <motion.div
-                      initial={{ opacity: 0, y: -20 }}
+                      initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -20 }}
-                      className="absolute inset-x-0 top-0 z-50 bg-white/98 backdrop-blur-md rounded-t-[2rem] p-8 border-b border-slate-100 shadow-2xl overflow-hidden"
+                      exit={{ opacity: 0, y: 20 }}
+                      onMouseLeave={() => setHoveredLivreType(null)}
+                      className="absolute inset-x-0 bottom-0 z-50 bg-white/98 backdrop-blur-md rounded-b-[2rem] p-8 border-t border-slate-100 shadow-2xl overflow-hidden"
                       style={{ height: '50%' }}
                     >
                       <div className="flex justify-between items-center mb-6">
@@ -1377,7 +1381,6 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
                           sparklineData={sparklineDataAzul} 
                           fullMonthlyData={monthlyDataAzul} 
                           onMouseEnter={() => setHoveredLivreType('azul')}
-                          onMouseLeave={() => setHoveredLivreType(null)}
                         />
                         <SparklineCard 
                           title="Evolução Verde" 
@@ -1386,7 +1389,6 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout, hasApiKey, ha
                           sparklineData={sparklineDataVerde} 
                           fullMonthlyData={monthlyDataVerde} 
                           onMouseEnter={() => setHoveredLivreType('verde')}
-                          onMouseLeave={() => setHoveredLivreType(null)}
                         />
                       </div>
                     </div>
@@ -1816,11 +1818,20 @@ export default function App() {
 
   React.useEffect(() => {
     try {
-      const billsToSave = bills.map(b => {
-        // We cannot serialize File objects, so we remove it before saving
-        const { file, ...rest } = b as any;
-        return rest;
-      });
+      const billsToSave = bills
+        .filter(b => {
+          if (isSupabaseConfigured && isAuthenticated) {
+            // Do not save completed bills to localStorage if Supabase is being used
+            // This prevents QuotaExceededError which leads to "zombie" pending bills
+            return b.status !== 'completed';
+          }
+          return true;
+        })
+        .map(b => {
+          // We cannot serialize File objects, so we remove it before saving
+          const { file, ...rest } = b as any;
+          return rest;
+        });
       localStorage.setItem('sanesul_bills', JSON.stringify(billsToSave));
 
       // Save files to localforage
@@ -1836,7 +1847,7 @@ export default function App() {
     } catch (e) {
       console.warn('LocalStorage limit reached, skipping save:', e);
     }
-  }, [bills]);
+  }, [bills, isAuthenticated]);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const isProcessingRef = useRef(false);
@@ -2291,6 +2302,84 @@ export default function App() {
     isAlert?: boolean;
   } | null>(null);
 
+  const [isGerenciasModalOpen, setIsGerenciasModalOpen] = useState(false);
+  const [ucMappingSearchTerm, setUcMappingSearchTerm] = useState('');
+  const [ucMappings, setUcMappings] = useState<UCLocinMapping[]>(() => {
+    const saved = localStorage.getItem('sanesul_uc_mappings');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const saveUcMappings = (mappings: UCLocinMapping[]) => {
+    setUcMappings(mappings);
+    try {
+      localStorage.removeItem('sanesul_uc_mappings');
+      if (mappings.length > 0) {
+        localStorage.setItem('sanesul_uc_mappings', JSON.stringify(mappings));
+      }
+    } catch (error) {
+      console.warn('Não foi possível salvar os mapeamentos no localStorage', error);
+    }
+  };
+
+  const getGerencia = (uc: string) => {
+    const mapping = ucMappings.find(m => m.uc === uc);
+    return mapping ? mapping.gerencia : '---';
+  };
+
+  const handleImportTxtGerencias = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      const lines = content.split(/\r?\n/);
+      const importedMappings: UCLocinMapping[] = [];
+      let skippedLines = 0;
+
+      lines.forEach(line => {
+        if (!line.trim()) return;
+        const parts = line.split(/[;,\t]/).map(p => p.trim());
+        // Require at least UC, Gerência, and LOCIN
+        if (parts.length >= 3) {
+          const uc = parts[0];
+          const gerencia = parts[1];
+          const locin = parts[2];
+          const cidade = parts[3] || '';
+          if (uc && gerencia && locin) {
+            importedMappings.push({ uc, gerencia, locin, cidade });
+          } else {
+            skippedLines++;
+          }
+        } else {
+          skippedLines++;
+        }
+      });
+
+      if (importedMappings.length > 0) {
+        // Obter valores numéricos e fundir com os atuais
+        setUcMappings(prev => {
+          const existingMap = new Map(prev.map(m => [m.uc, m]));
+          importedMappings.forEach(m => existingMap.set(m.uc, m));
+          const updated = Array.from(existingMap.values());
+          try {
+            localStorage.setItem('sanesul_uc_mappings', JSON.stringify(updated));
+          } catch (error) {
+            console.warn('Não foi possível salvar importação no localStorage', error);
+          }
+          return updated;
+        });
+        showAlert('Sucesso', `${importedMappings.length} mapeamentos importados com sucesso.${skippedLines > 0 ? ` (${skippedLines} linhas ignoradas por formato inválido)` : ''}`);
+      } else {
+        showAlert('Atenção', 'Nenhum dado válido encontrado. O formato deve ser: UC;Gerência;LOCINS;Cidade');
+      }
+      
+      // Limpa input
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  };
+
   const showAlert = (title: string, message: string) => {
     setConfirmModalData({
       title,
@@ -2392,7 +2481,7 @@ export default function App() {
       let response;
       try {
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3.1-flash-lite-preview",
+          model: "gemini-3-flash-preview",
           contents: [
             {
               parts: [
@@ -2582,8 +2671,6 @@ export default function App() {
               demanda_potencia_ativa_ultrap_f_ponta: bill.demandaPotenciaAtivaUltrapFPonta || '',
               energia_reativa_exced_ponta: bill.energiaReativaExcedPonta || '',
               energia_reativa_exced_f_ponta: bill.energiaReativaExcedFPonta || '',
-              energia_injetada_kwh: bill.energiaInjetadaKwh || '',
-              energia_compensada_kwh: bill.energiaCompensadaKwh || '',
               valor_demanda_potencia_medida_ponta: bill.valorDemandaPotenciaMedidaPonta || '',
               valor_demanda_potencia_medida_fora_ponta: bill.valorDemandaPotenciaMedidaForaPonta || '',
               valor_demanda_potencia_nao_consumida_ponta: bill.valorDemandaPotenciaNaoConsumidaPonta || '',
@@ -2667,8 +2754,6 @@ export default function App() {
       demandaPotenciaAtivaUltrapFPonta: '',
       energiaReativaExcedPonta: '',
       energiaReativaExcedFPonta: '',
-      energiaInjetadaKwh: '',
-      energiaCompensadaKwh: '',
       valorDemandaPotenciaMedidaPonta: '',
       valorDemandaPotenciaMedidaForaPonta: '',
       valorDemandaPotenciaNaoConsumidaPonta: '',
@@ -2732,8 +2817,9 @@ export default function App() {
         vUltrapFP: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
         vNaoConsP: parseValue(b.valorDemandaPotenciaNaoConsumidaPonta),
         vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta),
-        tipo: b.tipo || '',
-        mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO'
+        tipo: UCS_PPP.has(String(b.uc)) ? 'PPP Fotovoltaica' : (b.tipo || ''),
+        mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO',
+        city: b.cidade || ''
       };
     }).filter(d => d.dcp > 0 || d.dcfp > 0);
 
@@ -2770,7 +2856,7 @@ export default function App() {
     const tfp = 10.00;
 
     const results = parsedData.flatMap(row => {
-      const { mes, ano, uc, dcp, dmp, dcfp, dmfp, vDmpP, vDmfpFP, vUltrapP, vUltrapFP, vNaoConsP, vNaoConsFP, modalidade } = row;
+      const { mes, ano, uc, dcp, dmp, dcfp, dmfp, vDmpP, vDmfpFP, vUltrapP, vUltrapFP, vNaoConsP, vNaoConsFP, modalidade, city } = row;
       const opt = optimalDemands[String(uc)];
       
       if (!opt) return [];
@@ -2841,7 +2927,8 @@ export default function App() {
         isOverrun: overrunPonta > 0 || overrunForaPonta > 0,
         isSub: subPonta > 0 || subForaPonta > 0,
         tipo: row.tipo,
-        mercado: row.mercado
+        mercado: row.mercado,
+        city
       }];
     });
 
@@ -3135,7 +3222,7 @@ export default function App() {
       let response;
       try {
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3.1-flash-lite-preview",
+          model: "gemini-3-flash-preview",
           contents: [
             {
               parts: [
@@ -3541,6 +3628,15 @@ export default function App() {
         console.error('Erro inesperado ao deletar fatura:', err);
       }
     }
+    
+    // Remove individual file from localforage to free space immediately
+    localforage.getItem<Record<string, File>>('sanesul_bills_files').then(filesMap => {
+      if (filesMap && filesMap[id]) {
+        delete filesMap[id];
+        localforage.setItem('sanesul_bills_files', filesMap);
+      }
+    }).catch(e => console.warn('Erro ao deletar arquivo local', e));
+
     setBills(prev => prev.filter(b => b.id !== id));
     setSelectedBills(prev => prev.filter(s => s !== id));
   };
@@ -3554,6 +3650,25 @@ export default function App() {
         console.error('Erro inesperado ao deletar faturas:', err);
       }
     }
+    
+    // Remove files from localforage
+    if (selectedBills.length > 0) {
+      localforage.getItem<Record<string, File>>('sanesul_bills_files').then(filesMap => {
+        if (filesMap) {
+          let Changed = false;
+          selectedBills.forEach(id => {
+            if (filesMap[id]) {
+              delete filesMap[id];
+              Changed = true;
+            }
+          });
+          if (Changed) {
+            localforage.setItem('sanesul_bills_files', filesMap);
+          }
+        }
+      }).catch(e => console.warn('Erro ao deletar arquivos locais', e));
+    }
+
     setBills(prev => prev.filter(b => !selectedBills.includes(b.id)));
     setSelectedBills([]);
   };
@@ -3567,7 +3682,7 @@ export default function App() {
     if (!analysisResults || analysisResults.length === 0) return;
 
     const headers = [
-      "Nome do Arquivo", "UC", "Tipo", "Mercado", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
+      "Nome do Arquivo", "UC", "Gerência", "Cidade", "Tipo", "Mercado", "Ano", "Mês", "Demanda Medida Ponta", "Demanda Medida Fora Ponta",
       "Demanda Ideal Ponta", "Demanda Ideal Fora Ponta", "Gasto Real (R$)", "Economia (R$)", "Status",
       "Grupo Tarifário", "Tarifa Branca", "Optante B"
     ];
@@ -3576,7 +3691,7 @@ export default function App() {
       // Basic classification logic (placeholder, needs refinement based on actual data)
       const isGrupoA = r.dcp > 0 || r.dcfp > 0; // Simplified assumption
       const isGrupoB = !isGrupoA;
-      const isSolar = r.solarInjetadaOUC > 0 || r.solarInjetadaMUC > 0; // Assuming these fields exist in analysisResults
+      const isSolar = hasCompensacao(r); // Assuming these fields exist in analysisResults
       
       const grupo = isGrupoA ? "Grupo A (Verde/Azul)" : (isSolar ? "Grupo B (Solar)" : "Grupo B (Não Solar)");
       const tarifaBranca = "N/A"; // Need to determine how to identify this
@@ -3584,7 +3699,9 @@ export default function App() {
 
       return [
         r.fileName,
-        r.uc, 
+        r.uc,
+        getGerencia(r.uc), 
+        r.city || '',
         r.tipo,
         r.mercado,
         r.ano, r.mes, r.dmp, r.dmfp,
@@ -3617,6 +3734,162 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const exportReactiveToCSV = () => {
+    const reactiveBills = bills.filter(b => {
+      if (b.status !== 'completed') return false;
+      if (selectedReactiveMonth !== 'all' && `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth) return false;
+      const totalReativo = parseValue(b.valorEnergiaReativaExcedPonta) + parseValue(b.valorEnergiaReativaExcedFPonta);
+      return totalReativo > 100;
+    });
+
+    const grouped = reactiveBills.reduce((acc, bill) => {
+      const uc = String(bill.uc);
+      if (!acc[uc]) {
+        acc[uc] = { 
+          uc, 
+          cidade: bill.cidade || '', 
+          totalPonta: 0, 
+          totalFPonta: 0, 
+          totalFatura: 0, 
+          bills: [] 
+        };
+      }
+      acc[uc].totalPonta += parseValue(bill.valorEnergiaReativaExcedPonta);
+      acc[uc].totalFPonta += parseValue(bill.valorEnergiaReativaExcedFPonta);
+      acc[uc].totalFatura += parseValue(bill.valorTotal);
+      acc[uc].bills.push(bill);
+      return acc;
+    }, {} as Record<string, { uc: string, cidade: string, totalPonta: number, totalFPonta: number, totalFatura: number, bills: typeof bills }>);
+
+    const reactiveData = Object.values(grouped);
+
+    if (reactiveData.length === 0) {
+      showAlert('Exportação', 'Não há dados de monitoramento reativo para exportar.');
+      return;
+    }
+
+    const headers = [
+      "UC",
+      "Gerência",
+      "Cidade",
+      "Total Reativa Ponta (R$)",
+      "Total Reativa F. Ponta (R$)",
+      "Total Geral Reativo (R$)",
+      "Total Faturas (R$)",
+      "% da Fatura"
+    ];
+
+    const rows = (reactiveData as any[]).map(data => [
+      data.uc,
+      getGerencia(data.uc),
+      data.cidade,
+      String(data.totalPonta.toFixed(2)).replace('.', ','),
+      String(data.totalFPonta.toFixed(2)).replace('.', ','),
+      String((data.totalPonta + data.totalFPonta).toFixed(2)).replace('.', ','),
+      String(data.totalFatura.toFixed(2)).replace('.', ','),
+      String((data.totalFatura > 0 ? ((data.totalPonta + data.totalFPonta) / data.totalFatura * 100).toFixed(2) : '0')).replace('.', ',') + '%'
+    ]);
+
+    const csvContent = "\uFEFF" + [
+      headers.join(';'),
+      ...rows.map(row => row.map(val => {
+        const safeVal = String(val || '').replace(/;/g, ',');
+        return `"${safeVal}"`;
+      }).join(';'))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `monitoramento_reativo_${selectedReactiveMonth.replace('/', '_')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportReactiveGroupedToCSV = () => {
+    const reactiveBills = bills.filter(b => {
+      if (b.status !== 'completed') return false;
+      if (selectedReactiveMonth !== 'all' && `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth) return false;
+      const totalReativo = parseValue(b.valorEnergiaReativaExcedPonta) + parseValue(b.valorEnergiaReativaExcedFPonta);
+      return totalReativo > 100;
+    });
+
+    const ucConsolidated: Record<string, any> = {};
+    
+    reactiveBills.forEach(bill => {
+      const uc = String(bill.uc);
+      if (!ucConsolidated[uc]) {
+         const mapping = ucMappings.find(m => m.uc === uc);
+         ucConsolidated[uc] = {
+           uc,
+           gerencia: mapping?.gerencia || '---',
+           cidade: mapping?.cidade || bill.cidade || '---',
+           locin: mapping?.locin || '---',
+           totalReativo: 0
+         };
+      }
+      ucConsolidated[uc].totalReativo += (parseValue(bill.valorEnergiaReativaExcedPonta) + parseValue(bill.valorEnergiaReativaExcedFPonta));
+    });
+
+    const gerenciaGroups: Record<string, any[]> = {};
+    Object.values(ucConsolidated).forEach(item => {
+      const g = item.gerencia;
+      if (!gerenciaGroups[g]) gerenciaGroups[g] = [];
+      gerenciaGroups[g].push(item);
+    });
+
+    if (Object.keys(gerenciaGroups).length === 0) {
+      showAlert('Exportação', 'Não há dados de monitoramento reativo para exportar.');
+      return;
+    }
+
+    const headers = ["UC", "GERÊNCIA", "CIDADE", "LOCINS", "VALOR REATIVO (R$)"];
+    const rows: string[][] = [];
+    let grandTotal = 0;
+
+    const sortedGerencias = Object.keys(gerenciaGroups).sort();
+
+    sortedGerencias.forEach(g => {
+      let groupTotal = 0;
+      gerenciaGroups[g].forEach(item => {
+        rows.push([
+          item.uc,
+          item.gerencia,
+          item.cidade,
+          item.locin,
+          String(item.totalReativo.toFixed(2)).replace('.', ',')
+        ]);
+        groupTotal += item.totalReativo;
+      });
+      rows.push(["", "SUBTOTAL " + g, "", "", String(groupTotal.toFixed(2)).replace('.', ',')]);
+      rows.push(["", "", "", "", ""]); 
+      grandTotal += groupTotal;
+    });
+
+    rows.push(["", "SOMA TOTAL GERAL", "", "", String(grandTotal.toFixed(2)).replace('.', ',')]);
+
+    const csvContent = "\uFEFF" + [
+      headers.join(';'),
+      ...rows.map(row => row.map(val => {
+        const safeVal = String(val || '').replace(/;/g, ',');
+        return `"${safeVal}"`;
+      }).join(';'))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `relatorio_reativo_por_gerencia_${selectedReactiveMonth.replace('/', '_')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const exportToCSV = () => {
     // Use sortedBills which are already filtered by the selected reference
     const completedBills = sortedBills.filter(b => b.status === 'completed');
@@ -3628,10 +3901,11 @@ export default function App() {
     const headers = [
       "Nome do Arquivo",
       "UC",
+      "Gerência",
+      "Cidade",
       "Tipo",
       "Mercado",
       "Concessionária",
-      "Cidade",
       "Mês Referência",
       "Ano Leitura",
       "Vencimento",
@@ -3687,6 +3961,8 @@ export default function App() {
     const rows = completedBills.map(b => [
       b.fileName,
       b.uc,
+      getGerencia(b.uc),
+      b.cidade || '',
       b.tipo || '',
       UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO',
       b.concessionaria 
@@ -3696,7 +3972,6 @@ export default function App() {
               ? 'ELEKTRO' 
               : b.concessionaria)
         : '',
-      b.cidade,
       b.mesReferencia,
       b.anoLeitura,
       b.dataVencimento || '',
@@ -3790,6 +4065,8 @@ export default function App() {
       "Reativa Fora Ponta (kVArh)",
       "Solar Injetada OUC (kWh)",
       "Solar Injetada MUC (kWh)",
+      "Valor GDI oUC (R$)",
+      "Valor GDI mUC (R$)",
       "CIP (R$)",
       "Outros Encargos (R$)",
       "PIS (R$)",
@@ -3831,6 +4108,8 @@ export default function App() {
       d.reativaForaPonta,
       d.solarInjetadaOUC,
       d.solarInjetadaMUC,
+      d.valorSolarOUC,
+      d.valorSolarMUC,
       d.cip,
       d.outrosEncargos,
       d.pis,
@@ -3940,8 +4219,6 @@ export default function App() {
     ultrapassagemForaPonta: parseValue(b.demandaPotenciaAtivaUltrapFPonta),
     reativaPonta: parseValue(b.energiaReativaExcedPonta),
     reativaForaPonta: parseValue(b.energiaReativaExcedFPonta),
-    solarInjetada: parseValue(b.energiaInjetadaKwh),
-    solarCompensada: parseValue(b.energiaCompensadaKwh),
     solarInjetadaOUC: parseValue(b.energiaAtvInjetadaGDIOUC),
     solarInjetadaMUC: parseValue(b.energiaAtvInjetadaGDIMUC),
     valorUltrapassagemPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
@@ -3958,7 +4235,7 @@ export default function App() {
     concessionaria: b.concessionaria || '',
     numeroNotaFiscal: b.numeroNotaFiscal || '',
     cidade: b.cidade,
-    tipo: b.tipo || '',
+    tipo: UCS_PPP.has(String(b.uc)) ? 'PPP Fotovoltaica' : (b.tipo || ''),
     mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? 'LIVRE' : 'CATIVO',
     fileName: b.fileName || '',
     modalidadeTarifaria: (b.modalidadeTarifaria || '').toString().toUpperCase(),
@@ -4036,9 +4313,24 @@ export default function App() {
     const matchesMonth = selectedRelatorioMonth === 'all' || d.name === selectedRelatorioMonth;
     const matchesType = selectedRelatorioType.includes('all') || 
                        selectedRelatorioType.includes(d.tipo) ||
-                       (selectedRelatorioType.includes('INJETADO') && (d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0));
+                       (selectedRelatorioType.includes('INJETADO') && UCS_PPP.has(String(d.uc)));
     return matchesMonth && matchesType && d.uc !== '31383580';
   });
+
+  const relatorioTotals = React.useMemo(() => {
+    return filteredRelatorioData.reduce((acc, curr) => {
+      acc.valorTotal += curr.valorTotal || 0;
+      acc.consumoTotal += (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0);
+      
+      // For Relatório Financeiro cards, only include PPP Fotovoltaica UCs for injected energy
+      if (UCS_PPP.has(String(curr.uc))) {
+        acc.valorInjetado += (curr.valorSolarOUC || 0) + (curr.valorSolarMUC || 0);
+        acc.totalInjetadoKwh += (curr.solarInjetadaOUC || 0) + (curr.solarInjetadaMUC || 0);
+      }
+      
+      return acc;
+    }, { valorTotal: 0, consumoTotal: 0, valorInjetado: 0, totalInjetadoKwh: 0 });
+  }, [filteredRelatorioData]);
 
   const filteredUcs = Array.from(new Set(filteredDashboardData.map(d => d.uc))).filter(Boolean);
 
@@ -4362,6 +4654,15 @@ export default function App() {
                 Processar Arquivos
               </button>
             )}
+            {activeTab === 'faturas' && (
+              <button
+                onClick={() => setIsGerenciasModalOpen(true)}
+                className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+              >
+                <Building size={16} />
+                Gerências
+              </button>
+            )}
             {bills.some(b => b.status === 'processing') && (
               <button
                 onClick={resetStuckProcesses}
@@ -4665,11 +4966,11 @@ export default function App() {
                         </th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('fileName')}>Arquivo</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('uc')}>UC</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Gerência</th>
+                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('cidade')}>Cidade</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('concessionaria')}>Concessionária</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('referencia')}>Referência</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('dataVencimento')}>Vencimento</th>
-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Medida</th>
-                        <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Demanda Contratada</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary" onClick={() => requestSort('mercado')}>Mercado</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Tipo</th>
                         <th className="px-4 py-3 text-[9px] font-bold text-sanesul-muted uppercase tracking-widest border-b border-sanesul-primary/5">Status</th>
@@ -4724,6 +5025,12 @@ export default function App() {
                               </div>
                             </td>
                             <td className="px-4 py-3">
+                              <span className="text-xs font-bold text-slate-800">{getGerencia(bill.uc || '')}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{bill.cidade || '---'}</span>
+                            </td>
+                            <td className="px-4 py-3">
                               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                                 {bill.concessionaria 
                                   ? (bill.concessionaria.toUpperCase().includes('ENERGISA') 
@@ -4743,18 +5050,6 @@ export default function App() {
                               <span className="text-xs text-slate-600">
                                 {bill.dataVencimento || '---'}
                               </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex flex-col">
-                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPotenciaMedidaPonta || '0'} kW</span>
-                                <span className="text-[10px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaPotenciaMedidaForaPonta || '0'} kW</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex flex-col">
-                                <span className="text-[9px] text-sanesul-muted uppercase font-bold tracking-tight">P: {bill.demandaPontaKW || '0'} kW</span>
-                                <span className="text-[9px] text-sanesul-muted uppercase font-bold tracking-tight">FP: {bill.demandaForaPontaKW || '0'} kW</span>
-                              </div>
                             </td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
@@ -5045,6 +5340,7 @@ export default function App() {
                     <thead>
                       <tr className="bg-slate-50/80 border-b border-sanesul-primary/10">
                         <th className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted">UC</th>
+                        <th className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted">Gerência</th>
                         <th className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted">Cidade</th>
                         <th 
                           className="p-4 font-bold text-xs uppercase tracking-wider text-sanesul-muted text-right cursor-pointer hover:text-sanesul-primary transition-colors group"
@@ -5065,7 +5361,8 @@ export default function App() {
                         multasUcList.map((item, index) => (
                           <tr key={item.uc} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
                             <td className="p-4 font-medium text-sanesul-primary">{item.uc}</td>
-                            <td className="p-4 text-slate-600">{item.cidade}</td>
+                            <td className="p-4 text-slate-800 font-bold text-sm">{getGerencia(item.uc)}</td>
+                            <td className="p-4 text-slate-600 font-bold text-xs uppercase">{item.cidade}</td>
                             <td className="p-4 text-right font-bold text-sanesul-primary">
                               R$ {item[selectedMultaType].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                             </td>
@@ -5073,7 +5370,7 @@ export default function App() {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={2} className="p-8 text-center text-sanesul-muted">
+                          <td colSpan={4} className="p-8 text-center text-sanesul-muted">
                             Nenhuma UC com este tipo de multa no período.
                           </td>
                         </tr>
@@ -5302,11 +5599,11 @@ export default function App() {
                               <div className="space-y-2">
                                 <p className="text-lg font-bold text-sanesul-primary flex justify-between">
                                   <span>Solar:</span> 
-                                  <span>{Math.round(filteredDashboardData.filter(d => (d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
+                                  <span>{Math.round(filteredDashboardData.filter(d => hasCompensacao(d)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
                                 </p>
                                 <p className="text-lg font-bold text-sanesul-primary flex justify-between">
                                   <span>Não Solar:</span> 
-                                  <span>{Math.round(filteredDashboardData.filter(d => !(d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0) && (d.consumoPonta + d.consumoForaPonta > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
+                                  <span>{Math.round(filteredDashboardData.filter(d => !hasCompensacao(d) && (d.consumoPonta + d.consumoForaPonta > 0)).reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0)).toLocaleString('pt-BR')} kWh</span>
                                 </p>
                               </div>
                             </div>
@@ -5918,6 +6215,8 @@ export default function App() {
                         <tr className="bg-slate-50">
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 w-10"></th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">UC</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">Gerência</th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5">Cidade</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Contratada (P/FP)</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Demanda Ideal</th>
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">Gasto Real</th>
@@ -5930,6 +6229,7 @@ export default function App() {
                           if (!acc[curr.uc]) {
                             acc[curr.uc] = {
                               uc: curr.uc,
+                              city: curr.city || '',
                               months: [],
                               optimizedPonta: curr.optimizedPonta,
                               optimizedForaPonta: curr.optimizedForaPonta,
@@ -5957,6 +6257,12 @@ export default function App() {
                               <td className="px-6 py-4">
                                 <div className="font-bold text-sanesul-primary text-xs">{group.uc}</div>
                               </td>
+                              <td className="px-6 py-4">
+                                <div className="font-bold text-slate-800 text-xs">{getGerencia(group.uc)}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">{group.city || '---'}</div>
+                              </td>
                               <td className="px-6 py-4 text-right">
                                 <div className="text-xs font-mono text-slate-600">{group.dcp > 0 ? group.dcp.toFixed(2) : '-'} / {group.dcfp.toFixed(2)} kW</div>
                               </td>
@@ -5980,7 +6286,7 @@ export default function App() {
                             </tr>
                             {expandedAnalysisUCs.has(group.uc) && (
                               <tr>
-                                <td colSpan={7} className="px-10 py-4 bg-slate-50/30">
+                                <td colSpan={9} className="px-10 py-4 bg-slate-50/30">
                                   <div className="overflow-hidden rounded-xl border border-slate-200 shadow-inner">
                                     <table className="w-full text-left border-collapse bg-white">
                                       <thead>
@@ -6154,7 +6460,7 @@ export default function App() {
                                   <div className="space-y-1 mt-2">
                                     {city.positiveUcs.map((u: any, i: number) => (
                                       <div key={i} className="flex justify-between items-center text-xs">
-                                        <span className="text-sanesul-muted font-medium">UC {u.uc}</span>
+                                        <span className="text-sanesul-muted font-medium">UC {u.uc} <span className="opacity-60 ml-2">({getGerencia(u.uc)})</span></span>
                                         <span className="font-mono text-green-600/80">
                                           + R$ {Math.abs(u.economy).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                         </span>
@@ -6206,7 +6512,7 @@ export default function App() {
                                   <div className="space-y-1 mt-2">
                                     {city.negativeUcs.map((u: any, i: number) => (
                                       <div key={i} className="flex justify-between items-center text-xs">
-                                        <span className="text-sanesul-muted font-medium">UC {u.uc}</span>
+                                        <span className="text-sanesul-muted font-medium">UC {u.uc} <span className="opacity-60 ml-2">({getGerencia(u.uc)})</span></span>
                                         <span className="font-mono text-red-600/80">
                                           - R$ {Math.abs(u.economy).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                         </span>
@@ -6249,6 +6555,7 @@ export default function App() {
                             <tr>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] w-10"></th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Unidade Consumidora</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Gerência</th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Cidade</th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Contratada Atual (P/FP)</th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Demanda Ideal (P/FP)</th>
@@ -6271,6 +6578,9 @@ export default function App() {
                                       </div>
                                       <span className="font-bold text-sanesul-primary font-mono">{uc.uc}</span>
                                     </div>
+                                  </td>
+                                  <td className="py-6 text-xs font-bold text-slate-800">
+                                    {getGerencia(uc.uc)}
                                   </td>
                                   <td className="py-6 text-xs font-bold text-slate-500 uppercase tracking-wider">
                                     {uc.city}
@@ -6302,7 +6612,7 @@ export default function App() {
                                 </tr>
                                 {expandedUCs.has(uc.uc) && (
                                   <tr>
-                                    <td colSpan={8} className="px-10 py-0">
+                                    <td colSpan={9} className="px-10 py-0">
                                       <div className="bg-slate-50/50 rounded-2xl p-6 mb-6 border border-slate-100 animate-in fade-in slide-in-from-top-2 duration-300">
                                         <div className="flex items-center gap-2 mb-4">
                                           <Calendar size={14} className="text-sanesul-primary" />
@@ -6367,6 +6677,7 @@ export default function App() {
                             <tr>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] w-10"></th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Unidade Consumidora</th>
+                              <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Gerência</th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em]">Cidade</th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Contratada (P/FP)</th>
                               <th className="pb-6 text-[10px] font-bold text-sanesul-muted uppercase tracking-[0.2em] text-center">Demanda Ideal (P/FP)</th>
@@ -6388,6 +6699,9 @@ export default function App() {
                                       </div>
                                       <span className="font-bold text-slate-600 font-mono">{uc.uc}</span>
                                     </div>
+                                  </td>
+                                  <td className="py-6 text-xs font-bold text-slate-800">
+                                    {getGerencia(uc.uc)}
                                   </td>
                                   <td className="py-6 text-xs font-bold text-slate-500 uppercase tracking-wider">
                                     {uc.city}
@@ -6414,7 +6728,7 @@ export default function App() {
                                 </tr>
                                 {expandedUCs.has(uc.uc) && (
                                   <tr>
-                                    <td colSpan={8} className="px-10 py-0">
+                                    <td colSpan={9} className="px-10 py-0">
                                       <div className="bg-slate-50/50 rounded-2xl p-6 mb-6 border border-slate-100 animate-in fade-in slide-in-from-top-2 duration-300">
                                         <div className="flex items-center gap-2 mb-4">
                                           <Calendar size={14} className="text-sanesul-primary" />
@@ -6460,6 +6774,20 @@ export default function App() {
                 <p className="text-sanesul-muted">Acompanhamento do Valor da Energia Reativa Excedente por UC.</p>
               </div>
               <div className="flex flex-wrap gap-4 items-center">
+                <button 
+                  onClick={exportReactiveToCSV}
+                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                >
+                  <Download size={16} />
+                  Exportar Excel
+                </button>
+                <button 
+                  onClick={exportReactiveGroupedToCSV}
+                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20"
+                >
+                  <FileText size={16} />
+                  Relatório por Gerência
+                </button>
                 <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-sanesul-primary/10 shadow-sm">
                   <Calendar size={16} className="text-sanesul-primary" />
                   <select 
@@ -6553,6 +6881,9 @@ export default function App() {
                               UC {reactiveSortField === 'uc' && (reactiveSortDirection === 'asc' ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
                             </div>
                           </th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">
+                            Gerência
+                          </th>
                           <th 
                             className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 cursor-pointer hover:text-sanesul-primary transition-colors"
                             onClick={() => handleReactiveSort('cidade')}
@@ -6608,6 +6939,9 @@ export default function App() {
                                 <div className="text-[10px] text-sanesul-muted uppercase tracking-wider mt-1">{data.bills.length} faturas</div>
                               </td>
                               <td className="px-6 py-4">
+                                <div className="text-sm font-bold text-slate-800">{getGerencia(data.uc)}</div>
+                              </td>
+                              <td className="px-6 py-4">
                                 <div className="text-sm text-slate-600">{data.cidade}</div>
                               </td>
                               <td className="px-6 py-4 text-right">
@@ -6630,7 +6964,7 @@ export default function App() {
                             </tr>
                             {expandedReactiveUcs.has(data.uc) && (
                               <tr>
-                                <td colSpan={7} className="p-0 bg-slate-50/50">
+                                <td colSpan={8} className="p-0 bg-slate-50/50">
                                   <div className="px-12 py-6 border-t border-sanesul-primary/5 shadow-inner">
                                     <table className="w-full text-left">
                                       <thead>
@@ -6791,6 +7125,33 @@ export default function App() {
                     Gerar Relatório
                   </button>
                 </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl shadow-sanesul-primary/5 flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-sanesul-muted">Valor Total</span>
+                <span className="text-3xl font-display font-bold text-sanesul-primary">
+                  R$ {relatorioTotals.valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl shadow-sanesul-primary/5 flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-sanesul-muted">Consumo Total</span>
+                <span className="text-3xl font-display font-bold text-sanesul-primary">
+                  {relatorioTotals.consumoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} <span className="text-sm font-sans font-medium opacity-40">kWh</span>
+                </span>
+              </div>
+              <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl shadow-sanesul-primary/5 flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-sanesul-muted">Total Injetado kWh</span>
+                <span className="text-3xl font-display font-bold text-green-600">
+                  {relatorioTotals.totalInjetadoKwh.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} <span className="text-sm font-sans font-medium opacity-40">kWh</span>
+                </span>
+              </div>
+              <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl shadow-sanesul-primary/5 flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-sanesul-muted">Valor Total Injetado</span>
+                <span className="text-3xl font-display font-bold text-green-600">
+                  R$ {relatorioTotals.valorInjetado.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
               </div>
             </div>
 
@@ -6974,6 +7335,7 @@ export default function App() {
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr className="bg-slate-50/50">
                       <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">UC</th>
+                      <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">Gerência</th>
                       <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100">Cidade</th>
                       <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">PIS</th>
                       <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-slate-100 text-right">COFINS</th>
@@ -6983,7 +7345,8 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Array.from(new Set(filteredRelatorioData.map(d => d.uc))).filter(Boolean).map(uc => {
+                    {Array.from(new Set(filteredRelatorioData.map(d => d.uc))).filter(Boolean).map(ucDataRaw => {
+                      const uc = ucDataRaw as string;
                       const ucData = filteredRelatorioData.filter(d => d.uc === uc);
                       const totals = {
                         pis: ucData.reduce((acc, curr) => acc + curr.pis, 0),
@@ -6996,6 +7359,9 @@ export default function App() {
                         <tr key={uc} className="hover:bg-slate-50/50 transition-colors group">
                           <td className="px-8 py-6 border-b border-slate-50">
                             <span className="text-sm font-bold text-sanesul-primary group-hover:text-sanesul-secondary transition-colors">{uc}</span>
+                          </td>
+                          <td className="px-8 py-6 border-b border-slate-50">
+                            <span className="text-xs font-bold text-slate-800">{getGerencia(uc || '')}</span>
                           </td>
                           <td className="px-8 py-6 border-b border-slate-50">
                             <span className="text-xs font-medium text-sanesul-muted">{ucData[0]?.cidade || '-'}</span>
@@ -7305,6 +7671,193 @@ export default function App() {
       )}
 
       {/* Footer Info */}
+      {isGerenciasModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <h2 className="text-xl font-bold text-sanesul-primary flex items-center gap-2">
+                <Building size={20} />
+                Gestão de Gerências e LOCINS
+              </h2>
+              <button
+                onClick={() => setIsGerenciasModalOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 flex-1 flex flex-col gap-6 overflow-hidden">
+              
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 shrink-0">
+                <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-2">
+                  <h3 className="text-sm font-bold text-sanesul-primary">Cadastrar / Editar</h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        showConfirm(
+                          'Excluir Todos os Mapeamentos',
+                          'Tem certeza que deseja excluir TODOS os mapeamentos cadastrados? Esta ação não pode ser desfeita.',
+                          () => saveUcMappings([]),
+                          'danger'
+                        );
+                      }}
+                      className="px-4 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors flex items-center gap-2"
+                    >
+                      <Trash2 size={14} />
+                      Excluir Todos
+                    </button>
+                    <label className="cursor-pointer px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-bold transition-colors flex items-center gap-2">
+                      <Upload size={14} />
+                      Importar TXT/CSV
+                      <input type="file" accept=".txt,.csv" className="hidden" onChange={handleImportTxtGerencias} />
+                    </label>
+                  </div>
+                </div>
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                  <div className="space-y-1 flex-[0.5]">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Pesquisar UC</label>
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                        placeholder="Filtrar por UC..."
+                        value={ucMappingSearchTerm}
+                        onChange={(e) => setUcMappingSearchTerm(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="h-10 w-px bg-slate-200 hidden md:block mx-2 self-center mb-1"></div>
+                  <div className="space-y-1 flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">UC</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                      placeholder="Ex: 3005931"
+                      id="newGerenciaUC"
+                    />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Gerência</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                      placeholder="Ex: GRS"
+                      id="newGerenciaName"
+                    />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">LOCINS</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                      placeholder="Ex: SMJ"
+                      id="newGerenciaLOCIN"
+                    />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Cidade</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                      placeholder="Ex: Bonito"
+                      id="newGerenciaCidade"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      const uc = (document.getElementById('newGerenciaUC') as HTMLInputElement).value;
+                      const gerencia = (document.getElementById('newGerenciaName') as HTMLInputElement).value;
+                      const locin = (document.getElementById('newGerenciaLOCIN') as HTMLInputElement).value;
+                      const cidade = (document.getElementById('newGerenciaCidade') as HTMLInputElement).value;
+                      if (!uc || !gerencia || !locin) {
+                        showAlert('Atenção', 'Preencha UC, Gerência e LOCINS.');
+                        return;
+                      }
+                      const newMapping = { uc, gerencia, locin, cidade };
+                      const newMappings = [...ucMappings.filter(m => m.uc !== uc), newMapping];
+                      saveUcMappings(newMappings);
+                      (document.getElementById('newGerenciaUC') as HTMLInputElement).value = '';
+                      (document.getElementById('newGerenciaName') as HTMLInputElement).value = '';
+                      (document.getElementById('newGerenciaLOCIN') as HTMLInputElement).value = '';
+                      (document.getElementById('newGerenciaCidade') as HTMLInputElement).value = '';
+                    }}
+                    className="px-6 py-2 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 rounded-lg text-sm font-bold transition-colors shadow-lg active:scale-95"
+                  >
+                    Salvar
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-sanesul-primary/10 overflow-hidden flex-1 flex flex-col">
+                <div className="overflow-y-auto flex-1">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+                      <tr>
+                        <th className="px-4 py-3 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest">UC</th>
+                        <th className="px-4 py-3 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest">Gerência</th>
+                        <th className="px-4 py-3 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest">Cidade</th>
+                        <th className="px-4 py-3 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest">LOCINS</th>
+                        <th className="px-4 py-3 text-[10px] font-bold text-sanesul-muted uppercase tracking-widest text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(() => {
+                        const filtered = ucMappings.filter(m => 
+                          (m.uc || '').toLowerCase().includes(ucMappingSearchTerm.toLowerCase()) ||
+                          (m.gerencia || '').toLowerCase().includes(ucMappingSearchTerm.toLowerCase()) ||
+                          (m.cidade || '').toLowerCase().includes(ucMappingSearchTerm.toLowerCase())
+                        );
+
+                        if (filtered.length === 0) {
+                          return <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">{ucMappingSearchTerm ? 'Nenhum resultado para a pesquisa.' : 'Nenhum mapeamento cadastrado.'}</td></tr>;
+                        }
+
+                        return filtered.map((m, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="px-4 py-3 text-sm font-bold text-sanesul-primary">{m.uc}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700">{m.gerencia}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700">{m.cidade || '---'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700">{m.locin}</td>
+                            <td className="px-4 py-3 text-sm text-right">
+                              <button
+                                onClick={() => {
+                                  (document.getElementById('newGerenciaUC') as HTMLInputElement).value = m.uc;
+                                  (document.getElementById('newGerenciaName') as HTMLInputElement).value = m.gerencia;
+                                  (document.getElementById('newGerenciaLOCIN') as HTMLInputElement).value = m.locin;
+                                  (document.getElementById('newGerenciaCidade') as HTMLInputElement).value = m.cidade || '';
+                                }}
+                                className="text-blue-500 hover:text-blue-700 mx-2 font-bold text-[10px] uppercase tracking-wider" title="Editar"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                onClick={() => {
+                                  showConfirm(
+                                    'Remover Mapeamento',
+                                    `Tem certeza que deseja remover o mapeamento da UC ${m.uc}?`,
+                                    () => saveUcMappings(ucMappings.filter(x => x.uc !== m.uc)),
+                                    'danger'
+                                  );
+                                }}
+                                className="text-red-500 hover:text-red-700 mx-2" title="Remover"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
       {isBillModalOpen && editingBill && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
@@ -7650,24 +8203,6 @@ export default function App() {
                 {/* Geração Distribuída */}
                 <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
                   <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">Geração Distribuída</h3>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Energia Injetada (kWh)</label>
-                  <input
-                    type="text"
-                    value={editingBill.energiaInjetadaKwh || ''}
-                    onChange={e => setEditingBill({ ...editingBill, energiaInjetadaKwh: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Energia Compensada (kWh)</label>
-                  <input
-                    type="text"
-                    value={editingBill.energiaCompensadaKwh || ''}
-                    onChange={e => setEditingBill({ ...editingBill, energiaCompensadaKwh: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
-                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">GDI oUC (kWh)</label>
