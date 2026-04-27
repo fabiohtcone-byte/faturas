@@ -3749,6 +3749,38 @@ export default function App() {
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
 
+          // Extract unique mappings from the database to keep localStorage updated
+          const dbMappings: Record<string, UCLocinMapping> = {};
+          mappedBills.forEach((b) => {
+            if (b.uc && b.gerencia && b.locin) {
+              dbMappings[b.uc] = {
+                uc: b.uc,
+                gerencia: b.gerencia,
+                locin: b.locin,
+                cidade: b.cidade || "",
+              };
+            }
+          });
+
+          if (Object.keys(dbMappings).length > 0) {
+            setUcMappings((prev) => {
+              const existingMap = new Map(prev.map((m) => [m.uc, m]));
+
+              Object.values(dbMappings).forEach((m) => {
+                existingMap.set(m.uc, m);
+              });
+
+              const updated = Array.from(existingMap.values());
+              try {
+                localStorage.setItem(
+                  "sanesul_uc_mappings",
+                  JSON.stringify(updated),
+                );
+              } catch (e) {}
+              return updated;
+            });
+          }
+
           // Apply fixes to data from Supabase
           let hasChanges = false;
           const updatedBills = mappedBills.map((b, i) => {
@@ -4920,7 +4952,15 @@ export default function App() {
 
   const getGerencia = (uc: string) => {
     const mapping = ucMappings.find((m) => m.uc === uc);
-    return mapping ? mapping.gerencia : "---";
+    if (mapping) return mapping.gerencia;
+
+    // Fallback: look into the loaded bills state for the gerencia
+    const bill = bills.find(
+      (b) => b.uc === String(uc) && b.gerencia && b.gerencia !== "---",
+    );
+    if (bill && bill.gerencia) return bill.gerencia;
+
+    return "---";
   };
 
   const handleImportTxtGerencias = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -6862,6 +6902,7 @@ export default function App() {
       "Nome do Arquivo",
       "UC",
       "Gerência",
+      "LOCINS",
       "Cidade",
       "Tipo",
       "Mercado",
@@ -6893,10 +6934,15 @@ export default function App() {
       const tarifaBranca = "N/A"; // Need to determine how to identify this
       const optanteB = "N/A"; // Need to determine how to identify this
 
+      const bill = bills.find((b) => b.uc === r.uc);
+      const locin =
+        bill?.locin || ucMappings.find((m) => m.uc === r.uc)?.locin || "---";
+
       return [
         r.fileName,
         r.uc,
         getGerencia(r.uc),
+        locin,
         r.city || "",
         r.tipo,
         r.mercado,
@@ -7074,9 +7120,9 @@ export default function App() {
         const mapping = ucMappings.find((m) => m.uc === uc);
         ucConsolidated[uc] = {
           uc,
-          gerencia: mapping?.gerencia || "---",
+          gerencia: mapping?.gerencia || bill.gerencia || "---",
           cidade: mapping?.cidade || bill.cidade || "---",
-          locin: mapping?.locin || "---",
+          locin: mapping?.locin || bill.locin || "---",
           totalReativo: 0,
         };
       }
@@ -7183,6 +7229,7 @@ export default function App() {
       "Nome do Arquivo",
       "UC",
       "Gerência",
+      "LOCINS",
       "Cidade",
       "Tipo",
       "Mercado",
@@ -7239,59 +7286,65 @@ export default function App() {
       return `"${str}"`;
     };
 
-    const rows = completedBills.map((b) => [
-      b.fileName,
-      b.uc,
-      getGerencia(b.uc),
-      b.cidade || "",
-      b.tipo || "",
-      UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? "LIVRE" : "CATIVO",
-      b.concessionaria
-        ? b.concessionaria.toUpperCase().includes("ENERGISA")
-          ? "ENERGISA"
-          : b.concessionaria.toUpperCase().includes("ELEKTRO")
-            ? "ELEKTRO"
-            : b.concessionaria
-        : "",
-      b.mesReferencia,
-      b.anoLeitura,
-      b.dataVencimento || "",
-      b.numeroNotaFiscal || "",
-      b.modalidadeTarifaria || "",
-      b.subgrupo || "",
-      b.valorTotal,
-      b.demandaPontaKW,
-      b.demandaForaPontaKW,
-      b.demandaPotenciaMedidaPonta,
-      b.valorDemandaPotenciaMedidaPonta,
-      b.demandaPotenciaMedidaForaPonta,
-      b.valorDemandaPotenciaMedidaForaPonta,
-      b.consumoKwhPonta,
-      b.valorConsumoKwhPonta,
-      b.consumoKwhForaPonta,
-      b.valorConsumoKwhForaPonta,
-      b.demandaPotenciaNaoConsumidaPonta,
-      b.valorDemandaPotenciaNaoConsumidaPonta,
-      b.demandaPotenciaNaoConsumidaFPonta,
-      b.valorDemandaPotenciaNaoConsumidaFPonta,
-      b.demandaPotenciaAtivaUltrapPonta,
-      b.valorDemandaPotenciaAtivaUltrapPonta,
-      b.demandaPotenciaAtivaUltrapFPonta,
-      b.valorDemandaPotenciaAtivaUltrapFPonta,
-      b.energiaReativaExcedPonta,
-      b.valorEnergiaReativaExcedPonta,
-      b.energiaReativaExcedFPonta,
-      b.valorEnergiaReativaExcedFPonta,
-      b.energiaAtvInjetadaGDIOUC,
-      b.valorEnergiaAtvInjetadaGDIOUC,
-      b.energiaAtvInjetadaGDIMUC,
-      b.valorEnergiaAtvInjetadaGDIMUC,
-      b.cip,
-      b.outrosEncargos,
-      b.pis || "",
-      b.cofins || "",
-      b.icms || "",
-    ]);
+    const rows = completedBills.map((b) => {
+      const locin =
+        b.locin || ucMappings.find((m) => m.uc === b.uc)?.locin || "---";
+
+      return [
+        b.fileName,
+        b.uc,
+        getGerencia(b.uc),
+        locin,
+        b.cidade || "",
+        b.tipo || "",
+        UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? "LIVRE" : "CATIVO",
+        b.concessionaria
+          ? b.concessionaria.toUpperCase().includes("ENERGISA")
+            ? "ENERGISA"
+            : b.concessionaria.toUpperCase().includes("ELEKTRO")
+              ? "ELEKTRO"
+              : b.concessionaria
+          : "",
+        b.mesReferencia,
+        b.anoLeitura,
+        b.dataVencimento || "",
+        b.numeroNotaFiscal || "",
+        b.modalidadeTarifaria || "",
+        b.subgrupo || "",
+        b.valorTotal,
+        b.demandaPontaKW,
+        b.demandaForaPontaKW,
+        b.demandaPotenciaMedidaPonta,
+        b.valorDemandaPotenciaMedidaPonta,
+        b.demandaPotenciaMedidaForaPonta,
+        b.valorDemandaPotenciaMedidaForaPonta,
+        b.consumoKwhPonta,
+        b.valorConsumoKwhPonta,
+        b.consumoKwhForaPonta,
+        b.valorConsumoKwhForaPonta,
+        b.demandaPotenciaNaoConsumidaPonta,
+        b.valorDemandaPotenciaNaoConsumidaPonta,
+        b.demandaPotenciaNaoConsumidaFPonta,
+        b.valorDemandaPotenciaNaoConsumidaFPonta,
+        b.demandaPotenciaAtivaUltrapPonta,
+        b.valorDemandaPotenciaAtivaUltrapPonta,
+        b.demandaPotenciaAtivaUltrapFPonta,
+        b.valorDemandaPotenciaAtivaUltrapFPonta,
+        b.energiaReativaExcedPonta,
+        b.valorEnergiaReativaExcedPonta,
+        b.energiaReativaExcedFPonta,
+        b.valorEnergiaReativaExcedFPonta,
+        b.energiaAtvInjetadaGDIOUC,
+        b.valorEnergiaAtvInjetadaGDIOUC,
+        b.energiaAtvInjetadaGDIMUC,
+        b.valorEnergiaAtvInjetadaGDIMUC,
+        b.cip,
+        b.outrosEncargos,
+        b.pis || "",
+        b.cofins || "",
+        b.icms || "",
+      ];
+    });
 
     // Use semicolon as delimiter for better compatibility with Excel in many locales (like Brazil)
     // Add UTF-8 BOM (\uFEFF) to ensure Excel recognizes the encoding
@@ -7332,6 +7385,8 @@ export default function App() {
       "Nome do Arquivo",
       "Mês/Ano",
       "UC",
+      "Gerência",
+      "LOCINS",
       "Tipo",
       "Mercado",
       "Concessionária",
@@ -7371,38 +7426,45 @@ export default function App() {
       return `"${str}"`;
     };
 
-    const rows = filteredRelatorioData.map((d) => [
-      d.fileName,
-      d.name,
-      d.uc,
-      d.tipo,
-      d.mercado,
-      d.concessionaria,
-      d.cidade,
-      d.numeroNotaFiscal,
-      d.modalidadeTarifaria,
-      d.subgrupo,
-      d.valorTotal,
-      d.consumoPonta,
-      d.consumoForaPonta,
-      d.demandaMedidaPonta,
-      d.demandaMedidaForaPonta,
-      d.demandaContratadaPonta,
-      d.demandaContratadaForaPonta,
-      d.ultrapassagemPonta,
-      d.ultrapassagemForaPonta,
-      d.reativaPonta,
-      d.reativaForaPonta,
-      d.solarInjetadaOUC,
-      d.solarInjetadaMUC,
-      d.valorSolarOUC,
-      d.valorSolarMUC,
-      d.cip,
-      d.outrosEncargos,
-      d.pis,
-      d.cofins,
-      d.icms,
-    ]);
+    const rows = filteredRelatorioData.map((d) => {
+      const b = bills.find((b) => b.uc === d.uc);
+      const locin =
+        b?.locin || ucMappings.find((m) => m.uc === d.uc)?.locin || "---";
+      return [
+        d.fileName,
+        d.name,
+        d.uc,
+        getGerencia(String(d.uc)),
+        locin,
+        d.tipo,
+        d.mercado,
+        d.concessionaria,
+        d.cidade,
+        d.numeroNotaFiscal,
+        d.modalidadeTarifaria,
+        d.subgrupo,
+        d.valorTotal,
+        d.consumoPonta,
+        d.consumoForaPonta,
+        d.demandaMedidaPonta,
+        d.demandaMedidaForaPonta,
+        d.demandaContratadaPonta,
+        d.demandaContratadaForaPonta,
+        d.ultrapassagemPonta,
+        d.ultrapassagemForaPonta,
+        d.reativaPonta,
+        d.reativaForaPonta,
+        d.solarInjetadaOUC,
+        d.solarInjetadaMUC,
+        d.valorSolarOUC,
+        d.valorSolarMUC,
+        d.cip,
+        d.outrosEncargos,
+        d.pis,
+        d.cofins,
+        d.icms,
+      ];
+    });
 
     const csvContent =
       "\uFEFF" +
