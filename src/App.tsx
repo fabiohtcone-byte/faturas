@@ -5517,6 +5517,11 @@ export default function App() {
               bill.cidade = "FÁTIMA DO SUL";
             }
 
+            // Fix UC 9000943 - Demand Contratada Ponta is 0 (Verde)
+            if (String(bill.uc) === "9000943") {
+              bill.demandaPontaKW = "0";
+            }
+
             bill.mercado =
               bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc))
                 ? "LIVRE"
@@ -5737,16 +5742,18 @@ export default function App() {
           dmp = 0;
         }
 
+        const modalidade = (b.modalidadeTarifaria || "").toUpperCase();
+
         return {
           fileName: b.fileName,
           mes: b.mesReferencia || "N/A",
           ano: b.anoLeitura || "",
           uc: b.uc || "N/A",
-          dcp: parseValue(b.demandaPontaKW),
+          dcp: modalidade.includes("VERDE") ? 0 : parseValue(b.demandaPontaKW),
           dmp: dmp,
           dcfp: parseValue(b.demandaForaPontaKW),
           dmfp: parseValue(b.demandaPotenciaMedidaForaPonta),
-          modalidade: (b.modalidadeTarifaria || "").toUpperCase(),
+          modalidade: modalidade,
           // Valores financeiros para o Gasto Real
           vDmpP: parseValue(b.valorDemandaPotenciaMedidaPonta),
           vDmfpFP: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
@@ -6127,7 +6134,9 @@ export default function App() {
 
       // 1st Pass: Calculate Current Total for ALL bills first
       const processedBills = ucBills.map((b) => {
-        const dcp = parseValue(b.demandaPontaKW);
+        const modalidade = (b.modalidadeTarifaria || "").toUpperCase();
+        const bIsVerde = modalidade.includes("VERDE");
+        const dcp = bIsVerde ? 0 : parseValue(b.demandaPontaKW);
         const dmp = parseValue(b.demandaPotenciaMedidaPonta);
         const dcfp = parseValue(b.demandaForaPontaKW);
         const dmfp = parseValue(b.demandaPotenciaMedidaForaPonta);
