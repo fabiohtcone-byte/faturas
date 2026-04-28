@@ -3819,6 +3819,12 @@ export default function App() {
               }
             }
 
+            // Fix UC 117384 - FÁTIMA DO SUL
+            if (b.uc === "117384" && b.cidade !== "FÁTIMA DO SUL") {
+              updatedBill.cidade = "FÁTIMA DO SUL";
+              changed = true;
+            }
+
             // Fix 45839/2025 or other Excel dates
             if (
               updatedBill.mesReferencia === "45839" ||
@@ -5033,6 +5039,53 @@ export default function App() {
   const [syncProgress, setSyncProgress] = useState(0);
   const [totalSyncItems, setTotalSyncItems] = useState(0);
 
+  const syncSingleMappingToSupabase = async (mapping: UCLocinMapping) => {
+    if (!isSupabaseConfigured || !isAuthenticated) {
+      showAlert(
+        "Erro",
+        "Você precisa estar logado e com o Supabase configurado para sincronizar.",
+      );
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("bills")
+        .update({
+          cidade: mapping.cidade || null,
+          gerencia: mapping.gerencia,
+          locins: mapping.locin,
+        })
+        .eq("uc", mapping.uc);
+
+      if (error) {
+        console.error(`Erro ao sincronizar UC ${mapping.uc}:`, error);
+        showAlert(
+          "Erro na Sincronização",
+          `Ocorreu um erro ao sincronizar a UC ${mapping.uc}. Verifique as permissões.`,
+        );
+      } else {
+        setBills((prev) =>
+          prev.map((bill) => {
+            if (bill.uc === mapping.uc) {
+              return {
+                ...bill,
+                cidade: mapping.cidade || bill.cidade,
+                gerencia: mapping.gerencia,
+                locin: mapping.locin, // Changed to match local schema
+              };
+            }
+            return bill;
+          }),
+        );
+        showAlert("Sucesso", `UC ${mapping.uc} sincronizada com sucesso!`);
+      }
+    } catch (e) {
+      console.error(e);
+      showAlert("Erro", "Erro ao comunicar com o banco de dados.");
+    }
+  };
+
   const syncMappingsToSupabase = () => {
     if (!isSupabaseConfigured || !isAuthenticated) {
       showAlert(
@@ -5459,6 +5512,11 @@ export default function App() {
               if (!bill.cidade) bill.cidade = mapping.cidade;
             }
 
+            // Fix UC 117384 - FÁTIMA DO SUL
+            if (String(bill.uc) === "117384") {
+              bill.cidade = "FÁTIMA DO SUL";
+            }
+
             bill.mercado =
               bill.uc && UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc))
                 ? "LIVRE"
@@ -5862,6 +5920,140 @@ export default function App() {
     setAnalysisResults(results);
   };
 
+  const exportMonitoramentoExcel = () => {
+    if (!monitoringResults) return;
+
+    let html = `
+      <html xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <style>
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid black; padding: 5px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .header { font-size: 16px; font-weight: bold; background-color: #d9e1f2; }
+          .negative { color: red; }
+          .positive { color: green; }
+        </style>
+      </head>
+      <body>
+    `;
+
+    // 1. Prejuízos Encontrados
+    html += `
+      <table>
+        <tr><td colspan="4" class="header">PREJUÍZOS ENCONTRADOS</td></tr>
+        <tr>
+          <th>Cidade</th>
+          <th>UC</th>
+          <th>Prejuízo (R$)</th>
+        </tr>
+    `;
+
+    const cityLosses = monitoringResults.cityData.filter(
+      (c) => c.negativeEconomy < 0,
+    );
+    cityLosses.forEach((city) => {
+      city.negativeUcs.forEach((ucData: any) => {
+        html += `
+          <tr>
+            <td>${city.city}</td>
+            <td>${ucData.uc}</td>
+            <td class="negative">${ucData.economy.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `;
+      });
+    });
+
+    if (cityLosses.length === 0) {
+      html += `<tr><td colspan="3">Nenhum prejuízo identificado.</td></tr>`;
+    }
+
+    html += `</table><br/><br/>`;
+
+    // 2. Histórico de Alterações Mensais (Apenas UCs com Prejuízo)
+    html += `
+      <table>
+        <tr><td colspan="10" class="header" style="font-size: 18px; text-align: center;">HISTÓRICO MENSAL INDIVIDUAL DAS UCs COM PREJUÍZO</td></tr>
+    `;
+
+    const lossesUCs = monitoringResults.changedUCs.filter(
+      (uc: any) => uc.totalEconomy < 0,
+    );
+
+    lossesUCs.forEach((uc: any) => {
+      // Linha de Cabeçalho da UC
+      html += `
+        <tr><td colspan="10" style="background-color: #e2efda; font-weight: bold; font-size: 16px; border-bottom: 2px solid #548235; border-top: 2px solid #548235;">UC: ${uc.uc} | Cidade: ${uc.city}</td></tr>
+        <tr>
+          <th>Mês/Ano</th>
+          <th>Contratada P (kW)</th>
+          <th>Contratada FP (kW)</th>
+          <th>Medida P (kW)</th>
+          <th>Medida FP (kW)</th>
+          <th>Gasto Real (R$)</th>
+          <th>Ref. Anterior (R$)</th>
+          <th>Economia (R$)</th>
+          <th>Demanda Ideal P (kW)</th>
+          <th>Demanda Ideal FP (kW)</th>
+        </tr>
+      `;
+
+      uc.monthlyData.forEach((monthData: any) => {
+        const economyClass =
+          monthData.economy < 0
+            ? "negative"
+            : monthData.economy > 0
+              ? "positive"
+              : "";
+        html += `
+          <tr>
+            <td>${monthData.mes}/${monthData.ano}</td>
+            <td>${monthData.dcp}</td>
+            <td>${monthData.dcfp}</td>
+            <td>${monthData.dmp}</td>
+            <td>${monthData.dmfp}</td>
+            <td>${monthData.currentTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+            <td>${monthData.referenceTotal > 0 ? monthData.referenceTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "-"}</td>
+            <td class="${economyClass}">${monthData.economy.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+            <td>${uc.optPonta || 0}</td>
+            <td>${uc.optForaPonta || 0}</td>
+          </tr>
+        `;
+      });
+      // Linha de Totalizador da UC ou espaço em branco
+      html += `
+          <tr>
+            <td colspan="7" style="text-align: right; font-weight: bold;">Prejuízo Acumulado Total (${uc.uc}):</td>
+            <td style="font-weight: bold;" class="negative">${uc.totalEconomy.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr><td colspan="10" style="border: none; height: 20px;"></td></tr>
+      `;
+    });
+
+    if (lossesUCs.length === 0) {
+      html += `<tr><td colspan="10">Nenhuma UC com prejuízo identificada.</td></tr>`;
+    }
+
+    html += `
+      </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "Monitoramento_Despesas_Resultados.xls";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const runMonitoringAnalysis = () => {
     const completedBills = bills.filter((b) => b.status === "completed");
     if (completedBills.length === 0) return;
@@ -5875,6 +6067,19 @@ export default function App() {
     const ucs = Array.from(new Set(completedBills.map((b) => b.uc))).filter(
       (uc) => {
         const ucBills = completedBills.filter((b) => b.uc === uc);
+
+        // Remove UCs that are clearly Grupo B (to avoid parser hallucination of demand on Grupo B)
+        const grupoBCount = ucBills.filter((b) =>
+          (b.subgrupo || "").toUpperCase().startsWith("B"),
+        ).length;
+        const grupoACount = ucBills.filter((b) =>
+          (b.subgrupo || "").toUpperCase().startsWith("A"),
+        ).length;
+
+        if (grupoBCount > 0 && grupoACount === 0) {
+          return false;
+        }
+
         return ucBills.some(
           (b) =>
             parseValue(b.demandaPontaKW) > 0 ||
@@ -6399,6 +6604,11 @@ export default function App() {
         result.gerencia = mapping.gerencia;
         result.locin = mapping.locin;
         if (!result.cidade) result.cidade = mapping.cidade;
+      }
+
+      // Fix UC 117384 - FÁTIMA DO SUL
+      if (result.uc === "117384") {
+        result.cidade = "FÁTIMA DO SUL";
       }
 
       const updatedBill: BillData = {
@@ -8614,214 +8824,246 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-sanesul-primary/5">
                       <AnimatePresence initial={false}>
-                        {sortedBills.map((bill) => (
-                          <motion.tr
-                            key={bill.id}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, x: -20 }}
-                            className={`hover:bg-sanesul-primary/5 transition-colors group ${selectedBills.includes(bill.id) ? "bg-sanesul-primary/5" : ""}`}
-                          >
-                            <td className="px-4 py-3">
-                              <input
-                                type="checkbox"
-                                checked={selectedBills.includes(bill.id)}
-                                onChange={() => toggleBillSelection(bill.id)}
-                                className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-4">
-                                <div className="w-8 h-8 bg-sanesul-primary/5 rounded-lg flex items-center justify-center text-sanesul-primary group-hover:bg-sanesul-primary group-hover:text-white transition-all">
-                                  <FileText size={16} />
-                                </div>
-                                <div className="flex flex-col">
-                                  <span
-                                    className="text-xs font-bold text-sanesul-primary truncate max-w-[200px]"
-                                    title={bill.fileName}
-                                  >
-                                    {bill.fileName}
-                                  </span>
-                                  <span className="text-[9px] text-sanesul-muted uppercase tracking-wider">
-                                    {bill.file
-                                      ? `${(bill.file.size / 1024 / 1024).toFixed(2)} MB • ${bill.file.type.split("/")[1].toUpperCase()}`
-                                      : "ARQUIVO SALVO"}
-                                  </span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-mono font-bold text-sanesul-primary">
-                                  {bill.uc || "---"}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="text-xs font-bold text-slate-800">
-                                {getGerencia(bill.uc || "")}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                                {bill.cidade || "---"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                                {bill.concessionaria
-                                  ? bill.concessionaria
-                                      .toUpperCase()
-                                      .includes("ENERGISA")
-                                    ? "ENERGISA"
-                                    : bill.concessionaria
-                                          .toUpperCase()
-                                          .includes("ELEKTRO")
-                                      ? "ELEKTRO"
-                                      : bill.concessionaria
-                                  : "---"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="text-xs text-slate-600">
-                                {bill.mesReferencia && bill.anoLeitura
-                                  ? `${formatMonth(bill.mesReferencia)}/${bill.anoLeitura}`
-                                  : "---"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="text-xs text-slate-600">
-                                {bill.dataVencimento || "---"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                                  (bill.mercado ||
-                                    (bill.uc &&
-                                    UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc))
-                                      ? "LIVRE"
-                                      : "CATIVO")) === "LIVRE"
-                                    ? "bg-blue-100 text-blue-700"
-                                    : "bg-slate-100 text-slate-600"
-                                }`}
-                              >
-                                {bill.mercado ||
-                                  (bill.uc &&
-                                  UCS_LIVRE_MERCADO_LIVRE.has(String(bill.uc))
-                                    ? "LIVRE"
-                                    : "CATIVO")}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                                  bill.tipo === "OPERACIONAL"
-                                    ? "bg-blue-50 text-blue-600"
-                                    : bill.tipo === "ADMINISTRATIVO"
-                                      ? "bg-purple-50 text-purple-600"
-                                      : "bg-slate-100 text-slate-500"
-                                }`}
-                              >
-                                {bill.tipo || "N/A"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                {bill.status === "pending" && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[9px] font-bold uppercase tracking-wider">
-                                    <Clock size={10} />
-                                    Aguardando
-                                  </span>
-                                )}
-                                {bill.status === "processing" && (
-                                  <div className="flex flex-col gap-1 w-full min-w-[100px]">
-                                    <div className="flex items-center justify-between">
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-sanesul-primary rounded-full text-[9px] font-bold uppercase tracking-wider">
-                                        <Loader2
-                                          size={10}
-                                          className="animate-spin"
-                                        />
-                                        Extraindo... {bill.progress || 0}%
+                        {(() => {
+                          const paginatedSortedBills = sortedBills.slice(
+                            0,
+                            100,
+                          );
+                          return (
+                            <>
+                              {paginatedSortedBills.map((bill) => (
+                                <motion.tr
+                                  key={bill.id}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, x: -20 }}
+                                  className={`hover:bg-sanesul-primary/5 transition-colors group ${selectedBills.includes(bill.id) ? "bg-sanesul-primary/5" : ""}`}
+                                >
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedBills.includes(bill.id)}
+                                      onChange={() =>
+                                        toggleBillSelection(bill.id)
+                                      }
+                                      className="rounded border-sanesul-primary/20 text-sanesul-primary focus:ring-sanesul-primary"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-4">
+                                      <div className="w-8 h-8 bg-sanesul-primary/5 rounded-lg flex items-center justify-center text-sanesul-primary group-hover:bg-sanesul-primary group-hover:text-white transition-all">
+                                        <FileText size={16} />
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span
+                                          className="text-xs font-bold text-sanesul-primary truncate max-w-[200px]"
+                                          title={bill.fileName}
+                                        >
+                                          {bill.fileName}
+                                        </span>
+                                        <span className="text-[9px] text-sanesul-muted uppercase tracking-wider">
+                                          {bill.file
+                                            ? `${(bill.file.size / 1024 / 1024).toFixed(2)} MB • ${bill.file.type.split("/")[1].toUpperCase()}`
+                                            : "ARQUIVO SALVO"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-mono font-bold text-sanesul-primary">
+                                        {bill.uc || "---"}
                                       </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs font-bold text-slate-800">
+                                      {getGerencia(bill.uc || "")}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                      {bill.cidade || "---"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                      {bill.concessionaria
+                                        ? bill.concessionaria
+                                            .toUpperCase()
+                                            .includes("ENERGISA")
+                                          ? "ENERGISA"
+                                          : bill.concessionaria
+                                                .toUpperCase()
+                                                .includes("ELEKTRO")
+                                            ? "ELEKTRO"
+                                            : bill.concessionaria
+                                        : "---"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs text-slate-600">
+                                      {bill.mesReferencia && bill.anoLeitura
+                                        ? `${formatMonth(bill.mesReferencia)}/${bill.anoLeitura}`
+                                        : "---"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs text-slate-600">
+                                      {bill.dataVencimento || "---"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                        (bill.mercado ||
+                                          (bill.uc &&
+                                          UCS_LIVRE_MERCADO_LIVRE.has(
+                                            String(bill.uc),
+                                          )
+                                            ? "LIVRE"
+                                            : "CATIVO")) === "LIVRE"
+                                          ? "bg-blue-100 text-blue-700"
+                                          : "bg-slate-100 text-slate-600"
+                                      }`}
+                                    >
+                                      {bill.mercado ||
+                                        (bill.uc &&
+                                        UCS_LIVRE_MERCADO_LIVRE.has(
+                                          String(bill.uc),
+                                        )
+                                          ? "LIVRE"
+                                          : "CATIVO")}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                        bill.tipo === "OPERACIONAL"
+                                          ? "bg-blue-50 text-blue-600"
+                                          : bill.tipo === "ADMINISTRATIVO"
+                                            ? "bg-purple-50 text-purple-600"
+                                            : "bg-slate-100 text-slate-500"
+                                      }`}
+                                    >
+                                      {bill.tipo || "N/A"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                      {bill.status === "pending" && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[9px] font-bold uppercase tracking-wider">
+                                          <Clock size={10} />
+                                          Aguardando
+                                        </span>
+                                      )}
+                                      {bill.status === "processing" && (
+                                        <div className="flex flex-col gap-1 w-full min-w-[100px]">
+                                          <div className="flex items-center justify-between">
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-sanesul-primary rounded-full text-[9px] font-bold uppercase tracking-wider">
+                                              <Loader2
+                                                size={10}
+                                                className="animate-spin"
+                                              />
+                                              Extraindo... {bill.progress || 0}%
+                                            </span>
+                                            <button
+                                              onClick={() =>
+                                                bill.abortController?.abort()
+                                              }
+                                              className="text-red-500 hover:text-red-700 p-0.5 rounded-full hover:bg-red-50 transition-colors"
+                                              title="Cancelar"
+                                            >
+                                              <X size={12} />
+                                            </button>
+                                          </div>
+                                          <div className="w-full bg-slate-100 rounded-full h-1 overflow-hidden">
+                                            <div
+                                              className="bg-sanesul-primary h-1 rounded-full transition-all duration-300 ease-out"
+                                              style={{
+                                                width: `${bill.progress || 0}%`,
+                                              }}
+                                            ></div>
+                                          </div>
+                                          {bill.error && (
+                                            <span className="text-[9px] text-amber-600 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
+                                              <AlertCircle size={10} />{" "}
+                                              {bill.error}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {bill.status === "completed" && (
+                                        <div className="flex flex-col gap-1">
+                                          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold uppercase tracking-wider w-fit">
+                                            <CheckCircle2 size={12} />
+                                            Concluído
+                                          </span>
+                                          {bill.error && (
+                                            <span className="text-[9px] text-amber-600 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
+                                              <AlertCircle size={10} />{" "}
+                                              {bill.error}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {bill.status === "error" && (
+                                        <span
+                                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                                          title={bill.error}
+                                        >
+                                          <AlertCircle size={12} />
+                                          {bill.error || "Erro"}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-8 py-5 text-right">
+                                    <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <button
-                                        onClick={() =>
-                                          bill.abortController?.abort()
+                                        onClick={() => {
+                                          setEditingBill(bill);
+                                          setIsBillModalOpen(true);
+                                        }}
+                                        className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-500 transition-all"
+                                        disabled={
+                                          isProcessing &&
+                                          bill.status === "processing"
                                         }
-                                        className="text-red-500 hover:text-red-700 p-0.5 rounded-full hover:bg-red-50 transition-colors"
-                                        title="Cancelar"
+                                        title="Editar"
                                       >
-                                        <X size={12} />
+                                        <Pencil size={16} />
+                                      </button>
+                                      <button
+                                        onClick={() => removeBill(bill.id)}
+                                        className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                                        disabled={
+                                          isProcessing &&
+                                          bill.status === "processing"
+                                        }
+                                        title="Excluir"
+                                      >
+                                        <Trash2 size={16} />
                                       </button>
                                     </div>
-                                    <div className="w-full bg-slate-100 rounded-full h-1 overflow-hidden">
-                                      <div
-                                        className="bg-sanesul-primary h-1 rounded-full transition-all duration-300 ease-out"
-                                        style={{
-                                          width: `${bill.progress || 0}%`,
-                                        }}
-                                      ></div>
-                                    </div>
-                                    {bill.error && (
-                                      <span className="text-[9px] text-amber-600 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
-                                        <AlertCircle size={10} /> {bill.error}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                                {bill.status === "completed" && (
-                                  <div className="flex flex-col gap-1">
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold uppercase tracking-wider w-fit">
-                                      <CheckCircle2 size={12} />
-                                      Concluído
-                                    </span>
-                                    {bill.error && (
-                                      <span className="text-[9px] text-amber-600 font-bold flex items-center gap-1 mt-1 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
-                                        <AlertCircle size={10} /> {bill.error}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                                {bill.status === "error" && (
-                                  <span
-                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold uppercase tracking-wider"
-                                    title={bill.error}
+                                  </td>
+                                </motion.tr>
+                              ))}
+                              {sortedBills.length > 100 && (
+                                <tr>
+                                  <td
+                                    colSpan={13}
+                                    className="px-4 py-6 text-center text-sm text-slate-500 italic bg-slate-50 border-t border-slate-100"
                                   >
-                                    <AlertCircle size={12} />
-                                    {bill.error || "Erro"}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-8 py-5 text-right">
-                              <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={() => {
-                                    setEditingBill(bill);
-                                    setIsBillModalOpen(true);
-                                  }}
-                                  className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-500 transition-all"
-                                  disabled={
-                                    isProcessing && bill.status === "processing"
-                                  }
-                                  title="Editar"
-                                >
-                                  <Pencil size={16} />
-                                </button>
-                                <button
-                                  onClick={() => removeBill(bill.id)}
-                                  className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all"
-                                  disabled={
-                                    isProcessing && bill.status === "processing"
-                                  }
-                                  title="Excluir"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </td>
-                          </motion.tr>
-                        ))}
+                                    Exibindo os primeiros 100 de{" "}
+                                    {sortedBills.length} resultados. Use a
+                                    pesquisa para ver mais.
+                                  </td>
+                                </tr>
+                              )}
+                            </>
+                          );
+                        })()}
                       </AnimatePresence>
                     </tbody>
                   </table>
@@ -10671,401 +10913,426 @@ export default function App() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-sanesul-primary/5">
-                            {sortedDashboardData.map((row, idx) => (
-                              <tr
-                                key={idx}
-                                className="hover:bg-sanesul-primary/5 transition-colors group"
-                              >
-                                <td className="px-8 py-5 text-sm font-bold text-sanesul-primary">
-                                  {row.uc}
-                                </td>
-                                <td className="px-8 py-5 text-sm text-slate-600">
-                                  {row.name}
-                                </td>
-                                <td className="px-8 py-5 text-sm font-medium text-slate-600">
-                                  {UCS_PPP.has(String(row.uc))
-                                    ? "PPP Fotovoltaica"
-                                    : UCS_USINA.has(String(row.uc))
-                                      ? "Usinas SANESUL"
-                                      : "Geral"}
-                                </td>
-                                <td className="px-8 py-5 text-sm font-bold">
-                                  <span
-                                    className={`px-3 py-1 rounded-full text-[10px] uppercase tracking-wider ${row.mercado === "LIVRE" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}
-                                  >
-                                    {row.mercado}
-                                  </span>
-                                </td>
-                                <td className="px-8 py-5 text-sm font-medium text-slate-600">
-                                  {row.modalidadeTarifaria || "-"}
-                                </td>
-                                {dashboardSubTab === "operacionais" ? (
-                                  <>
-                                    {operationalSubTab === "consumo" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.consumoPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kWh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.consumoForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kWh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
-                                          {(
-                                            row.consumoPonta +
-                                            row.consumoForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{" "}
-                                          kWh
-                                        </td>
-                                      </>
-                                    )}
-                                    {operationalSubTab === "ultrapassagem" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.demandaContratadaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.demandaContratadaForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.ultrapassagemPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.ultrapassagemForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-red-600">
-                                          {(
-                                            row.ultrapassagemPonta +
-                                            row.ultrapassagemForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{" "}
-                                          kW
-                                        </td>
-                                      </>
-                                    )}
-                                    {operationalSubTab === "subutilizacao" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.demandaContratadaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.demandaContratadaForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.demandaMedidaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.demandaMedidaForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kW
-                                        </td>
-                                        <td
-                                          className={`px-8 py-5 text-sm font-bold text-right ${row.demandaMedidaPonta < row.demandaContratadaPonta * 0.8 ? "text-orange-600" : "text-slate-600"}`}
+                            {(() => {
+                              const paginatedDashboard =
+                                sortedDashboardData.slice(0, 100);
+                              return (
+                                <>
+                                  {paginatedDashboard.map((row, idx) => (
+                                    <tr
+                                      key={idx}
+                                      className="hover:bg-sanesul-primary/5 transition-colors group"
+                                    >
+                                      <td className="px-8 py-5 text-sm font-bold text-sanesul-primary">
+                                        {row.uc}
+                                      </td>
+                                      <td className="px-8 py-5 text-sm text-slate-600">
+                                        {row.name}
+                                      </td>
+                                      <td className="px-8 py-5 text-sm font-medium text-slate-600">
+                                        {UCS_PPP.has(String(row.uc))
+                                          ? "PPP Fotovoltaica"
+                                          : UCS_USINA.has(String(row.uc))
+                                            ? "Usinas SANESUL"
+                                            : "Geral"}
+                                      </td>
+                                      <td className="px-8 py-5 text-sm font-bold">
+                                        <span
+                                          className={`px-3 py-1 rounded-full text-[10px] uppercase tracking-wider ${row.mercado === "LIVRE" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}
                                         >
-                                          {(
-                                            (row.demandaMedidaPonta /
-                                              (row.demandaContratadaPonta ||
-                                                1)) *
-                                            100
-                                          ).toFixed(2)}
-                                          %
-                                        </td>
-                                      </>
-                                    )}
-                                    {operationalSubTab === "reativa" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.reativaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kVArh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.reativaForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kVArh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">
-                                          {(
-                                            row.reativaPonta +
-                                            row.reativaForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{" "}
-                                          kVArh
-                                        </td>
-                                      </>
-                                    )}
-                                    {operationalSubTab === "solar" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {(
-                                            row.consumoPonta +
-                                            row.consumoForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{" "}
-                                          kWh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.solarInjetadaOUC.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kWh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {row.solarInjetadaMUC.toLocaleString(
-                                            "pt-BR",
-                                            {
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2,
-                                            },
-                                          )}{" "}
-                                          kWh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-green-600">
-                                          {(
-                                            row.solarInjetadaOUC +
-                                            row.solarInjetadaMUC -
-                                            (row.consumoPonta +
-                                              row.consumoForaPonta)
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{" "}
-                                          kWh
-                                        </td>
-                                      </>
-                                    )}
-                                  </>
-                                ) : (
-                                  <>
-                                    {financialSubTab === "despesas" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
-                                          R${" "}
-                                          {row.valorTotal.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                          {row.mercado}
+                                        </span>
+                                      </td>
+                                      <td className="px-8 py-5 text-sm font-medium text-slate-600">
+                                        {row.modalidadeTarifaria || "-"}
+                                      </td>
+                                      {dashboardSubTab === "operacionais" ? (
+                                        <>
+                                          {operationalSubTab === "consumo" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.consumoPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.consumoForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
+                                                {(
+                                                  row.consumoPonta +
+                                                  row.consumoForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{" "}
+                                                kWh
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm text-slate-600">
-                                          {row.cidade}
-                                        </td>
-                                      </>
-                                    )}
-                                    {financialSubTab ===
-                                      "multa_ultrapassagem" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          R${" "}
-                                          {row.valorUltrapassagemPonta.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                          {operationalSubTab ===
+                                            "ultrapassagem" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.demandaContratadaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.demandaContratadaForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.ultrapassagemPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.ultrapassagemForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-red-600">
+                                                {(
+                                                  row.ultrapassagemPonta +
+                                                  row.ultrapassagemForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{" "}
+                                                kW
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          R${" "}
-                                          {row.valorUltrapassagemForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                          {operationalSubTab ===
+                                            "subutilizacao" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.demandaContratadaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.demandaContratadaForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.demandaMedidaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.demandaMedidaForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kW
+                                              </td>
+                                              <td
+                                                className={`px-8 py-5 text-sm font-bold text-right ${row.demandaMedidaPonta < row.demandaContratadaPonta * 0.8 ? "text-orange-600" : "text-slate-600"}`}
+                                              >
+                                                {(
+                                                  (row.demandaMedidaPonta /
+                                                    (row.demandaContratadaPonta ||
+                                                      1)) *
+                                                  100
+                                                ).toFixed(2)}
+                                                %
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-red-600">
-                                          R${" "}
-                                          {(
-                                            row.valorUltrapassagemPonta +
-                                            row.valorUltrapassagemForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                          })}
-                                        </td>
-                                      </>
-                                    )}
-                                    {financialSubTab === "multa_reativa" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          R${" "}
-                                          {row.valorReativaPonta.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                          {operationalSubTab === "reativa" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.reativaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kVArh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.reativaForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kVArh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">
+                                                {(
+                                                  row.reativaPonta +
+                                                  row.reativaForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{" "}
+                                                kVArh
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          R${" "}
-                                          {row.valorReativaForaPonta.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                          {operationalSubTab === "solar" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {(
+                                                  row.consumoPonta +
+                                                  row.consumoForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.solarInjetadaOUC.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {row.solarInjetadaMUC.toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-green-600">
+                                                {(
+                                                  row.solarInjetadaOUC +
+                                                  row.solarInjetadaMUC -
+                                                  (row.consumoPonta +
+                                                    row.consumoForaPonta)
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{" "}
+                                                kWh
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">
-                                          R${" "}
-                                          {(
-                                            row.valorReativaPonta +
-                                            row.valorReativaForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                          })}
-                                        </td>
-                                      </>
-                                    )}
-                                    {financialSubTab === "tarifa_media" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          R${" "}
-                                          {row.valorTotal.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                        </>
+                                      ) : (
+                                        <>
+                                          {financialSubTab === "despesas" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
+                                                R${" "}
+                                                {row.valorTotal.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm text-slate-600">
+                                                {row.cidade}
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
-                                          {(
-                                            row.consumoPonta +
-                                            row.consumoForaPonta
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{" "}
-                                          kWh
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
-                                          R${" "}
-                                          {(
-                                            row.valorTotal /
-                                            (row.consumoPonta +
-                                              row.consumoForaPonta || 1)
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}
-                                        </td>
-                                      </>
-                                    )}
-                                    {financialSubTab === "energia_solar" && (
-                                      <>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
-                                          R${" "}
-                                          {(
-                                            Math.abs(
-                                              row.valorSolarOUC +
-                                                row.valorSolarMUC,
-                                            ) +
-                                            (row.valorTotal -
-                                              row.cip -
-                                              row.outrosEncargos)
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                          })}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-green-600">
-                                          R${" "}
-                                          {Math.abs(
-                                            row.valorSolarOUC +
-                                              row.valorSolarMUC,
-                                          ).toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                          })}
-                                        </td>
-                                        <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-secondary">
-                                          R${" "}
-                                          {row.valorTotal.toLocaleString(
-                                            "pt-BR",
-                                            { minimumFractionDigits: 2 },
+                                          {financialSubTab ===
+                                            "multa_ultrapassagem" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                R${" "}
+                                                {row.valorUltrapassagemPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                R${" "}
+                                                {row.valorUltrapassagemForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-red-600">
+                                                R${" "}
+                                                {(
+                                                  row.valorUltrapassagemPonta +
+                                                  row.valorUltrapassagemForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                })}
+                                              </td>
+                                            </>
                                           )}
-                                        </td>
-                                      </>
-                                    )}
-                                  </>
-                                )}
-                              </tr>
-                            ))}
+                                          {financialSubTab ===
+                                            "multa_reativa" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                R${" "}
+                                                {row.valorReativaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                R${" "}
+                                                {row.valorReativaForaPonta.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-purple-600">
+                                                R${" "}
+                                                {(
+                                                  row.valorReativaPonta +
+                                                  row.valorReativaForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                })}
+                                              </td>
+                                            </>
+                                          )}
+                                          {financialSubTab ===
+                                            "tarifa_media" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                R${" "}
+                                                {row.valorTotal.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {(
+                                                  row.consumoPonta +
+                                                  row.consumoForaPonta
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
+                                                R${" "}
+                                                {(
+                                                  row.valorTotal /
+                                                  (row.consumoPonta +
+                                                    row.consumoForaPonta || 1)
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                  maximumFractionDigits: 2,
+                                                })}
+                                              </td>
+                                            </>
+                                          )}
+                                          {financialSubTab ===
+                                            "energia_solar" && (
+                                            <>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
+                                                R${" "}
+                                                {(
+                                                  Math.abs(
+                                                    row.valorSolarOUC +
+                                                      row.valorSolarMUC,
+                                                  ) +
+                                                  (row.valorTotal -
+                                                    row.cip -
+                                                    row.outrosEncargos)
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                })}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-green-600">
+                                                R${" "}
+                                                {Math.abs(
+                                                  row.valorSolarOUC +
+                                                    row.valorSolarMUC,
+                                                ).toLocaleString("pt-BR", {
+                                                  minimumFractionDigits: 2,
+                                                })}
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-secondary">
+                                                R${" "}
+                                                {row.valorTotal.toLocaleString(
+                                                  "pt-BR",
+                                                  { minimumFractionDigits: 2 },
+                                                )}
+                                              </td>
+                                            </>
+                                          )}
+                                        </>
+                                      )}
+                                    </tr>
+                                  ))}
+                                  {sortedDashboardData.length > 100 && (
+                                    <tr>
+                                      <td
+                                        colSpan={13}
+                                        className="px-8 py-6 text-center text-sm text-slate-500 italic bg-slate-50 border-t border-sanesul-primary/5"
+                                      >
+                                        Exibindo os primeiros 100 de{" "}
+                                        {sortedDashboardData.length} resultados.
+                                        Use a pesquisa para ver mais.
+                                      </td>
+                                    </tr>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </tbody>
                         </table>
                       </div>
@@ -11164,26 +11431,18 @@ export default function App() {
               ) : (
                 <div className="space-y-10">
                   {/* Summary Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+                    <div className="bg-white p-8 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
-                        {analysisResults.reduce(
-                          (acc: any, curr: any) => acc + curr.economy,
-                          0,
-                        ) >= 0 ? (
-                          <TrendingUp size={80} className="text-green-600" />
-                        ) : (
-                          <TrendingDown size={80} className="text-red-600" />
-                        )}
+                        <TrendingUp size={80} className="text-green-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">
-                        Economia Potencial
+                        Economia Positiva
                       </p>
-                      <p
-                        className={`text-4xl font-display font-bold ${analysisResults.reduce((acc: any, curr: any) => acc + curr.economy, 0) >= 0 ? "text-green-600" : "text-red-600"}`}
-                      >
+                      <p className="text-3xl font-display font-bold text-green-600">
                         R${" "}
                         {analysisResults
+                          .filter((r: any) => r.economy > 0)
                           .reduce(
                             (acc: any, curr: any) => acc + curr.economy,
                             0,
@@ -11193,36 +11452,58 @@ export default function App() {
                           })}
                       </p>
                     </div>
-                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+
+                    <div className="bg-white p-8 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                      <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
+                        <TrendingDown size={80} className="text-red-600" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">
+                        Economia Negativa
+                      </p>
+                      <p className="text-3xl font-display font-bold text-red-600">
+                        R${" "}
+                        {analysisResults
+                          .filter((r: any) => r.economy < 0)
+                          .reduce(
+                            (acc: any, curr: any) => acc + curr.economy,
+                            0,
+                          )
+                          .toLocaleString("pt-BR", {
+                            minimumFractionDigits: 2,
+                          })}
+                      </p>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                         <AlertCircle size={80} className="text-red-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">
                         Ultrapassagens
                       </p>
-                      <p className="text-4xl font-display font-bold text-red-600">
+                      <p className="text-3xl font-display font-bold text-red-600">
                         {analysisResults.filter((r: any) => r.isOverrun).length}
                       </p>
                     </div>
-                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                    <div className="bg-white p-8 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                         <TrendingDown size={80} className="text-orange-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">
                         Subutilizações
                       </p>
-                      <p className="text-4xl font-display font-bold text-orange-600">
+                      <p className="text-3xl font-display font-bold text-orange-600">
                         {analysisResults.filter((r: any) => r.isSub).length}
                       </p>
                     </div>
-                    <div className="bg-white p-10 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
+                    <div className="bg-white p-8 rounded-[40px] border border-sanesul-primary/5 shadow-2xl shadow-sanesul-primary/5 relative overflow-hidden group hover:border-sanesul-primary/20 transition-all">
                       <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform">
                         <Zap size={80} className="text-green-600" />
                       </div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-sanesul-muted mb-4">
                         Eficiência
                       </p>
-                      <p className="text-4xl font-display font-bold text-green-600">
+                      <p className="text-3xl font-display font-bold text-green-600">
                         {Math.round(
                           (analysisResults.filter(
                             (r: any) => !r.isOverrun && !r.isSub,
@@ -11506,16 +11787,27 @@ export default function App() {
                   cidade e UC.
                 </p>
               </div>
-              <button
-                onClick={runMonitoringAnalysis}
-                disabled={
-                  bills.filter((b) => b.status === "completed").length === 0
-                }
-                className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <BarChart3 size={16} />
-                Atualizar Monitoramento
-              </button>
+              <div className="flex items-center gap-4">
+                {monitoringResults && (
+                  <button
+                    onClick={exportMonitoramentoExcel}
+                    className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                  >
+                    <Download size={16} />
+                    Exportar XLS
+                  </button>
+                )}
+                <button
+                  onClick={runMonitoringAnalysis}
+                  disabled={
+                    bills.filter((b) => b.status === "completed").length === 0
+                  }
+                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <BarChart3 size={16} />
+                  Atualizar Monitoramento
+                </button>
+              </div>
             </div>
 
             {!monitoringResults ? (
@@ -12467,197 +12759,229 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-sanesul-primary/5">
-                          {reactiveData.map((data, idx) => (
-                            <React.Fragment key={idx}>
-                              <tr
-                                className="hover:bg-sanesul-primary/5 transition-colors cursor-pointer group"
-                                onClick={() => toggleReactiveUc(data.uc)}
-                              >
-                                <td className="px-6 py-4">
-                                  <div className="font-bold text-sanesul-primary">
-                                    {data.uc}
-                                  </div>
-                                  <div className="text-[10px] text-sanesul-muted uppercase tracking-wider mt-1">
-                                    {data.bills.length} faturas
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="text-sm font-bold text-slate-800">
-                                    {getGerencia(data.uc)}
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="text-sm text-slate-600">
-                                    {data.cidade}
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <div className="text-sm font-mono text-slate-600">
-                                    R${" "}
-                                    {data.totalPonta.toLocaleString("pt-BR", {
-                                      minimumFractionDigits: 2,
-                                    })}
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <div className="text-sm font-mono text-slate-600">
-                                    R${" "}
-                                    {data.totalFPonta.toLocaleString("pt-BR", {
-                                      minimumFractionDigits: 2,
-                                    })}
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <div className="text-sm font-bold text-red-600">
-                                    R${" "}
-                                    {(
-                                      data.totalPonta + data.totalFPonta
-                                    ).toLocaleString("pt-BR", {
-                                      minimumFractionDigits: 2,
-                                    })}
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <div className="text-sm font-bold text-orange-500">
-                                    {data.totalFatura > 0
-                                      ? (
-                                          ((data.totalPonta +
-                                            data.totalFPonta) /
-                                            data.totalFatura) *
-                                          100
-                                        ).toLocaleString("pt-BR", {
-                                          minimumFractionDigits: 2,
-                                          maximumFractionDigits: 2,
-                                        })
-                                      : "0,00"}
-                                    %
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                  <ChevronDown
-                                    className={`w-5 h-5 text-sanesul-primary/40 transition-transform group-hover:text-sanesul-primary ${expandedReactiveUcs.has(data.uc) ? "rotate-180" : ""}`}
-                                  />
-                                </td>
-                              </tr>
-                              {expandedReactiveUcs.has(data.uc) && (
-                                <tr>
-                                  <td
-                                    colSpan={8}
-                                    className="p-0 bg-slate-50/50"
-                                  >
-                                    <div className="px-12 py-6 border-t border-sanesul-primary/5 shadow-inner">
-                                      <table className="w-full text-left">
-                                        <thead>
-                                          <tr>
-                                            <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200">
-                                              Mês/Ano
-                                            </th>
-                                            <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
-                                              Valor Ponta (R$)
-                                            </th>
-                                            <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
-                                              Valor F. Ponta (R$)
-                                            </th>
-                                            <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
-                                              Total Mês (R$)
-                                            </th>
-                                            <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
-                                              % da Fatura
-                                            </th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                          {data.bills
-                                            .sort((a, b) => {
-                                              const yearA = parseInt(
-                                                a.anoLeitura || "0",
-                                                10,
-                                              );
-                                              const yearB = parseInt(
-                                                b.anoLeitura || "0",
-                                                10,
-                                              );
-                                              if (yearA !== yearB)
-                                                return yearB - yearA;
-                                              return (
-                                                getMonthNumber(
-                                                  b.mesReferencia,
-                                                ) -
-                                                getMonthNumber(a.mesReferencia)
-                                              );
-                                            })
-                                            .map((bill, bIdx) => {
-                                              const vPonta = parseValue(
-                                                bill.valorEnergiaReativaExcedPonta,
-                                              );
-                                              const vFPonta = parseValue(
-                                                bill.valorEnergiaReativaExcedFPonta,
-                                              );
-                                              const vFatura = parseValue(
-                                                bill.valorTotal,
-                                              );
-                                              const percentual =
-                                                vFatura > 0
-                                                  ? ((vPonta + vFPonta) /
-                                                      vFatura) *
-                                                    100
-                                                  : 0;
-                                              return (
-                                                <tr
-                                                  key={bIdx}
-                                                  className="hover:bg-white transition-colors"
-                                                >
-                                                  <td className="px-4 py-3 text-sm font-medium text-slate-600">
-                                                    {bill.mesReferencia}/
-                                                    {bill.anoLeitura}
-                                                  </td>
-                                                  <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">
-                                                    R${" "}
-                                                    {vPonta.toLocaleString(
-                                                      "pt-BR",
-                                                      {
-                                                        minimumFractionDigits: 2,
-                                                      },
-                                                    )}
-                                                  </td>
-                                                  <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">
-                                                    R${" "}
-                                                    {vFPonta.toLocaleString(
-                                                      "pt-BR",
-                                                      {
-                                                        minimumFractionDigits: 2,
-                                                      },
-                                                    )}
-                                                  </td>
-                                                  <td className="px-4 py-3 text-sm font-bold text-red-500 text-right">
-                                                    R${" "}
-                                                    {(
-                                                      vPonta + vFPonta
-                                                    ).toLocaleString("pt-BR", {
-                                                      minimumFractionDigits: 2,
-                                                    })}
-                                                  </td>
-                                                  <td className="px-4 py-3 text-sm font-bold text-orange-500 text-right">
-                                                    {percentual.toLocaleString(
-                                                      "pt-BR",
-                                                      {
-                                                        minimumFractionDigits: 2,
-                                                        maximumFractionDigits: 2,
-                                                      },
-                                                    )}
-                                                    %
-                                                  </td>
+                          {(() => {
+                            const paginatedReactive = reactiveData.slice(
+                              0,
+                              100,
+                            );
+                            return (
+                              <>
+                                {paginatedReactive.map((data, idx) => (
+                                  <React.Fragment key={idx}>
+                                    <tr
+                                      className="hover:bg-sanesul-primary/5 transition-colors cursor-pointer group"
+                                      onClick={() => toggleReactiveUc(data.uc)}
+                                    >
+                                      <td className="px-6 py-4">
+                                        <div className="font-bold text-sanesul-primary">
+                                          {data.uc}
+                                        </div>
+                                        <div className="text-[10px] text-sanesul-muted uppercase tracking-wider mt-1">
+                                          {data.bills.length} faturas
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        <div className="text-sm font-bold text-slate-800">
+                                          {getGerencia(data.uc)}
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        <div className="text-sm text-slate-600">
+                                          {data.cidade}
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4 text-right">
+                                        <div className="text-sm font-mono text-slate-600">
+                                          R${" "}
+                                          {data.totalPonta.toLocaleString(
+                                            "pt-BR",
+                                            {
+                                              minimumFractionDigits: 2,
+                                            },
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4 text-right">
+                                        <div className="text-sm font-mono text-slate-600">
+                                          R${" "}
+                                          {data.totalFPonta.toLocaleString(
+                                            "pt-BR",
+                                            {
+                                              minimumFractionDigits: 2,
+                                            },
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4 text-right">
+                                        <div className="text-sm font-bold text-red-600">
+                                          R${" "}
+                                          {(
+                                            data.totalPonta + data.totalFPonta
+                                          ).toLocaleString("pt-BR", {
+                                            minimumFractionDigits: 2,
+                                          })}
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4 text-right">
+                                        <div className="text-sm font-bold text-orange-500">
+                                          {data.totalFatura > 0
+                                            ? (
+                                                ((data.totalPonta +
+                                                  data.totalFPonta) /
+                                                  data.totalFatura) *
+                                                100
+                                              ).toLocaleString("pt-BR", {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                              })
+                                            : "0,00"}
+                                          %
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4 text-center">
+                                        <ChevronDown
+                                          className={`w-5 h-5 text-sanesul-primary/40 transition-transform group-hover:text-sanesul-primary ${expandedReactiveUcs.has(data.uc) ? "rotate-180" : ""}`}
+                                        />
+                                      </td>
+                                    </tr>
+                                    {expandedReactiveUcs.has(data.uc) && (
+                                      <tr>
+                                        <td
+                                          colSpan={8}
+                                          className="p-0 bg-slate-50/50"
+                                        >
+                                          <div className="px-12 py-6 border-t border-sanesul-primary/5 shadow-inner">
+                                            <table className="w-full text-left">
+                                              <thead>
+                                                <tr>
+                                                  <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200">
+                                                    Mês/Ano
+                                                  </th>
+                                                  <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
+                                                    Valor Ponta (R$)
+                                                  </th>
+                                                  <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
+                                                    Valor F. Ponta (R$)
+                                                  </th>
+                                                  <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
+                                                    Total Mês (R$)
+                                                  </th>
+                                                  <th className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-slate-200 text-right">
+                                                    % da Fatura
+                                                  </th>
                                                 </tr>
-                                              );
-                                            })}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
-                          ))}
+                                              </thead>
+                                              <tbody className="divide-y divide-slate-100">
+                                                {data.bills
+                                                  .sort((a, b) => {
+                                                    const yearA = parseInt(
+                                                      a.anoLeitura || "0",
+                                                      10,
+                                                    );
+                                                    const yearB = parseInt(
+                                                      b.anoLeitura || "0",
+                                                      10,
+                                                    );
+                                                    if (yearA !== yearB)
+                                                      return yearB - yearA;
+                                                    return (
+                                                      getMonthNumber(
+                                                        b.mesReferencia,
+                                                      ) -
+                                                      getMonthNumber(
+                                                        a.mesReferencia,
+                                                      )
+                                                    );
+                                                  })
+                                                  .map((bill, bIdx) => {
+                                                    const vPonta = parseValue(
+                                                      bill.valorEnergiaReativaExcedPonta,
+                                                    );
+                                                    const vFPonta = parseValue(
+                                                      bill.valorEnergiaReativaExcedFPonta,
+                                                    );
+                                                    const vFatura = parseValue(
+                                                      bill.valorTotal,
+                                                    );
+                                                    const percentual =
+                                                      vFatura > 0
+                                                        ? ((vPonta + vFPonta) /
+                                                            vFatura) *
+                                                          100
+                                                        : 0;
+                                                    return (
+                                                      <tr
+                                                        key={bIdx}
+                                                        className="hover:bg-white transition-colors"
+                                                      >
+                                                        <td className="px-4 py-3 text-sm font-medium text-slate-600">
+                                                          {bill.mesReferencia}/
+                                                          {bill.anoLeitura}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">
+                                                          R${" "}
+                                                          {vPonta.toLocaleString(
+                                                            "pt-BR",
+                                                            {
+                                                              minimumFractionDigits: 2,
+                                                            },
+                                                          )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">
+                                                          R${" "}
+                                                          {vFPonta.toLocaleString(
+                                                            "pt-BR",
+                                                            {
+                                                              minimumFractionDigits: 2,
+                                                            },
+                                                          )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-sm font-bold text-red-500 text-right">
+                                                          R${" "}
+                                                          {(
+                                                            vPonta + vFPonta
+                                                          ).toLocaleString(
+                                                            "pt-BR",
+                                                            {
+                                                              minimumFractionDigits: 2,
+                                                            },
+                                                          )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-sm font-bold text-orange-500 text-right">
+                                                          {percentual.toLocaleString(
+                                                            "pt-BR",
+                                                            {
+                                                              minimumFractionDigits: 2,
+                                                              maximumFractionDigits: 2,
+                                                            },
+                                                          )}
+                                                          %
+                                                        </td>
+                                                      </tr>
+                                                    );
+                                                  })}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
+                                ))}
+                                {reactiveData.length > 100 && (
+                                  <tr>
+                                    <td
+                                      colSpan={5}
+                                      className="px-6 py-6 text-center text-sm text-slate-500 italic bg-slate-50 border-t border-slate-100"
+                                    >
+                                      Exibindo os primeiros 100 de{" "}
+                                      {reactiveData.length} resultados.
+                                    </td>
+                                  </tr>
+                                )}
+                              </>
+                            );
+                          })()}
                           {reactiveData.length === 0 && (
                             <tr>
                               <td
@@ -14029,69 +14353,109 @@ export default function App() {
                           );
                         }
 
-                        return filtered.map((m, i) => (
-                          <tr key={i} className="hover:bg-slate-50">
-                            <td className="px-4 py-3 text-sm font-bold text-sanesul-primary">
-                              {m.uc}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-slate-700">
-                              {m.gerencia}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-slate-700">
-                              {m.cidade || "---"}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-slate-700">
-                              {m.locin}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-right">
-                              <button
-                                onClick={() => {
-                                  (
-                                    document.getElementById(
-                                      "newGerenciaUC",
-                                    ) as HTMLInputElement
-                                  ).value = m.uc;
-                                  (
-                                    document.getElementById(
-                                      "newGerenciaName",
-                                    ) as HTMLInputElement
-                                  ).value = m.gerencia;
-                                  (
-                                    document.getElementById(
-                                      "newGerenciaLOCIN",
-                                    ) as HTMLInputElement
-                                  ).value = m.locin;
-                                  (
-                                    document.getElementById(
-                                      "newGerenciaCidade",
-                                    ) as HTMLInputElement
-                                  ).value = m.cidade || "";
-                                }}
-                                className="text-blue-500 hover:text-blue-700 mx-2 font-bold text-[10px] uppercase tracking-wider"
-                                title="Editar"
-                              >
-                                Editar
-                              </button>
-                              <button
-                                onClick={() => {
-                                  showConfirm(
-                                    "Remover Mapeamento",
-                                    `Tem certeza que deseja remover o mapeamento da UC ${m.uc}?`,
-                                    () =>
-                                      saveUcMappings(
-                                        ucMappings.filter((x) => x.uc !== m.uc),
-                                      ),
-                                    "danger",
-                                  );
-                                }}
-                                className="text-red-500 hover:text-red-700 mx-2"
-                                title="Remover"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        ));
+                        const paginatedFiltered = filtered.slice(0, 100);
+
+                        return (
+                          <>
+                            {paginatedFiltered.map((m, i) => (
+                              <tr key={i} className="hover:bg-slate-50">
+                                <td className="px-4 py-3 text-sm font-bold text-sanesul-primary">
+                                  {m.uc}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-700">
+                                  {m.gerencia}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-700">
+                                  {m.cidade || "---"}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-slate-700">
+                                  {m.locin}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-right">
+                                  <button
+                                    onClick={() => {
+                                      (
+                                        document.getElementById(
+                                          "newGerenciaUC",
+                                        ) as HTMLInputElement
+                                      ).value = m.uc;
+                                      (
+                                        document.getElementById(
+                                          "newGerenciaName",
+                                        ) as HTMLInputElement
+                                      ).value = m.gerencia;
+                                      (
+                                        document.getElementById(
+                                          "newGerenciaLOCIN",
+                                        ) as HTMLInputElement
+                                      ).value = m.locin;
+                                      (
+                                        document.getElementById(
+                                          "newGerenciaCidade",
+                                        ) as HTMLInputElement
+                                      ).value = m.cidade || "";
+
+                                      const nameInput =
+                                        document.getElementById(
+                                          "newGerenciaName",
+                                        );
+                                      if (nameInput) {
+                                        nameInput.scrollIntoView({
+                                          behavior: "smooth",
+                                          block: "center",
+                                        });
+                                        nameInput.focus();
+                                      }
+                                    }}
+                                    className="text-blue-500 hover:text-blue-700 mx-2 font-bold text-[10px] uppercase tracking-wider"
+                                    title="Editar"
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      syncSingleMappingToSupabase(m)
+                                    }
+                                    className="text-green-500 hover:text-green-700 mx-2 font-bold text-[10px] uppercase tracking-wider"
+                                    title="Sincronizar com Banco de Dados"
+                                  >
+                                    Sincronizar
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      showConfirm(
+                                        "Remover Mapeamento",
+                                        `Tem certeza que deseja remover o mapeamento da UC ${m.uc}?`,
+                                        () =>
+                                          saveUcMappings(
+                                            ucMappings.filter(
+                                              (x) => x.uc !== m.uc,
+                                            ),
+                                          ),
+                                        "danger",
+                                      );
+                                    }}
+                                    className="text-red-500 hover:text-red-700 mx-2"
+                                    title="Remover"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                            {filtered.length > 100 && (
+                              <tr>
+                                <td
+                                  colSpan={5}
+                                  className="px-4 py-6 text-center text-sm text-slate-500 italic bg-slate-50 border-t border-slate-100"
+                                >
+                                  Exibindo os primeiros 100 de {filtered.length}{" "}
+                                  resultados. Use a pesquisa para ver mais.
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        );
                       })()}
                     </tbody>
                   </table>
