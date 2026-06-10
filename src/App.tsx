@@ -37,6 +37,7 @@ import {
 } from "@google/genai";
 import * as XLSX from "xlsx";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import { REQUESTED_ADJUSTMENTS, ORIGINAL_CONTRATADAS } from "./requested_adjustments";
 import {
   Upload,
   FileText,
@@ -84,6 +85,7 @@ import {
   Key,
   AlertTriangle,
   Building,
+  MapPin,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -907,6 +909,58 @@ const UCS_ADM = new Set([
   "9001396",
 ]);
 
+const extractUcFromFileName = (fileName: string, extractedUc: string): string => {
+  if (!fileName) return extractedUc || "";
+  const cleanName = fileName.replace(/\.[^/.]+$/, "");
+  
+  const knownUcs = new Set<string>();
+  
+  if (typeof UCS_LIVRE_MERCADO_LIVRE !== "undefined") {
+    UCS_LIVRE_MERCADO_LIVRE.forEach((uc) => knownUcs.add(String(uc)));
+  }
+  if (typeof UCS_OPER !== "undefined") {
+    UCS_OPER.forEach((uc) => knownUcs.add(String(uc)));
+  }
+  if (typeof UCS_ADM !== "undefined") {
+    UCS_ADM.forEach((uc) => knownUcs.add(String(uc)));
+  }
+  
+  try {
+    const saved = localStorage.getItem("sanesul_uc_mappings");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((m) => {
+          if (m && m.uc) {
+            knownUcs.add(String(m.uc));
+          }
+        });
+      }
+    }
+  } catch (e) {}
+
+  const sortedKnownUcs = Array.from(knownUcs).sort((a, b) => b.length - a.length);
+  
+  for (const uc of sortedKnownUcs) {
+    if (uc.length >= 4 && cleanName.includes(uc)) {
+      return uc;
+    }
+  }
+  
+  const fileNameNumbers = cleanName.replace(/\D/g, "");
+  for (const uc of sortedKnownUcs) {
+    if (uc.length >= 4 && fileNameNumbers.includes(uc)) {
+      return uc;
+    }
+  }
+  
+  if (fileNameNumbers.length >= 5) {
+    return fileNameNumbers;
+  }
+  
+  return extractedUc || fileNameNumbers;
+};
+
 const EXCEL_COLUMNS = [
   { header: "UC", key: "uc" },
   { header: "Tipo", key: "tipo" },
@@ -1015,17 +1069,17 @@ const EXTRACTION_SCHEMA = {
     demandaForaPontaKW: {
       type: Type.STRING,
       description:
-        "Demanda contratada Fora Ponta em kW. Geralmente encontrada na seção 'Grandezas Contratadas'.",
+        "Demanda contratada Fora Ponta em kW. Para UCs da ELEKTRO na modalidade VERDE (somente para elas), o valor da demanda contratada FORA PONTA é o valor de 'Demanda Todos os Períodos'. NÃO APLIQUE ESTA REGRA para ENERGISA.",
     },
     demandaPotenciaMedidaPonta: {
       type: Type.STRING,
       description:
-        "Demanda de Potência Medida no horário de Ponta (kW). Procure na tabela de 'Itens da Fatura'.",
+        "Demanda de Potência Medida no horário de Ponta (kW). Procure na tabela de 'Itens de Fatura'.",
     },
     demandaPotenciaMedidaForaPonta: {
       type: Type.STRING,
       description:
-        "Demanda de Potência Medida no horário Fora Ponta (kW). Procure na tabela de 'Itens da Fatura'.",
+        "Demanda de Potência Medida no horário Fora Ponta (kW). Para ELEKTRO modalidade Verde, caso não haja a discriminação Fora Ponta, utilize o valor de 'DEMANDA kW'. NÃO APLIQUE ESTA REGRA para ENERGISA.",
     },
     anoLeitura: {
       type: Type.STRING,
@@ -1402,7 +1456,7 @@ const generateContentWithRetry = async (
     const isTimeout = errorStr.includes("TIMEOUT_API");
     const isLockError = errorStr.includes("Lock broken by another request");
     const isHardQuota =
-      errorStr.includes("spending cap") || errorStr.includes("monthly limit");
+      errorStr.includes("spending cap") || errorStr.includes("monthly limit") || errorStr.includes("prepayment credits are depleted") || errorStr.includes("Failed to fetch");
     const isRateLimit =
       errorCode === 429 ||
       errorStatus === "RESOURCE_EXHAUSTED" ||
@@ -1552,8 +1606,9 @@ const formatMonth = (month: string | number) => {
   return monthMap[normalized] || month.toString();
 };
 
-const getMonthNumber = (month: string) => {
+const getMonthNumber = (month: string | number) => {
   if (!month) return 0;
+  const formatted = formatMonth(month).toLowerCase();
   const monthOrder: Record<string, number> = {
     janeiro: 1,
     fevereiro: 2,
@@ -1590,7 +1645,7 @@ const getMonthNumber = (month: string) => {
     "8": 8,
     "9": 9,
   };
-  return monthOrder[month.toLowerCase().trim()] || 0;
+  return monthOrder[formatted] || parseInt(formatted, 10) || 0;
 };
 
 const formatReference = (ref: string) => {
@@ -2136,6 +2191,21 @@ const UCS_USINA = new Set([
   "102690",
   "3211",
 ]);
+
+if (typeof window !== "undefined") {
+  try {
+    const ppp = localStorage.getItem("PPP_UCS_OVERRIDE");
+    if (ppp) {
+      UCS_PPP.clear();
+      JSON.parse(ppp).forEach((u: string) => UCS_PPP.add(u));
+    }
+    const usina = localStorage.getItem("USINA_UCS_OVERRIDE");
+    if (usina) {
+      UCS_USINA.clear();
+      JSON.parse(usina).forEach((u: string) => UCS_USINA.add(u));
+    }
+  } catch (e) {}
+}
 
 const hasCompensacao = (d: any) =>
   d.solarInjetadaOUC > 0 ||
@@ -3669,11 +3739,9 @@ export default function App() {
             .toUpperCase()
             .includes("ELEKTRO");
           if (isElektro && b.status === "completed") {
-            const fileNameNumbers = b.fileName
-              .replace(/\.[^/.]+$/, "")
-              .replace(/\D/g, "");
-            if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
-              return { ...b, uc: fileNameNumbers };
+            const solvedUc = extractUcFromFileName(b.fileName, b.uc);
+            if (solvedUc && b.uc !== solvedUc) {
+              return { ...b, uc: solvedUc };
             }
           }
           return b;
@@ -3810,11 +3878,9 @@ export default function App() {
               .toUpperCase()
               .includes("ELEKTRO");
             if (isElektro && b.status === "completed") {
-              const fileNameNumbers = b.fileName
-                .replace(/\.[^/.]+$/, "")
-                .replace(/\D/g, "");
-              if (fileNameNumbers.length >= 5 && b.uc !== fileNameNumbers) {
-                updatedBill.uc = fileNameNumbers;
+              const solvedUc = extractUcFromFileName(b.fileName, b.uc);
+              if (solvedUc && b.uc !== solvedUc) {
+                updatedBill.uc = solvedUc;
                 changed = true;
               }
             }
@@ -3957,6 +4023,7 @@ export default function App() {
     isProcessingRef.current = isProcessing;
   }, [isProcessing]);
   const [isDragging, setIsDragging] = useState(false);
+  const [ucsTrigger, setUcsTrigger] = useState(0);
   const [currentPage, setCurrentPage] = useState<"visao_geral" | "sistema">(
     "visao_geral",
   );
@@ -3966,7 +4033,9 @@ export default function App() {
     | "dashboard"
     | "analises"
     | "monitoramento"
+    | "monitoramento_ajustes"
     | "monitoramento_reativo"
+    | "monitoramento_usinas"
     | "relatorio"
   >("faturas");
   const [multasMonth, setMultasMonth] = useState<string>("all");
@@ -4879,6 +4948,8 @@ export default function App() {
     useState(false);
   const [selectedReactiveMonth, setSelectedReactiveMonth] =
     useState<string>("all");
+  const [selectedUsinaMonth, setSelectedUsinaMonth] = useState<string>("all");
+  const [selectedUsinaCity, setSelectedUsinaCity] = useState<string>("all");
   const [reactiveSortField, setReactiveSortField] =
     useState<string>("totalGeral");
   const [reactiveSortDirection, setReactiveSortDirection] = useState<
@@ -4957,16 +5028,43 @@ export default function App() {
   };
 
   const getGerencia = (uc: string) => {
-    const mapping = ucMappings.find((m) => m.uc === uc);
-    if (mapping) return mapping.gerencia;
+    const mapping = ucMappings.find((m) => String(m.uc) === String(uc));
+    if (mapping && mapping.gerencia) return mapping.gerencia;
 
     // Fallback: look into the loaded bills state for the gerencia
     const bill = bills.find(
-      (b) => b.uc === String(uc) && b.gerencia && b.gerencia !== "---",
+      (b) => String(b.uc) === String(uc) && b.gerencia && b.gerencia !== "---",
     );
     if (bill && bill.gerencia) return bill.gerencia;
 
     return "---";
+  };
+
+  const getLocin = (uc: string) => {
+    const mapping = ucMappings.find((m) => String(m.uc) === String(uc));
+    if (mapping && mapping.locin) return mapping.locin;
+
+    const bill = bills.find(
+      (b) => String(b.uc) === String(uc) && b.locin && b.locin !== "---",
+    );
+    if (bill && bill.locin) return bill.locin;
+
+    return "---";
+  };
+
+  const getCidade = (uc: string, fallback?: string) => {
+    const mapping = ucMappings.find((m) => String(m.uc) === String(uc));
+    if (mapping && mapping.cidade) return mapping.cidade;
+
+    const bill = bills.find(
+      (b) => String(b.uc) === String(uc) && b.cidade && b.cidade !== "---",
+    );
+    if (bill && bill.cidade) return bill.cidade;
+
+    // Fix UC 117384 - FÁTIMA DO SUL
+    if (String(uc) === "117384") return "FÁTIMA DO SUL";
+
+    return fallback || "---";
   };
 
   const handleImportTxtGerencias = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -5307,7 +5405,7 @@ export default function App() {
       let response;
       try {
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3-flash-preview",
+          model: "gemini-2.5-flash",
           contents: [
             {
               parts: [
@@ -5723,7 +5821,27 @@ export default function App() {
     const completedBills = bills.filter((b) => b.status === "completed");
     if (completedBills.length === 0) return;
 
-    const parsedData = completedBills
+    // Filter out UCs that are clearly Grupo B (sem demanda contratada)
+    const validUCs = new Set(
+      Array.from(new Set(completedBills.map((b) => b.uc))).filter((uc) => {
+        const ucBills = completedBills.filter((b) => b.uc === uc);
+        const grupoBCount = ucBills.filter((b) =>
+          (b.subgrupo || "").toUpperCase().startsWith("B"),
+        ).length;
+        const grupoACount = ucBills.filter((b) =>
+          (b.subgrupo || "").toUpperCase().startsWith("A"),
+        ).length;
+
+        if (grupoBCount > 0 && grupoACount === 0) {
+          return false;
+        }
+        return true;
+      })
+    );
+
+    const validBills = completedBills.filter(b => validUCs.has(b.uc));
+
+    const parsedData = validBills
       .map((b) => {
         let dmp = parseValue(b.demandaPotenciaMedidaPonta);
 
@@ -5749,7 +5867,7 @@ export default function App() {
           mes: b.mesReferencia || "N/A",
           ano: b.anoLeitura || "",
           uc: b.uc || "N/A",
-          dcp: modalidade.includes("VERDE") ? 0 : parseValue(b.demandaPontaKW),
+          dcp: parseValue(b.demandaPontaKW),
           dmp: dmp,
           dcfp: parseValue(b.demandaForaPontaKW),
           dmfp: parseValue(b.demandaPotenciaMedidaForaPonta),
@@ -5763,7 +5881,7 @@ export default function App() {
           vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta),
           tipo: UCS_PPP.has(String(b.uc)) ? "PPP Fotovoltaica" : b.tipo || "",
           mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? "LIVRE" : "CATIVO",
-          city: b.cidade || "",
+          city: getCidade(String(b.uc)),
         };
       })
       .filter((d) => d.dcp > 0 || d.dcfp > 0);
@@ -5781,19 +5899,80 @@ export default function App() {
       // Se dcp for 0 em todos os meses, não sugerimos valor para ponta (ex: Tarifa Verde)
       // NOVO: Se a modalidade for VERDE, forçamos hasPontaContract para false
       const isVerde = ucData.some((d) => d.modalidade.includes("VERDE"));
+      const isAzul = ucData.some((d) => d.modalidade.includes("AZUL"));
       const hasPontaContract = !isVerde && ucData.some((d) => d.dcp > 0);
 
-      const maxDmp = Math.max(...ucData.map((d) => d.dmp));
-      const maxDmfp = Math.max(...ucData.map((d) => d.dmfp));
+      const getOptimalForDemandsSimulation = (
+        measurements: number[],
+        isVerdeCheck: boolean,
+        isAzulCheck: boolean,
+        isPonta: boolean
+      ) => {
+        if (measurements.length === 0) return 0;
+        
+        // Define as tarifas base e ultrapassagem para a simulação
+        let tariff = 0;
+        let penaltyTariff = 0;
+        
+        if (isAzulCheck) {
+          if (isPonta) {
+            tariff = 85.53;
+            penaltyTariff = 171.07;
+          } else {
+            tariff = 42.90;
+            penaltyTariff = 85.810360;
+          }
+        } else if (isVerdeCheck) {
+          if (isPonta) {
+            tariff = 0; // Verde doesn't have Ponta contracted demand
+            penaltyTariff = 0;
+          } else {
+            tariff = 43.17715;
+            penaltyTariff = 43.17715 * 2;
+          }
+        } else {
+          tariff = 10.0;
+          penaltyTariff = 20.0;
+        }
+        
+        if (tariff === 0) return 0;
+        
+        const minM = Math.min(...measurements);
+        const maxM = Math.max(...measurements);
+        
+        let bestDemand = 0;
+        let minCost = Infinity;
+        
+        let startCand = Math.floor(Math.max(0, minM / 1.05));
+        if (!isPonta && startCand < 30) startCand = 30; // Min demand A group
+        const endCand = Math.ceil(maxM);
+        const actualEndCand = (!isPonta && endCand < 30) ? 30 : endCand;
 
-      const roundDemand = (val: number) => {
-        const minRequired = val / 1.05;
-        return Math.ceil(minRequired * 2) / 2;
+        for (let cand = startCand; cand <= actualEndCand; cand += 0.5) {
+            let totalCost = 0;
+            for (const m of measurements) {
+                if (m > cand * 1.05) {
+                    totalCost += (cand * tariff) + ((m - cand) * penaltyTariff);
+                } else {
+                    totalCost += Math.max(m, cand) * tariff;
+                }
+            }
+            if (totalCost < minCost) {
+                minCost = totalCost;
+                bestDemand = cand;
+            }
+        }
+        return bestDemand;
       };
 
+      // Utilize os ultimos 12 meses para encontrar a demanda otimizada!
+      const last12MonthsData = ucData.slice(-12);
+      const measuredPonta = last12MonthsData.map((d) => d.dmp);
+      const measuredForaPonta = last12MonthsData.map((d) => d.dmfp);
+
       optimalDemands[String(uc)] = {
-        ponta: hasPontaContract ? roundDemand(maxDmp) : 0,
-        foraPonta: Math.max(30, roundDemand(maxDmfp)),
+        ponta: hasPontaContract ? getOptimalForDemandsSimulation(measuredPonta, isVerde, isAzul, true) : 0,
+        foraPonta: getOptimalForDemandsSimulation(measuredForaPonta, isVerde, isAzul, false),
       };
     });
 
@@ -5836,29 +6015,52 @@ export default function App() {
       const isAzul = modalidade.includes("AZUL");
       const isVerde = modalidade.includes("VERDE");
 
-      const tp_ideal = isAzul ? 91.11569 : 0;
-      const tfp_ideal = isAzul ? 45.70276 : isVerde ? 43.17715 : 10.0;
+      let tp_ideal = 0;
+      let tfp_ideal = 0;
+      let tp_ideal_multa = 0;
+      let tfp_ideal_multa = 0;
+
+      if (isAzul) {
+          tp_ideal = 85.53;
+          tp_ideal_multa = 171.07;
+          tfp_ideal = 42.90;
+          tfp_ideal_multa = 85.810360;
+      } else if (isVerde) {
+          tp_ideal = 0;
+          tp_ideal_multa = 0;
+          tfp_ideal = 43.17715;
+          tfp_ideal_multa = 43.17715 * 2;
+      } else {
+          tp_ideal = 15.0;
+          tp_ideal_multa = 30.0;
+          tfp_ideal = 10.0;
+          tfp_ideal_multa = 20.0;
+      }
 
       let optimizedTotal = 0;
       let economy = 0;
 
       if (isVerde) {
-        // Fórmula específica solicitada pelo usuário para UC VERDE:
-        // Economia = Gasto Real - (Valor Demanda de Potência Medida Ponta + (Demanda Ideal fora ponta * 45.702760))
-        optimizedTotal = vDmpP + opt.foraPonta * 45.70276;
+        // Cálculo de economia considerando a regra tarifária ANEEL limitando em 1.05 e aplicando multa de atraso.
+        const optCostForaPonta =
+          dmfp > opt.foraPonta * 1.05
+            ? opt.foraPonta * tfp_ideal + (dmfp - opt.foraPonta) * tfp_ideal_multa
+            : Math.max(dmfp, opt.foraPonta) * tfp_ideal;
+
+        optimizedTotal = vDmpP + optCostForaPonta;
         economy = currentTotal - optimizedTotal;
       } else {
         // Optimized Cost (using the FIXED optimal demand and specific rates)
         const optCostPonta =
           dcp > 0 && opt.ponta > 0 && tp_ideal > 0
             ? dmp > opt.ponta * 1.05
-              ? opt.ponta * tp_ideal + (dmp - opt.ponta) * tp_ideal * 2
+              ? opt.ponta * tp_ideal + (dmp - opt.ponta) * tp_ideal_multa
               : Math.max(dmp, opt.ponta) * tp_ideal
             : 0;
 
         const optCostForaPonta =
           dmfp > opt.foraPonta * 1.05
-            ? opt.foraPonta * tfp_ideal + (dmfp - opt.foraPonta) * tfp_ideal * 2
+            ? opt.foraPonta * tfp_ideal + (dmfp - opt.foraPonta) * tfp_ideal_multa
             : Math.max(dmfp, opt.foraPonta) * tfp_ideal;
 
         optimizedTotal = optCostPonta + optCostForaPonta;
@@ -5901,26 +6103,13 @@ export default function App() {
       ];
     });
 
-    // Sort results by month (newest to oldest)
-    const monthOrder: Record<string, number> = {
-      janeiro: 1,
-      fevereiro: 2,
-      março: 3,
-      marco: 3,
-      abril: 4,
-      maio: 5,
-      junho: 6,
-      julho: 7,
-      agosto: 8,
-      setembro: 9,
-      outubro: 10,
-      novembro: 11,
-      dezembro: 12,
-    };
-
     results.sort((a, b) => {
-      const monthA = monthOrder[a.mes.toLowerCase()] || 0;
-      const monthB = monthOrder[b.mes.toLowerCase()] || 0;
+      const yearA = parseInt(a.ano || "0", 10);
+      const yearB = parseInt(b.ano || "0", 10);
+      if (yearA !== yearB) return yearB - yearA;
+
+      const monthA = getMonthNumber(a.mes);
+      const monthB = getMonthNumber(b.mes);
       return monthB - monthA;
     });
 
@@ -5984,14 +6173,14 @@ export default function App() {
         <tr><td colspan="10" class="header" style="font-size: 18px; text-align: center;">HISTÓRICO MENSAL INDIVIDUAL DAS UCs COM PREJUÍZO</td></tr>
     `;
 
-    const lossesUCs = monitoringResults.changedUCs.filter(
-      (uc: any) => uc.totalEconomy < 0,
-    );
+    const lossesUCs = monitoringResults.changedUCs
+      .filter((uc: any) => uc.totalEconomy < 0)
+      .sort((a: any, b: any) => String(a.gerencia || "").localeCompare(String(b.gerencia || "")));
 
     lossesUCs.forEach((uc: any) => {
       // Linha de Cabeçalho da UC
       html += `
-        <tr><td colspan="10" style="background-color: #e2efda; font-weight: bold; font-size: 16px; border-bottom: 2px solid #548235; border-top: 2px solid #548235;">UC: ${uc.uc} | Cidade: ${uc.city}</td></tr>
+        <tr><td colspan="10" style="background-color: #e2efda; font-weight: bold; font-size: 16px; border-bottom: 2px solid #548235; border-top: 2px solid #548235;">UC: ${uc.uc} | Cidade: ${uc.city} | Gerência: ${uc.gerencia}</td></tr>
         <tr>
           <th>Mês/Ano</th>
           <th>Contratada P (kW)</th>
@@ -6061,6 +6250,82 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+
+  const exportStableContractsExcel = () => {
+    if (!monitoringResults || !monitoringResults.unchangedUCs || monitoringResults.unchangedUCs.length === 0) return;
+
+    let html = `
+      <html xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <style>
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid black; padding: 5px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .header { font-size: 16px; font-weight: bold; background-color: #d9e1f2; }
+        </style>
+      </head>
+      <body>
+    `;
+
+    html += `
+      <table>
+        <tr><td colspan="8" class="header" style="font-size: 18px; text-align: center;">UNIDADES SEM ALTERAÇÃO (CONTRATO ESTÁVEL)</td></tr>
+    `;
+
+    [...monitoringResults.unchangedUCs]
+      .sort((a: any, b: any) => String(a.gerencia || "").localeCompare(String(b.gerencia || "")))
+      .forEach((uc: any) => {
+      html += `
+        <tr><td colspan="8" style="background-color: #e2efda; font-weight: bold; font-size: 16px; border-bottom: 2px solid #548235; border-top: 2px solid #548235;">UC: ${uc.uc} | Cidade: ${uc.city} - Gerência: ${uc.gerencia}</td></tr>
+        <tr>
+          <th>Mês/Ano</th>
+          <th>Contratada P (kW)</th>
+          <th>Contratada FP (kW)</th>
+          <th>Medida P (kW)</th>
+          <th>Medida FP (kW)</th>
+          <th>Gasto Real (R$)</th>
+          <th>Demanda Ideal P (kW)</th>
+          <th>Demanda Ideal FP (kW)</th>
+        </tr>
+      `;
+
+      uc.monthlyData.forEach((monthData: any) => {
+        html += `
+          <tr>
+            <td>${monthData.mes}/${monthData.ano}</td>
+            <td>${monthData.dcp}</td>
+            <td>${monthData.dcfp}</td>
+            <td>${monthData.dmp}</td>
+            <td>${monthData.dmfp}</td>
+            <td>${monthData.currentTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+            <td>${uc.optPonta || 0}</td>
+            <td>${uc.optForaPonta || 0}</td>
+          </tr>
+        `;
+      });
+      html += `
+          <tr><td colspan="8" style="border: none; height: 20px;"></td></tr>
+      `;
+    });
+
+    html += `
+      </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "Monitoramento_Contratos_Estaveis.xls";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const runMonitoringAnalysis = () => {
     const completedBills = bills.filter((b) => b.status === "completed");
     if (completedBills.length === 0) return;
@@ -6097,7 +6362,7 @@ export default function App() {
 
     const allUcData = ucs.map((uc) => {
       let ucBills = completedBills.filter((b) => b.uc === uc);
-      const city = ucBills[0]?.cidade || "N/A";
+      const city = getCidade(String(uc), ucBills[0]?.cidade || "N/A");
 
       // Sort bills chronologically (Oldest to Newest) for change detection
       ucBills.sort((a, b) => {
@@ -6109,34 +6374,89 @@ export default function App() {
         );
       });
 
-      // Calculate optimal demand (Ideal) based on all history (Max measured)
-      // NOVO: Se a modalidade for VERDE, não consideramos a demanda ponta para o cálculo da demanda ideal
+      // Calculate optimal demand (Ideal) based on the last 12 months (or fewer if less data available)
+      // LEI 1000: Demanda ideal deve garantir vantagem financeira, considerando arredondamento para cima em 0.5kW
       const isVerde = ucBills.some((b) =>
         (b.modalidadeTarifaria || "").toUpperCase().includes("VERDE"),
       );
-
-      const maxDmp = isVerde
-        ? 0
-        : Math.max(
-            ...ucBills.map((b) => parseValue(b.demandaPotenciaMedidaPonta)),
-          );
-      const maxDmfp = Math.max(
-        ...ucBills.map((b) => parseValue(b.demandaPotenciaMedidaForaPonta)),
+      const isAzul = ucBills.some((b) =>
+        (b.modalidadeTarifaria || "").toUpperCase().includes("AZUL"),
       );
 
-      const roundDemand = (val: number) => {
-        const minRequired = val / 1.05;
-        return Math.ceil(minRequired * 2) / 2;
+      const last12MonthsBills = ucBills.slice(-12);
+      
+      const getOptimalForDemands = (billsToAnalyze: any[]) => {
+        const measuredPonta = billsToAnalyze.map((b) => parseValue(b.demandaPotenciaMedidaPonta));
+        const measuredForaPonta = billsToAnalyze.map((b) => parseValue(b.demandaPotenciaMedidaForaPonta));
+        
+        const optimize = (measurements: number[], isPonta: boolean) => {
+          if (measurements.length === 0) return 0;
+          
+          let tariff = 0;
+          let penaltyTariff = 0;
+          
+          if (isAzul) {
+            if (isPonta) {
+              tariff = 85.53;
+              penaltyTariff = 171.07;
+            } else {
+              tariff = 42.90;
+              penaltyTariff = 85.810360;
+            }
+          } else if (isVerde) {
+            if (isPonta) {
+              tariff = 0;
+              penaltyTariff = 0;
+            } else {
+              tariff = 43.17715;
+              penaltyTariff = 43.17715 * 2;
+            }
+          } else {
+            tariff = 10.0;
+            penaltyTariff = 20.0;
+          }
+          
+          if (tariff === 0) return 0;
+          
+          const minM = Math.min(...measurements);
+          const maxM = Math.max(...measurements);
+          let bestDemand = 0;
+          let minCost = Infinity;
+          
+          let startCand = Math.floor(Math.max(0, minM / 1.05));
+          if (!isPonta && startCand < 30) startCand = 30;
+          const endCand = Math.ceil(maxM);
+          const actualEndCand = (!isPonta && endCand < 30) ? 30 : endCand;
+
+          for (let cand = startCand; cand <= actualEndCand; cand += 0.5) {
+              let totalCost = 0;
+              for (const m of measurements) {
+                  if (m > cand * 1.05) {
+                      totalCost += (cand * tariff) + ((m - cand) * penaltyTariff);
+                  } else {
+                      totalCost += Math.max(m, cand) * tariff;
+                  }
+              }
+              if (totalCost < minCost) {
+                  minCost = totalCost;
+                  bestDemand = cand;
+              }
+          }
+          return bestDemand;
+        };
+        
+        const optPonta = isVerde ? 0 : optimize(measuredPonta, true);
+        const optForaPonta = optimize(measuredForaPonta, false);
+        return { optPonta, optForaPonta };
       };
 
-      const optPonta = maxDmp > 0 && !isVerde ? roundDemand(maxDmp) : 0;
-      const optForaPonta = Math.max(30, roundDemand(maxDmfp));
+      const { optPonta, optForaPonta } = getOptimalForDemands(last12MonthsBills);
 
       // 1st Pass: Calculate Current Total for ALL bills first
       const processedBills = ucBills.map((b) => {
         const modalidade = (b.modalidadeTarifaria || "").toUpperCase();
         const bIsVerde = modalidade.includes("VERDE");
-        const dcp = bIsVerde ? 0 : parseValue(b.demandaPontaKW);
+        const dcp = parseValue(b.demandaPontaKW);
         const dmp = parseValue(b.demandaPotenciaMedidaPonta);
         const dcfp = parseValue(b.demandaForaPontaKW);
         const dmfp = parseValue(b.demandaPotenciaMedidaForaPonta);
@@ -6252,6 +6572,8 @@ export default function App() {
       return {
         uc,
         city,
+        gerencia: getGerencia(String(uc)),
+        locin: getLocin(String(uc)),
         totalEconomy,
         totalCurrent,
         monthlyData,
@@ -6263,6 +6585,17 @@ export default function App() {
 
     const changedUCs = allUcData.filter((uc) => uc.hasContractChange);
     const unchangedUCs = allUcData.filter((uc) => !uc.hasContractChange);
+
+    const adjustmentUCs = Object.keys(REQUESTED_ADJUSTMENTS).map((ucId) => {
+      const req = REQUESTED_ADJUSTMENTS[ucId];
+      const ucData = allUcData.find((u) => String(u.uc) === String(ucId));
+      return {
+        uc: ucId,
+        reqP: req.p,
+        reqFP: req.fp,
+        ucData: ucData || null,
+      };
+    });
 
     const generalTotalEconomy = allUcData.reduce(
       (acc, curr) => acc + curr.totalEconomy,
@@ -6335,6 +6668,7 @@ export default function App() {
     setMonitoringResults({
       changedUCs,
       unchangedUCs,
+      adjustmentUCs,
       generalTotalEconomy,
       generalTotalCurrent,
       cityData,
@@ -6449,12 +6783,12 @@ export default function App() {
       let response;
       try {
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3-flash-preview",
+          model: "gemini-2.5-flash",
           contents: [
             {
               parts: [
                 {
-                  text: "Você é um especialista em análise de faturas de energia elétrica brasileiras. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para ENERGISA: Procure por 'CÓDIGO DO CLIENTE' (ex: 10/1069-4) ou 'MATRÍCULA'. Extraia o identificador completo que identifica esta conta.\n   - Para ELEKTRO: A UC é o 'Código da Instalação'.\n2. VALORES NUMÉRICOS: Capture todos os dígitos. Não ignore o primeiro dígito de valores altos.\n3. CONSUMO E DEMANDA: Diferencie 'Contratada' de 'Medida'.\n4. GERAÇÃO DISTRIBUÍDA: Capture créditos de energia, injeção e compensação.\n5. TRIBUTOS: Extraia PIS, COFINS e ICMS separadamente.\n\nSe um campo não estiver presente, deixe em branco. Retorne o JSON seguindo o schema.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.",
+                  text: "Você é um especialista em análise de faturas de energia elétrica brasileiras. Sua tarefa é extrair com precisão absoluta os dados técnicos e financeiros da fatura fornecida.\n\nREGRAS DE EXTRAÇÃO:\n1. UNIDADE CONSUMIDORA (UC):\n   - Para ENERGISA: Procure por 'CÓDIGO DO CLIENTE' (ex: 10/1069-4) ou 'MATRÍCULA'. Extraia o identificador completo que identifica esta conta.\n   - Para ELEKTRO: A UC é o 'Código da Instalação'.\n2. VALORES NUMÉRICOS: Capture todos os dígitos. Não ignore o primeiro dígito de valores altos.\n3. CONSUMO E DEMANDA: Diferencie 'Contratada' de 'Medida'.\n4. ALOCAÇÃO DE DEMANDA (ELEKTRO - VERDE): Para UCs da ELEKTRO na modalidade VERDE (somente para elas), o valor da demanda contratada FORA PONTA é o valor de 'Demanda Todos os Períodos'. O valor da demanda medida FORA PONTA é o de 'DEMANDA kW'. NÃO APLIQUE ESTA REGRA para faturas da ENERGISA.\n5. GERAÇÃO DISTRIBUÍDA: Capture créditos de energia, injeção e compensação.\n6. TRIBUTOS: Extraia PIS, COFINS e ICMS separadamente.\n\nSe um campo não estiver presente, deixe em branco. Retorne o JSON seguindo o schema.\n\nIMPORTANTE: SEMPRE RESPONDA EM PORTUGUÊS.",
                 },
                 {
                   inlineData: {
@@ -6470,7 +6804,7 @@ export default function App() {
             responseSchema: EXTRACTION_SCHEMA,
             thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             systemInstruction:
-              "Você é um especialista em análise de faturas de energia elétrica. Extraia os dados da fatura com precisão, especialmente UC, Mês, Ano e Valores Totais. SEMPRE RESPONDA EM PORTUGUÊS.",
+              "Você é um especialista em análise de faturas de energia elétrica. Extraia os dados da fatura com precisão, especialmente UC, Mês, Ano e Valores Totais. Para a ELEKTRO (modalidade VERDE), o valor de 'Demanda Todos os Períodos' é a 'demandaForaPontaKW' contratada, e a 'DEMANDA kW' medida é a 'demandaPotenciaMedidaForaPonta'. NUNCA aplique isso para ENERGISA. SEMPRE RESPONDA EM PORTUGUÊS.",
           },
         });
       } finally {
@@ -6503,11 +6837,9 @@ export default function App() {
       // Force UC to be the filename numbers for Elektro as requested by the user
       const concessionaria = (result.concessionaria || "").toUpperCase();
       if (concessionaria.includes("ELEKTRO")) {
-        const fileNameNumbers = bill.fileName
-          .replace(/\.[^/.]+$/, "")
-          .replace(/\D/g, "");
-        if (fileNameNumbers.length >= 5) {
-          result.uc = fileNameNumbers;
+        const solvedUc = extractUcFromFileName(bill.fileName, result.uc);
+        if (solvedUc) {
+          result.uc = solvedUc;
         }
       }
 
@@ -6523,6 +6855,9 @@ export default function App() {
         } else if (cleanUc.includes("-")) {
           cleanUc = cleanUc.split("-")[0].trim();
         }
+
+        // Remover zeros à esquerda da UC (ex: 0000238385 -> 238385)
+        cleanUc = cleanUc.replace(/^0+(?=\d)/, "");
 
         result.uc = cleanUc;
       }
@@ -6753,7 +7088,9 @@ export default function App() {
         msg.includes("spending cap") ||
         errorStr.includes("spending cap") ||
         errorStr.includes("limite de gastos") ||
-        errorStr.includes("monthly limit")
+        errorStr.includes("monthly limit") ||
+        errorStr.includes("prepayment credits are depleted") ||
+        errorStr.includes("Failed to fetch")
       ) {
         isQuotaExhausted = true;
       } else if (
@@ -6995,6 +7332,231 @@ export default function App() {
     new Set(),
   );
 
+  const completedBills = bills.filter((b) => b.status === "completed");
+
+  const adjustmentsList = useMemo(() => {
+    return Object.keys(REQUESTED_ADJUSTMENTS).map((ucId) => {
+      const req = REQUESTED_ADJUSTMENTS[ucId];
+      const orig = ORIGINAL_CONTRATADAS[ucId] || { p: 0, fp: 0 };
+      
+      const ucData = monitoringResults?.adjustmentUCs?.find((a: any) => String(a.uc) === String(ucId))?.ucData || null;
+
+      let city = "-";
+      let gerencia = "-";
+      
+      const ucBills = completedBills.filter((b) => String(b.uc) === String(ucId));
+
+      if (ucData) {
+        city = ucData.city || "-";
+        gerencia = ucData.gerencia || "-";
+      } else if (ucBills.length > 0) {
+        city = ucBills[0]?.cidade || getCidade(String(ucId), "N/A");
+        gerencia = ucBills[0]?.gerencia || getGerencia(String(ucId));
+      } else {
+        const mapping = ucMappings.find(m => String(m.uc) === String(ucId));
+        if (mapping) {
+          city = mapping.cidade || "-";
+          gerencia = mapping.gerencia || "-";
+        } else {
+          city = getCidade(String(ucId), "-");
+          gerencia = getGerencia(String(ucId)) || "-";
+        }
+      }
+
+      if (city === "-" || city === "N/A") {
+        city = getCidade(String(ucId), "-");
+      }
+      if (gerencia === "-" || gerencia === "N/A") {
+        gerencia = getGerencia(String(ucId)) || "-";
+      }
+
+      // Default values
+      let dcpBefore = orig.p;
+      let dcfpBefore = orig.fp;
+      let dcpAfter = req.p;
+      let dcfpAfter = req.fp;
+      let dataAlteracao = "-";
+      let economia = 0;
+
+      // Helper to parse DD/MM/YYYY dates
+      const parseBrlDate = (dateStr?: string) => {
+        if (!dateStr) return null;
+        const parts = dateStr.trim().split("/");
+        if (parts.length !== 3) return null;
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1; // 0-indexed month in JS Date
+        const yearStr = parts[2].trim();
+        const year = parseInt(yearStr.length === 2 ? "20" + yearStr : yearStr, 10);
+        if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+        return new Date(year, month, day);
+      };
+
+      // Helper to check if a bill's date is from 03/06/2026 (June 3rd, 2026) onwards
+      const isFromJune03_2026Onwards = (b: any) => {
+        const dt = parseBrlDate(b.dataVencimento);
+        if (dt) {
+          return dt >= new Date(2026, 5, 3); // Month 5 is June
+        }
+        // Fallback to reference month
+        const m = getMonthNumber(b.mesReferencia);
+        const yStr = b.anoLeitura || "";
+        const y = parseInt(yStr.length === 2 ? "20" + yStr : yStr, 10);
+        if (!isNaN(m) && !isNaN(y)) {
+          if (y > 2026) return true;
+          if (y === 2026 && m >= 6) return true; // reference June 2026 is considered >= 03/06/2026
+        }
+        return false;
+      };
+
+      // Try reading actual contracts from history of bills loaded in app if available
+      if (ucBills.length > 0) {
+        const sortedUcBills = [...ucBills].sort((a, b) => {
+          const yearA = parseInt(a.anoLeitura || "0", 10);
+          const yearB = parseInt(b.anoLeitura || "0", 10);
+          if (yearA !== yearB) return yearA - yearB;
+          return getMonthNumber(a.mesReferencia) - getMonthNumber(b.mesReferencia);
+        });
+
+        // Use the value of the last month inserted in the app for BEFORE/Baseline columns as requested (Contratada P and Contratada FP)
+        const lastBill = sortedUcBills[sortedUcBills.length - 1];
+        dcpBefore = parseValue(lastBill.demandaPontaKW);
+        dcfpBefore = parseValue(lastBill.demandaForaPontaKW);
+
+        // Keep the requested_adjustments values for the AFTER/Altered columns as requested (Contratada P Alt and Contratada FP Alt)
+        dcpAfter = req.p;
+        dcfpAfter = req.fp;
+
+        // Try reading actual contract data alteration month from the bills
+        // It's the first month where the contract demand actually changed from the original values
+        const changeBill = sortedUcBills.find(b => 
+          parseValue(b.demandaPontaKW) !== orig.p || 
+          parseValue(b.demandaForaPontaKW) !== orig.fp
+        );
+
+        if (changeBill && isFromJune03_2026Onwards(changeBill)) {
+          dataAlteracao = `${changeBill.mesReferencia}/${changeBill.anoLeitura}`;
+        }
+      }
+
+      if (ucData) {
+        economia = ucData.totalEconomy;
+        if (dataAlteracao === "-") {
+          const changedMonth = ucData.monthlyData.find((m: any) => m.hasChanged);
+          if (changedMonth) {
+            const mNum = getMonthNumber(changedMonth.mes);
+            const yNum = parseInt(changedMonth.ano || "0", 10);
+            const belongsToBoundary = (yNum > 2026) || (yNum === 2026 && mNum >= 6);
+            if (belongsToBoundary) {
+              dataAlteracao = `${changedMonth.mes}/${changedMonth.ano}`;
+            }
+          }
+        }
+      }
+
+      return {
+        uc: ucId,
+        reqP: req.p,
+        reqFP: req.fp,
+        origP: orig.p,
+        origFP: orig.fp,
+        dcpBefore,
+        dcfpBefore,
+        dcpAfter,
+        dcfpAfter,
+        dataAlteracao,
+        economia,
+        city,
+        gerencia,
+        ucData
+      };
+    });
+  }, [monitoringResults, ucMappings, completedBills]);
+
+  const exportAdjustmentsExcel = () => {
+    if (adjustmentsList.length === 0) return;
+
+    let html = `
+      <html xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <style>
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid black; padding: 5px; text-align: center; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <table>
+          <tr>
+            <th colspan="12" style="font-size: 18px;">Relação de UCs com Alteração de Demanda</th>
+          </tr>
+          <tr>
+            <th>Nº UC</th>
+            <th>Município</th>
+            <th>Localidade</th>
+            <th>Data da solicitação</th>
+            <th>Data da alteração</th>
+            <th>Status</th>
+            <th>Demanda contratada Ponta</th>
+            <th>Demanda contratada Ponta Alterada</th>
+            <th>Demanda contratada F Ponta</th>
+            <th>Demanda contratada F Ponta Alterada</th>
+            <th>Previsão de economia</th>
+            <th>Economia realizada</th>
+          </tr>
+    `;
+
+    [...adjustmentsList].forEach((adj: any) => {
+        const {
+          uc: ucId,
+          city,
+          gerencia,
+          dcpBefore,
+          dcfpBefore,
+          dcpAfter,
+          dcfpAfter,
+          dataAlteracao,
+          economia
+        } = adj;
+
+        const dataSolicitacao = adj.uc === "10926205169" ? "-" : "03/06/2026";
+        const previsao = "-";
+
+        html += `
+          <tr>
+            <td style="mso-number-format:'\\@';">${adj.uc}</td>
+            <td>${city}</td>
+            <td>${gerencia}</td>
+            <td>${dataSolicitacao}</td>
+            <td>${dataAlteracao}</td>
+            <td>Concluída</td>
+            <td>${String(dcpBefore).replace(".", ",")}</td>
+            <td>${String(dcpAfter).replace(".", ",")}</td>
+            <td>${String(dcfpBefore).replace(".", ",")}</td>
+            <td>${String(dcfpAfter).replace(".", ",")}</td>
+            <td>${previsao}</td>
+            <td>${String(economia.toFixed(2)).replace(".", ",")}</td>
+          </tr>
+        `;
+    });
+
+    html += `
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "monitoramento_ajustes.xls";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const toggleReactiveUc = (uc: string) => {
     const newSet = new Set(expandedReactiveUcs);
     if (newSet.has(uc)) newSet.delete(uc);
@@ -7109,6 +7671,43 @@ export default function App() {
     setSelectedBills([]);
   };
 
+  const removeUCBills = async (uc: string) => {
+    const ucBills = bills.filter((b) => b.uc === uc);
+    const ucBillIds = ucBills.map((b) => b.id);
+    
+    if (ucBillIds.length === 0) return;
+
+    if (isSupabaseConfigured && isAuthenticated) {
+      try {
+        const { error } = await supabase.from("bills").delete().in("id", ucBillIds);
+        if (error) console.error("Erro ao deletar faturas do Supabase:", error);
+      } catch (err) {
+        console.error("Erro inesperado ao deletar faturas:", err);
+      }
+    }
+
+    localforage
+      .getItem<Record<string, File>>("sanesul_bills_files")
+      .then((filesMap) => {
+        if (filesMap) {
+          let hasChanges = false;
+          ucBillIds.forEach(id => {
+            if (filesMap[id]) {
+              delete filesMap[id];
+              hasChanges = true;
+            }
+          });
+          if (hasChanges) localforage.setItem("sanesul_bills_files", filesMap);
+        }
+      });
+      
+    setBills((prev) => prev.filter((b) => b.uc !== uc));
+    setSelectedBills((prev) => prev.filter((id) => !ucBillIds.includes(id)));
+    if (analysisResults) {
+      setAnalysisResults((prev: any) => prev?.filter((r: any) => r.uc !== uc) || null);
+    }
+  };
+
   const deselectFirst223 = () => {
     const first223Ids = bills.slice(0, 223).map((b) => b.id);
     setSelectedBills((prev) => prev.filter((id) => !first223Ids.includes(id)));
@@ -7153,16 +7752,12 @@ export default function App() {
       const tarifaBranca = "N/A"; // Need to determine how to identify this
       const optanteB = "N/A"; // Need to determine how to identify this
 
-      const bill = bills.find((b) => b.uc === r.uc);
-      const locin =
-        bill?.locin || ucMappings.find((m) => m.uc === r.uc)?.locin || "---";
-
       return [
         r.fileName,
         r.uc,
-        getGerencia(r.uc),
-        locin,
-        r.city || "",
+        getGerencia(String(r.uc)),
+        getLocin(String(r.uc)),
+        getCidade(String(r.uc), r.city),
         r.tipo,
         r.mercado,
         r.ano,
@@ -7212,7 +7807,7 @@ export default function App() {
       if (b.status !== "completed") return false;
       if (
         selectedReactiveMonth !== "all" &&
-        `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth
+        `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedReactiveMonth
       )
         return false;
       const totalReativo =
@@ -7227,7 +7822,7 @@ export default function App() {
         if (!acc[uc]) {
           acc[uc] = {
             uc,
-            cidade: bill.cidade || "",
+            cidade: getCidade(uc, bill.cidade),
             totalPonta: 0,
             totalFPonta: 0,
             totalFatura: 0,
@@ -7322,7 +7917,7 @@ export default function App() {
       if (b.status !== "completed") return false;
       if (
         selectedReactiveMonth !== "all" &&
-        `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth
+        `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedReactiveMonth
       )
         return false;
       const totalReativo =
@@ -7336,12 +7931,11 @@ export default function App() {
     reactiveBills.forEach((bill) => {
       const uc = String(bill.uc);
       if (!ucConsolidated[uc]) {
-        const mapping = ucMappings.find((m) => m.uc === uc);
         ucConsolidated[uc] = {
           uc,
-          gerencia: mapping?.gerencia || bill.gerencia || "---",
-          cidade: mapping?.cidade || bill.cidade || "---",
-          locin: mapping?.locin || bill.locin || "---",
+          gerencia: getGerencia(uc),
+          cidade: getCidade(uc, bill.cidade),
+          locin: getLocin(uc),
           totalReativo: 0,
         };
       }
@@ -7379,7 +7973,9 @@ export default function App() {
 
     sortedGerencias.forEach((g) => {
       let groupTotal = 0;
-      gerenciaGroups[g].forEach((item) => {
+      gerenciaGroups[g]
+        .sort((a, b) => b.totalReativo - a.totalReativo)
+        .forEach((item) => {
         rows.push([
           item.uc,
           item.gerencia,
@@ -7506,17 +8102,14 @@ export default function App() {
     };
 
     const rows = completedBills.map((b) => {
-      const locin =
-        b.locin || ucMappings.find((m) => m.uc === b.uc)?.locin || "---";
-
       return [
         b.fileName,
         b.uc,
-        getGerencia(b.uc),
-        locin,
-        b.cidade || "",
+        getGerencia(String(b.uc)),
+        getLocin(String(b.uc)),
+        getCidade(String(b.uc), b.cidade),
         b.tipo || "",
-        UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? "LIVRE" : "CATIVO",
+        UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc)) ? "LIVRE" : "CATIVO",
         b.concessionaria
           ? b.concessionaria.toUpperCase().includes("ENERGISA")
             ? "ENERGISA"
@@ -7646,19 +8239,16 @@ export default function App() {
     };
 
     const rows = filteredRelatorioData.map((d) => {
-      const b = bills.find((b) => b.uc === d.uc);
-      const locin =
-        b?.locin || ucMappings.find((m) => m.uc === d.uc)?.locin || "---";
       return [
         d.fileName,
         d.name,
         d.uc,
         getGerencia(String(d.uc)),
-        locin,
+        getLocin(String(d.uc)),
         d.tipo,
         d.mercado,
         d.concessionaria,
-        d.cidade,
+        getCidade(String(d.uc), d.cidade),
         d.numeroNotaFiscal,
         d.modalidadeTarifaria,
         d.subgrupo,
@@ -7708,8 +8298,6 @@ export default function App() {
   };
 
   // --- Dashboard Data Processing ---
-
-  const completedBills = bills.filter((b) => b.status === "completed");
 
   const { multasTotals, multasMonthlyData, multasUcList } = useMemo(() => {
     let ultrapassagem = 0;
@@ -7777,7 +8365,7 @@ export default function App() {
 
         if (!ucBreakdown[b.uc]) {
           ucBreakdown[b.uc] = {
-            cidade: b.cidade || "N/A",
+            cidade: getCidade(String(b.uc), b.cidade || "N/A"),
             ultrapassagem: 0,
             reativa: 0,
             subutilizacao: 0,
@@ -7848,9 +8436,9 @@ export default function App() {
     icms: parseValue(b.icms),
     concessionaria: b.concessionaria || "",
     numeroNotaFiscal: b.numeroNotaFiscal || "",
-    cidade: b.cidade,
+    cidade: getCidade(String(b.uc), b.cidade),
     tipo: UCS_PPP.has(String(b.uc)) ? "PPP Fotovoltaica" : b.tipo || "",
-    mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? "LIVRE" : "CATIVO",
+    mercado: UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc)) ? "LIVRE" : "CATIVO",
     fileName: b.fileName || "",
     modalidadeTarifaria: (b.modalidadeTarifaria || "").toString().toUpperCase(),
     subgrupo: (b.subgrupo || "").toString().toUpperCase(),
@@ -8485,7 +9073,18 @@ export default function App() {
             }`}
           >
             <DollarSign size={14} />
-            Monitoramento de Despesas
+            Monitoramento Demanda
+          </button>
+          <button
+            onClick={() => setActiveTab("monitoramento_ajustes")}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide flex-shrink-0 whitespace-nowrap ${
+              activeTab === "monitoramento_ajustes"
+                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
+                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
+            }`}
+          >
+            <FileText size={14} />
+            Monitoramento Ajuste de Demanda
           </button>
           <button
             onClick={() => setActiveTab("monitoramento_reativo")}
@@ -8497,6 +9096,17 @@ export default function App() {
           >
             <Zap size={14} />
             Monitoramento Reativo
+          </button>
+          <button
+            onClick={() => setActiveTab("monitoramento_usinas")}
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
+              activeTab === "monitoramento_usinas"
+                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
+                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
+            }`}
+          >
+            <Zap size={14} />
+            Monitoramento Usinas
           </button>
           <button
             onClick={() => setActiveTab("relatorio")}
@@ -8892,7 +9502,7 @@ export default function App() {
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                                      {bill.cidade || "---"}
+                                      {getCidade(String(bill.uc), bill.cidade)}
                                     </span>
                                   </td>
                                   <td className="px-4 py-3">
@@ -11555,6 +12165,9 @@ export default function App() {
                           <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-right">
                             Meses Analisados
                           </th>
+                          <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-center w-16">
+                            Ações
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -11649,11 +12262,28 @@ export default function App() {
                                   {group.months.length} meses
                                 </div>
                               </td>
+                              <td className="px-6 py-4 text-center">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    showConfirm(
+                                      "Excluir UC do Sistema",
+                                      `Tem certeza que deseja excluir TODAS as faturas da UC ${group.uc}? Esta ação não pode ser desfeita.`,
+                                      () => removeUCBills(group.uc),
+                                      "danger"
+                                    );
+                                  }}
+                                  className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="Excluir UC"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </td>
                             </tr>
                             {expandedAnalysisUCs.has(group.uc) && (
                               <tr>
                                 <td
-                                  colSpan={9}
+                                  colSpan={10}
                                   className="px-10 py-4 bg-slate-50/30"
                                 >
                                   <div className="overflow-hidden rounded-xl border border-slate-200 shadow-inner">
@@ -11789,7 +12419,7 @@ export default function App() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
               <div>
                 <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">
-                  Monitoramento de Despesas
+                  Monitoramento Demanda
                 </h2>
                 <p className="text-sanesul-muted">
                   Acompanhamento detalhado de gastos e economia com demanda por
@@ -11798,13 +12428,22 @@ export default function App() {
               </div>
               <div className="flex items-center gap-4">
                 {monitoringResults && (
-                  <button
-                    onClick={exportMonitoramentoExcel}
-                    className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
-                  >
-                    <Download size={16} />
-                    Exportar XLS
-                  </button>
+                  <>
+                    <button
+                      onClick={exportMonitoramentoExcel}
+                      className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                    >
+                      <Download size={16} />
+                      Exportar Prejuízo
+                    </button>
+                    <button
+                      onClick={exportStableContractsExcel}
+                      className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                    >
+                      <Download size={16} />
+                      Exportar Sem Alteração
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={runMonitoringAnalysis}
@@ -12336,14 +12975,16 @@ export default function App() {
                   {/* Unchanged UCs Group */}
                   {monitoringResults.unchangedUCs.length > 0 && (
                     <div className="bg-white rounded-[40px] border border-sanesul-primary/10 shadow-2xl overflow-hidden">
-                      <div className="bg-slate-50/80 px-10 py-8 border-b border-sanesul-primary/5">
-                        <h3 className="text-2xl font-display font-bold text-sanesul-muted border-l-4 border-slate-300 pl-4">
-                          Unidades sem Alteração (Contrato Estável)
-                        </h3>
-                        <p className="text-xs font-bold text-sanesul-muted uppercase tracking-widest mt-2 pl-5">
-                          {monitoringResults.unchangedUCs.length} Unidades
-                          Encontradas
-                        </p>
+                      <div className="bg-slate-50/80 px-10 py-8 border-b border-sanesul-primary/5 flex justify-between items-center">
+                        <div>
+                          <h3 className="text-2xl font-display font-bold text-sanesul-muted border-l-4 border-slate-300 pl-4">
+                            Unidades sem Alteração (Contrato Estável)
+                          </h3>
+                          <p className="text-xs font-bold text-sanesul-muted uppercase tracking-widest mt-2 pl-5">
+                            {monitoringResults.unchangedUCs.length} Unidades
+                            Encontradas
+                          </p>
+                        </div>
                       </div>
 
                       <div className="p-10">
@@ -12506,6 +13147,113 @@ export default function App() {
               </div>
             )}
           </div>
+        ) : activeTab === "monitoramento_ajustes" ? (
+          <div className="py-12 space-y-12">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div>
+                <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">
+                  Monitoramento Ajuste de Demanda
+                </h2>
+                <p className="text-sanesul-muted">
+                  Acompanhamento das unidades com solicitações de alteração de contrato neste ano.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-4 items-center">
+                <button
+                  onClick={exportAdjustmentsExcel}
+                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
+                >
+                  <FileSpreadsheet size={16} />
+                  Exportar Solicitações
+                </button>
+              </div>
+            </div>
+
+            {(adjustmentsList.length === 0) ? (
+              <div className="bg-white rounded-3xl p-16 text-center border border-slate-100 shadow-xl shadow-slate-200/50">
+                <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <FileText className="text-slate-300" size={48} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-700 mb-2 font-display">Sem alterações</h3>
+                <p className="text-slate-500 max-w-sm mx-auto">Nenhuma unidade com alteração de contrato registrada.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-[40px] border border-sanesul-primary/10 shadow-2xl overflow-hidden">
+                <div className="bg-slate-50/80 px-10 py-8 border-b border-sanesul-primary/5">
+                  <h3 className="text-2xl font-display font-bold text-sanesul-primary border-l-4 border-yellow-500 pl-4">
+                    Relação das UCs
+                  </h3>
+                  <p className="text-xs font-bold text-sanesul-muted uppercase tracking-widest mt-2 pl-5">
+                    {adjustmentsList.length} Unidades Solicitadas
+                  </p>
+                </div>
+                <div className="p-10 overflow-x-auto">
+                  <table className="w-full min-w-[1200px] text-left border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Nº UC</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Município</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Localidade</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Data Solicitação</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Data Alteração</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Status</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Contratada P</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-center">Contratada P Alt.</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Contratada FP</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-center">Contratada FP Alt.</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Previsão Economia</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-green-700 border-b border-sanesul-primary/5 text-right">Eco. Realizada</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {adjustmentsList.map((adj: any, idx: number) => {
+                        const {
+                          uc: ucId,
+                          city,
+                          gerencia,
+                          dcpBefore,
+                          dcfpBefore,
+                          dcpAfter,
+                          dcfpAfter,
+                          dataAlteracao,
+                          economia
+                        } = adj;
+                
+                        const dataSolicitacao = adj.uc === "10926205169" ? "-" : "03/06/2026";
+
+                        return (
+                          <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-4 py-4 font-bold text-sanesul-primary font-mono whitespace-nowrap">{adj.uc}</td>
+                            <td className="px-4 py-4 font-bold text-slate-800 text-xs">{city}</td>
+                            <td className="px-4 py-4 font-bold text-slate-500 text-xs">{gerencia}</td>
+                            <td className="px-4 py-4 text-center font-mono text-xs text-sanesul-muted">{dataSolicitacao}</td>
+                            <td className="px-4 py-4 text-center font-mono text-xs text-sanesul-muted">{dataAlteracao}</td>
+                            <td className="px-4 py-4 text-xs font-bold text-slate-700">{dataAlteracao !== "-" ? "Concluída" : "Aguardando"}</td>
+                            <td className="px-4 py-4 text-center">
+                              <span className="px-2 py-1 bg-slate-50 text-slate-500 rounded text-xs font-mono">{dcpBefore}</span>
+                            </td>
+                            <td className="px-4 py-4 text-center">
+                              <span className="px-2 py-1 bg-blue-50 text-blue-700 font-bold rounded text-xs font-mono">{dcpAfter}</span>
+                            </td>
+                            <td className="px-4 py-4 text-center">
+                              <span className="px-2 py-1 bg-slate-50 text-slate-500 rounded text-xs font-mono">{dcfpBefore}</span>
+                            </td>
+                            <td className="px-4 py-4 text-center">
+                              <span className="px-2 py-1 bg-blue-50 text-blue-700 font-bold rounded text-xs font-mono">{dcfpAfter}</span>
+                            </td>
+                            <td className="px-4 py-4 text-right font-mono text-xs text-sanesul-muted">-</td>
+                            <td className="px-4 py-4 text-right font-bold text-green-600">
+                              R$ {economia.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         ) : activeTab === "monitoramento_reativo" ? (
           <div className="py-12 space-y-12">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -12555,7 +13303,7 @@ export default function App() {
                 if (b.status !== "completed") return false;
                 if (
                   selectedReactiveMonth !== "all" &&
-                  `${b.mesReferencia}/${b.anoLeitura}` !== selectedReactiveMonth
+                  `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedReactiveMonth
                 )
                   return false;
                 const totalReativo =
@@ -12570,7 +13318,7 @@ export default function App() {
                   if (!acc[uc])
                     acc[uc] = {
                       uc,
-                      cidade: bill.cidade || "",
+                      cidade: getCidade(uc, bill.cidade),
                       totalPonta: 0,
                       totalFPonta: 0,
                       totalFatura: 0,
@@ -13007,6 +13755,229 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              );
+            })()}
+          </div>
+        ) : activeTab === "monitoramento_usinas" ? (
+          <div className="py-12 space-y-12">
+            {(() => {
+              // Trigger reactive re-evaluations when classification overrides happen
+              const _trigger = ucsTrigger; 
+              
+              const injectedBills = bills.filter((b) => {
+                if (b.status !== "completed") return false;
+                if (
+                  selectedUsinaMonth !== "all" &&
+                  `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedUsinaMonth
+                ) return false;
+                const injOuc = parseValue(b.energiaAtvInjetadaGDIOUC);
+                const injMuc = parseValue(b.energiaAtvInjetadaGDIMUC);
+                return injOuc > 0 || injMuc > 0;
+              });
+
+              const usinasDataObj = injectedBills.reduce((acc, bill) => {
+                 const uc = String(bill.uc);
+                 if (!acc[uc]) {
+                     const classification = UCS_PPP.has(uc) ? "PPP" : (UCS_USINA.has(uc) ? "SANESUL" : "OUTRO");
+                     acc[uc] = {
+                        uc,
+                        locin: getLocin(uc),
+                        gerencia: getGerencia(uc),
+                        cidade: getCidade(uc, bill.cidade),
+                        classification,
+                        totalInjetadaOuc: 0,
+                        totalValorOuc: 0,
+                        totalInjetadaMuc: 0,
+                        totalValorMuc: 0,
+                        billsCount: 0
+                     };
+                 }
+                 acc[uc].totalInjetadaOuc += parseValue(bill.energiaAtvInjetadaGDIOUC);
+                 acc[uc].totalValorOuc += parseValue(bill.valorEnergiaAtvInjetadaGDIOUC);
+                 acc[uc].totalInjetadaMuc += parseValue(bill.energiaAtvInjetadaGDIMUC);
+                 acc[uc].totalValorMuc += parseValue(bill.valorEnergiaAtvInjetadaGDIMUC);
+                 acc[uc].billsCount += 1;
+                 return acc;
+              }, {} as Record<string, any>);
+
+              const usinasArray = (Object.values(usinasDataObj) as any[]).sort((a,b) => {
+                  if (a.classification !== b.classification) return a.classification.localeCompare(b.classification);
+                  return String(a.gerencia).localeCompare(String(b.gerencia));
+              });
+
+              const availableUsinaCities = Array.from(new Set(usinasArray.map(u => u.cidade))).filter(Boolean).sort();
+
+              const filteredUsinasArray = selectedUsinaCity === "all" ? usinasArray : usinasArray.filter(u => u.cidade === selectedUsinaCity);
+
+              const pppArray = filteredUsinasArray.filter(u => u.classification === "PPP");
+              const sanesulArray = filteredUsinasArray.filter(u => u.classification !== "PPP");
+
+              const handleExportUsinas = () => {
+                if (filteredUsinasArray.length === 0) {
+                  showAlert("Aviso", "Nenhum dado para exportar.");
+                  return;
+                }
+                const exportData = filteredUsinasArray.map((u) => ({
+                  "UC": u.uc,
+                  "LOCIN": u.locin,
+                  "Gerência": u.gerencia,
+                  "Cidade": u.cidade,
+                  "Classificação": u.classification,
+                  "Injetada OUC (kWh)": u.totalInjetadaOuc,
+                  "Valor Injetada OUC (R$)": u.totalValorOuc,
+                  "Injetada MUC (kWh)": u.totalInjetadaMuc,
+                  "Valor Injetada MUC (R$)": u.totalValorMuc,
+                  "Quantidade Faturas": u.billsCount,
+                }));
+                const ws = XLSX.utils.json_to_sheet(exportData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Usinas");
+                XLSX.writeFile(wb, `monitoramento_usinas_${selectedUsinaMonth.replace("/", "_")}.xlsx`);
+              };
+
+              const toggleClass = (uc: string, current: string) => {
+                 const targetClass = current === "PPP" ? "SANESUL" : "PPP";
+                 showConfirm(
+                   "Alterar Classificação",
+                   `Tem certeza que deseja alterar a classificação da UC ${uc} de ${current} para ${targetClass}?`,
+                   () => {
+                     if (current === "PPP") {
+                         UCS_PPP.delete(uc);
+                         UCS_USINA.add(uc);
+                     } else if (current === "SANESUL") {
+                         UCS_USINA.delete(uc);
+                         UCS_PPP.add(uc);
+                     } else {
+                         UCS_USINA.delete(uc);
+                         UCS_PPP.add(uc);
+                     }
+                     if (typeof window !== "undefined") {
+                         localStorage.setItem("PPP_UCS_OVERRIDE", JSON.stringify([...UCS_PPP]));
+                         localStorage.setItem("USINA_UCS_OVERRIDE", JSON.stringify([...UCS_USINA]));
+                     }
+                     setUcsTrigger(t => t + 1);
+                   }
+                 );
+              };
+
+              const renderTable = (dataArray: any[], title: string, colorLine: string) => (
+                  <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm relative">
+                     <div className={`absolute top-0 left-0 w-full h-1 ${colorLine}`}></div>
+                     <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                        <h3 className="font-bold text-slate-800 uppercase tracking-widest text-sm">{title}</h3>
+                        <span className="text-xs font-semibold text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200 shadow-sm">{dataArray.length} Registros</span>
+                     </div>
+                     <div className="overflow-x-auto">
+                         <table className="w-full">
+                            <thead>
+                               <tr className="bg-white border-b border-slate-200">
+                                   <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">UC</th>
+                                   <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">LOCIN</th>
+                                   <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Gerência/Cidade</th>
+                                   <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Classificação</th>
+                                   <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Injetada oUC (kWh/R$)</th>
+                                   <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Injetada mUC (kWh/R$)</th>
+                                   <th className="px-6 py-4 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">Ações</th>
+                               </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {dataArray.map(item => (
+                                    <tr key={item.uc} className="hover:bg-slate-50 transition-colors bg-white">
+                                       <td className="px-6 py-4 font-bold text-sanesul-primary">{item.uc}</td>
+                                       <td className="px-6 py-4 text-sm text-slate-600">{item.locin}</td>
+                                       <td className="px-6 py-4">
+                                          <div className="text-sm font-semibold text-slate-700">{item.gerencia}</div>
+                                          <div className="text-xs text-slate-500">{item.cidade}</div>
+                                       </td>
+                                       <td className="px-6 py-4">
+                                           <span className={`px-3 py-1 text-xs font-bold uppercase tracking-wider flex items-center justify-center min-w-28 gap-1 w-fit rounded-full ${item.classification === "PPP" ? "bg-green-100 text-green-700" : item.classification === "SANESUL" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
+                                              {item.classification}
+                                           </span>
+                                       </td>
+                                       <td className="px-6 py-4 text-right">
+                                          <div className="text-sm font-bold text-emerald-600">{item.totalInjetadaOuc.toLocaleString("pt-BR")} kWh</div>
+                                          <div className="text-xs text-rose-600">{(item.totalValorOuc).toLocaleString("pt-BR", {style: "currency", currency: "BRL"})}</div>
+                                       </td>
+                                       <td className="px-6 py-4 text-right">
+                                          <div className="text-sm font-bold text-emerald-600">{item.totalInjetadaMuc.toLocaleString("pt-BR")} kWh</div>
+                                          <div className="text-xs text-rose-600">{(item.totalValorMuc).toLocaleString("pt-BR", {style: "currency", currency: "BRL"})}</div>
+                                       </td>
+                                       <td className="px-6 py-4 text-center">
+                                          <button onClick={() => toggleClass(item.uc, item.classification)} className="text-[10px] px-3 py-2 rounded-lg border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary hover:text-white font-bold transition-colors uppercase tracking-widest whitespace-nowrap">
+                                             Mudar p/ {item.classification === "PPP" ? "SANESUL" : "PPP"}
+                                          </button>
+                                       </td>
+                                    </tr>
+                                ))}
+                                {dataArray.length === 0 && (
+                                    <tr>
+                                       <td colSpan={7} className="px-6 py-12 text-center text-slate-500 italic bg-white">
+                                           Nenhum registro encontrado nesta categoria.
+                                       </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                         </table>
+                     </div>
+                  </div>
+              );
+
+              return (
+                  <>
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+                      <div>
+                        <h2 className="text-3xl font-display font-bold text-sanesul-primary mb-2">
+                          Monitoramento Usinas
+                        </h2>
+                        <p className="text-sanesul-muted">
+                          Usinas com energia injetada e suas classificações (PPP Fotovoltaica e Usinas Sanesul).
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-4 items-center">
+                        <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-sanesul-primary/10 shadow-sm">
+                          <MapPin size={16} className="text-sanesul-primary" />
+                          <select
+                            value={selectedUsinaCity}
+                            onChange={(e) => setSelectedUsinaCity(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-sanesul-primary uppercase tracking-wider outline-none cursor-pointer"
+                          >
+                            <option value="all">Todas as Cidades</option>
+                            {availableUsinaCities.map((cidade) => (
+                              <option key={String(cidade)} value={String(cidade)}>
+                                {String(cidade)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-sanesul-primary/10 shadow-sm">
+                          <Calendar size={16} className="text-sanesul-primary" />
+                          <select
+                            value={selectedUsinaMonth}
+                            onChange={(e) => setSelectedUsinaMonth(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-sanesul-primary uppercase tracking-wider outline-none cursor-pointer"
+                          >
+                            <option value="all">Todos os Meses</option>
+                            {availableMonths.map((month) => (
+                              <option key={month} value={month}>
+                                {month}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          onClick={handleExportUsinas}
+                          className="flex items-center gap-2 bg-sanesul-primary text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-sanesul-primary/90 transition-colors shadow-sm"
+                        >
+                          <Download size={16} />
+                          Exportar Excel
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-8">
+                       {renderTable(pppArray, "Parceria Público-Privada (PPP Fotovoltaica)", "bg-emerald-500")}
+                       {renderTable(sanesulArray, "Usinas Sanesul & Outros", "bg-blue-500")}
+                    </div>
+                  </>
               );
             })()}
           </div>

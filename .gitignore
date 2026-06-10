@@ -6,3 +6,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Temporary test files and binaries
+*.docx
+test-docx-out/
+test2/
+tmp.txt
+test-*.ts
+process_ucs.js
