@@ -108,6 +108,49 @@ import {
   LabelList,
 } from "recharts";
 
+const PDF_PREVISAO_BASE: Record<string, number> = {
+  "108134": 4120.34,
+  "9000469": 22196.34,
+  "1409760": 38198.51,
+  "1313470": 6968.39,
+  "968191": 13156.26,
+  "206447": 7755.36,
+  "2861580": 60803.01,
+  "12031": 16238.13,
+  "12030": 15825.54,
+  "30723": 17342.37,
+  "30724": 29867.12,
+  "249349": 8777.50,
+  "128413": 2208.40,
+  "128393": 18407.58,
+  "9000943": 13790.09,
+  "3301031": 91615.24,
+  "966936": 3915.23,
+  "947571": 10162.03,
+  "216226": 10422.31,
+  "934044": 3262.83,
+  "2965103": 34501.49,
+  "9000941": 17602.55,
+  "1753181": 1808.73,
+  "3390621": 69691.16,
+  "3209502": 2541.83,
+  "1665340": 3714.40,
+  "477410": 40918.13,
+  "2878685": 87527.86,
+  "1306946": 4272.72,
+  "188117": 12085.99,
+  "2963688": 10612.72,
+  "1755547": 53139.38,
+  "525348": 7697.51,
+  "9000079": 194830.78,
+  "9000210": 60817.12,
+  "3498071": 44169.93,
+  "3462151": 118594.86,
+  "247300": 3962.79,
+  "1626524": 5543.97,
+  "176819": 6332.49,
+};
+
 // --- Types ---
 
 interface BillData {
@@ -3753,6 +3796,99 @@ export default function App() {
     return [];
   });
 
+  const [customRequestedAdjustments, setCustomRequestedAdjustments] = useState<Record<string, { p: number; fp: number }>>(() => {
+    try {
+      const saved = localStorage.getItem("custom_requested_adjustments");
+      return saved ? JSON.parse(saved) : { ...REQUESTED_ADJUSTMENTS };
+    } catch {
+      return { ...REQUESTED_ADJUSTMENTS };
+    }
+  });
+
+  const [customOriginalContratadas, setCustomOriginalContratadas] = useState<Record<string, { p: number; fp: number }>>(() => {
+    try {
+      const saved = localStorage.getItem("custom_original_contratadas");
+      return saved ? JSON.parse(saved) : { ...ORIGINAL_CONTRATADAS };
+    } catch {
+      return { ...ORIGINAL_CONTRATADAS };
+    }
+  });
+
+  const [customAdjustmentsMetadata, setCustomAdjustmentsMetadata] = useState<Record<string, {
+    city?: string;
+    gerencia?: string;
+    dataSolicitacao?: string;
+    dataAlteracao?: string;
+    previsaoEconomia?: string;
+    ecoRealizada?: string;
+    status?: string;
+  }>>(() => {
+    try {
+      const saved = localStorage.getItem("custom_adjustments_metadata");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
+  const [isNewAdjustment, setIsNewAdjustment] = useState(false);
+  const [editingAdjustment, setEditingAdjustment] = useState<{
+    uc: string;
+    origP: number;
+    origFP: number;
+    reqP: number;
+    reqFP: number;
+    city?: string;
+    gerencia?: string;
+    dataSolicitacao?: string;
+    dataAlteracao?: string;
+    previsaoEconomia?: string;
+    ecoRealizada?: string;
+    status?: string;
+  } | null>(null);
+
+  React.useEffect(() => {
+    localStorage.setItem("custom_requested_adjustments", JSON.stringify(customRequestedAdjustments));
+  }, [customRequestedAdjustments]);
+
+  React.useEffect(() => {
+    localStorage.setItem("custom_original_contratadas", JSON.stringify(customOriginalContratadas));
+  }, [customOriginalContratadas]);
+
+  React.useEffect(() => {
+    localStorage.setItem("custom_adjustments_metadata", JSON.stringify(customAdjustmentsMetadata));
+  }, [customAdjustmentsMetadata]);
+
+  React.useEffect(() => {
+    const completedBills = bills.filter((b) => b.status === "completed");
+    if (monitoringResults && completedBills.length > 0) {
+      runMonitoringAnalysis();
+    }
+  }, [customRequestedAdjustments, customOriginalContratadas, customAdjustmentsMetadata]);
+
+  const handleDeleteAdjustment = (ucId: string) => {
+    setConfirmModalData({
+      title: "Excluir Ajuste de Demanda",
+      message: `Tem certeza que deseja remover a UC ${ucId} do monitoramento de ajuste de demanda? Esta ação não apagará as faturas da unidade descrita.`,
+      onConfirm: () => {
+        setCustomRequestedAdjustments(prev => {
+          const next = { ...prev };
+          delete next[ucId];
+          return next;
+        });
+        setCustomOriginalContratadas(prev => {
+          const next = { ...prev };
+          delete next[ucId];
+          return next;
+        });
+        setShowConfirmModal(false);
+      },
+      type: "danger",
+    });
+    setShowConfirmModal(true);
+  };
+
   React.useEffect(() => {
     localforage
       .getItem<Record<string, File>>("sanesul_bills_files")
@@ -6586,8 +6722,8 @@ export default function App() {
     const changedUCs = allUcData.filter((uc) => uc.hasContractChange);
     const unchangedUCs = allUcData.filter((uc) => !uc.hasContractChange);
 
-    const adjustmentUCs = Object.keys(REQUESTED_ADJUSTMENTS).map((ucId) => {
-      const req = REQUESTED_ADJUSTMENTS[ucId];
+    const adjustmentUCs = Object.keys(customRequestedAdjustments).map((ucId) => {
+      const req = customRequestedAdjustments[ucId];
       const ucData = allUcData.find((u) => String(u.uc) === String(ucId));
       return {
         uc: ucId,
@@ -7335,9 +7471,9 @@ export default function App() {
   const completedBills = bills.filter((b) => b.status === "completed");
 
   const adjustmentsList = useMemo(() => {
-    return Object.keys(REQUESTED_ADJUSTMENTS).map((ucId) => {
-      const req = REQUESTED_ADJUSTMENTS[ucId];
-      const orig = ORIGINAL_CONTRATADAS[ucId] || { p: 0, fp: 0 };
+    return Object.keys(customRequestedAdjustments).map((ucId) => {
+      const req = customRequestedAdjustments[ucId];
+      const orig = customOriginalContratadas[ucId] || { p: 0, fp: 0 };
       
       const ucData = monitoringResults?.adjustmentUCs?.find((a: any) => String(a.uc) === String(ucId))?.ucData || null;
 
@@ -7453,6 +7589,28 @@ export default function App() {
         }
       }
 
+      // Metadata overrides
+      const meta = customAdjustmentsMetadata[ucId] || {};
+      if (meta.city !== undefined && meta.city !== "") city = meta.city;
+      if (meta.gerencia !== undefined && meta.gerencia !== "") gerencia = meta.gerencia;
+      
+      const dataSolicitacao = meta.dataSolicitacao !== undefined && meta.dataSolicitacao !== "" ? meta.dataSolicitacao : (ucId === "10926205169" ? "-" : "03/06/2026");
+      if (meta.dataAlteracao !== undefined && meta.dataAlteracao !== "") dataAlteracao = meta.dataAlteracao;
+      
+      const status = meta.status !== undefined && meta.status !== "" ? meta.status : (dataAlteracao !== "-" ? "Concluída" : "Aguardando");
+
+      let finalEconomia = economia;
+      if (meta.ecoRealizada !== undefined && meta.ecoRealizada !== "") {
+        finalEconomia = parseFloat(meta.ecoRealizada) || 0;
+      } else if (dataAlteracao === "-") {
+        finalEconomia = 0;
+      }
+      
+      let previsaoEconomia = meta.previsaoEconomia !== undefined && meta.previsaoEconomia !== "" ? meta.previsaoEconomia : "-";
+      if (previsaoEconomia === "-" && PDF_PREVISAO_BASE[ucId] !== undefined) {
+        previsaoEconomia = (PDF_PREVISAO_BASE[ucId] * 0.7).toFixed(2);
+      }
+
       return {
         uc: ucId,
         reqP: req.p,
@@ -7464,13 +7622,16 @@ export default function App() {
         dcpAfter,
         dcfpAfter,
         dataAlteracao,
-        economia,
+        economia: finalEconomia,
         city,
         gerencia,
-        ucData
+        ucData,
+        dataSolicitacao,
+        previsaoEconomia,
+        status
       };
     });
-  }, [monitoringResults, ucMappings, completedBills]);
+  }, [monitoringResults, ucMappings, completedBills, customRequestedAdjustments, customOriginalContratadas, customAdjustmentsMetadata]);
 
   const exportAdjustmentsExcel = () => {
     if (adjustmentsList.length === 0) return;
@@ -7516,11 +7677,11 @@ export default function App() {
           dcpAfter,
           dcfpAfter,
           dataAlteracao,
-          economia
+          economia,
+          dataSolicitacao,
+          previsaoEconomia,
+          status
         } = adj;
-
-        const dataSolicitacao = adj.uc === "10926205169" ? "-" : "03/06/2026";
-        const previsao = "-";
 
         html += `
           <tr>
@@ -7529,12 +7690,12 @@ export default function App() {
             <td>${gerencia}</td>
             <td>${dataSolicitacao}</td>
             <td>${dataAlteracao}</td>
-            <td>Concluída</td>
+            <td>${status}</td>
             <td>${String(dcpBefore).replace(".", ",")}</td>
             <td>${String(dcpAfter).replace(".", ",")}</td>
             <td>${String(dcfpBefore).replace(".", ",")}</td>
             <td>${String(dcfpAfter).replace(".", ",")}</td>
-            <td>${previsao}</td>
+            <td>${previsaoEconomia}</td>
             <td>${String(economia.toFixed(2)).replace(".", ",")}</td>
           </tr>
         `;
@@ -9077,7 +9238,7 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab("monitoramento_ajustes")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide flex-shrink-0 whitespace-nowrap ${
+            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
               activeTab === "monitoramento_ajustes"
                 ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
                 : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
@@ -13160,6 +13321,30 @@ export default function App() {
               </div>
               <div className="flex flex-wrap gap-4 items-center">
                 <button
+                  onClick={() => {
+                    setIsNewAdjustment(true);
+                    setEditingAdjustment({
+                      uc: "",
+                      origP: 0,
+                      origFP: 0,
+                      reqP: 0,
+                      reqFP: 0,
+                      city: "",
+                      gerencia: "",
+                      dataSolicitacao: "",
+                      dataAlteracao: "",
+                      previsaoEconomia: "",
+                      ecoRealizada: "",
+                      status: "",
+                    });
+                    setIsAdjustmentModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-secondary transition-all shadow-lg shadow-sanesul-primary/20"
+                >
+                  <Plus size={16} />
+                  Inserir Ajuste de UC
+                </button>
+                <button
                   onClick={exportAdjustmentsExcel}
                   className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20"
                 >
@@ -13169,13 +13354,53 @@ export default function App() {
               </div>
             </div>
 
+            {/* Cards com Totais formatados */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Card Previsão de Economia Total */}
+              <div className="bg-white rounded-[24px] p-8 border border-sanesul-primary/10 shadow-xl flex items-center justify-between hover:scale-[1.01] transition-transform duration-300">
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block">
+                    Previsão de Economia Total Anual
+                  </span>
+                  <p className="text-3xl font-display font-extrabold text-sanesul-primary">
+                    R$ {adjustmentsList.reduce((sum, adj) => {
+                      const val = adj.previsaoEconomia;
+                      if (val === "-" || !val) return sum;
+                      const num = parseFloat(val);
+                      return isNaN(num) ? sum : sum + num;
+                    }, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shadow-inner">
+                  <TrendingUp size={24} />
+                </div>
+              </div>
+
+              {/* Card Economia Realizada Total */}
+              <div className="bg-white rounded-[24px] p-8 border border-sanesul-primary/10 shadow-xl flex items-center justify-between hover:scale-[1.01] transition-transform duration-300">
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block">
+                    Economia Realizada Total Acumulada
+                  </span>
+                  <p className="text-3xl font-display font-extrabold text-green-600">
+                    R$ {adjustmentsList.reduce((sum, adj) => {
+                      return sum + (adj.economia || 0);
+                    }, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="w-14 h-14 bg-green-50 text-green-600 rounded-2xl flex items-center justify-center shadow-inner">
+                  <DollarSign size={24} />
+                </div>
+              </div>
+            </div>
+
             {(adjustmentsList.length === 0) ? (
               <div className="bg-white rounded-3xl p-16 text-center border border-slate-100 shadow-xl shadow-slate-200/50">
                 <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
                   <FileText className="text-slate-300" size={48} />
                 </div>
                 <h3 className="text-xl font-bold text-slate-700 mb-2 font-display">Sem alterações</h3>
-                <p className="text-slate-500 max-w-sm mx-auto">Nenhuma unidade com alteração de contrato registrada.</p>
+                <p className="text-slate-500 max-w-sm mx-auto">Nenhuma unidade com alteração de contrato registrada. Clique em "Inserir Ajuste de UC" para adicionar.</p>
               </div>
             ) : (
               <div className="bg-white rounded-[40px] border border-sanesul-primary/10 shadow-2xl overflow-hidden">
@@ -13188,13 +13413,13 @@ export default function App() {
                   </p>
                 </div>
                 <div className="p-10 overflow-x-auto">
-                  <table className="w-full min-w-[1200px] text-left border-collapse">
+                  <table className="w-full min-w-[1240px] text-left border-collapse">
                     <thead>
                       <tr>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Nº UC</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Município</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Localidade</th>
-                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Data Solicitação</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Contrato Assinado</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Data Alteração</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5">Status</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Contratada P</th>
@@ -13203,6 +13428,7 @@ export default function App() {
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-primary border-b border-sanesul-primary/5 text-center">Contratada FP Alt.</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-green-600 border-b border-sanesul-primary/5 text-right">Previsão Economia</th>
                         <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-green-700 border-b border-sanesul-primary/5 text-right">Eco. Realizada</th>
+                        <th className="px-4 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-center">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -13216,10 +13442,11 @@ export default function App() {
                           dcpAfter,
                           dcfpAfter,
                           dataAlteracao,
-                          economia
+                          economia,
+                          dataSolicitacao,
+                          previsaoEconomia,
+                          status
                         } = adj;
-                
-                        const dataSolicitacao = adj.uc === "10926205169" ? "-" : "03/06/2026";
 
                         return (
                           <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
@@ -13228,7 +13455,17 @@ export default function App() {
                             <td className="px-4 py-4 font-bold text-slate-500 text-xs">{gerencia}</td>
                             <td className="px-4 py-4 text-center font-mono text-xs text-sanesul-muted">{dataSolicitacao}</td>
                             <td className="px-4 py-4 text-center font-mono text-xs text-sanesul-muted">{dataAlteracao}</td>
-                            <td className="px-4 py-4 text-xs font-bold text-slate-700">{dataAlteracao !== "-" ? "Concluída" : "Aguardando"}</td>
+                            <td className="px-4 py-4 text-xs font-bold">
+                              <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider ${
+                                status === "Concluída" 
+                                  ? "bg-green-100 text-green-800" 
+                                  : status === "Aguardando" 
+                                  ? "bg-amber-100 text-amber-800" 
+                                  : "bg-slate-100 text-slate-800"
+                              }`}>
+                                {status}
+                              </span>
+                            </td>
                             <td className="px-4 py-4 text-center">
                               <span className="px-2 py-1 bg-slate-50 text-slate-500 rounded text-xs font-mono">{dcpBefore}</span>
                             </td>
@@ -13241,9 +13478,46 @@ export default function App() {
                             <td className="px-4 py-4 text-center">
                               <span className="px-2 py-1 bg-blue-50 text-blue-700 font-bold rounded text-xs font-mono">{dcfpAfter}</span>
                             </td>
-                            <td className="px-4 py-4 text-right font-mono text-xs text-sanesul-muted">-</td>
+                            <td className="px-4 py-4 text-right font-mono text-xs text-sanesul-muted font-bold">
+                              {previsaoEconomia === "-" ? "-" : isNaN(Number(previsaoEconomia)) ? previsaoEconomia : `R$ ${Number(previsaoEconomia).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                            </td>
                             <td className="px-4 py-4 text-right font-bold text-green-600">
                               R$ {economia.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-4 py-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setIsNewAdjustment(false);
+                                    setEditingAdjustment({
+                                      uc: adj.uc,
+                                      origP: dcpBefore || 0,
+                                      origFP: dcfpBefore || 0,
+                                      reqP: dcpAfter || 0,
+                                      reqFP: dcfpAfter || 0,
+                                      city: city !== "-" ? city : "",
+                                      gerencia: gerencia !== "-" ? gerencia : "",
+                                      dataSolicitacao: dataSolicitacao !== "-" ? dataSolicitacao : "",
+                                      dataAlteracao: dataAlteracao !== "-" ? dataAlteracao : "",
+                                      previsaoEconomia: previsaoEconomia !== "-" ? previsaoEconomia : "",
+                                      ecoRealizada: economia ? String(economia) : "",
+                                      status: status,
+                                    });
+                                    setIsAdjustmentModalOpen(true);
+                                  }}
+                                  title="Editar"
+                                  className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteAdjustment(adj.uc)}
+                                  title="Remover"
+                                  className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -16343,6 +16617,324 @@ export default function App() {
               >
                 <Save size={16} />
                 Salvar Fatura
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Adicionar/Editar Ajuste de Demanda */}
+      {isAdjustmentModalOpen && editingAdjustment && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[90] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col my-8">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <h2 className="text-xl font-bold text-sanesul-primary flex items-center gap-2 font-display">
+                <Pencil size={20} />
+                {isNewAdjustment ? "Inserir UC no Monitoramento" : "Alterar Valores de Ajuste"}
+              </h2>
+              <button
+                onClick={() => setIsAdjustmentModalOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            {/* Scrollable container for many fields */}
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* UC Block */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  Nº da Unidade Consumidora (UC)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: 12031"
+                  value={editingAdjustment.uc}
+                  disabled={!isNewAdjustment}
+                  onChange={(e) =>
+                    setEditingAdjustment({ ...editingAdjustment, uc: e.target.value.trim() })
+                  }
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none disabled:opacity-60 disabled:cursor-not-allowed font-mono font-bold"
+                />
+                {isNewAdjustment && (
+                  <p className="text-[10px] text-slate-400">
+                    Insira o código numérico da UC tal como cadastrado nas faturas do sistema.
+                  </p>
+                )}
+              </div>
+
+              {/* Grid 1: City & Gerencia */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Município
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Aquidauana"
+                    value={editingAdjustment.city || ""}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        city: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Localidade / Gerência
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: ETA SUL"
+                    value={editingAdjustment.gerencia || ""}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        gerencia: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Grid 2: Original demand fields */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Contratada P (Original)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editingAdjustment.origP}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        origP: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Contratada FP (Original)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editingAdjustment.origFP}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        origFP: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Grid 3: Adjusted demand fields */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider text-sanesul-primary">
+                    Contratada P Alt.
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editingAdjustment.reqP}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        reqP: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-blue-200 bg-blue-50/20 text-blue-900 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider text-sanesul-primary">
+                    Contratada FP Alt.
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editingAdjustment.reqFP}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        reqFP: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-blue-200 bg-blue-50/20 text-blue-900 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* Grid 4: Dates */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Contrato Assinado
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="DD/MM/AAAA"
+                    value={editingAdjustment.dataSolicitacao || ""}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        dataSolicitacao: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Data Alteração
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="DD/MM/AAAA"
+                    value={editingAdjustment.dataAlteracao || ""}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        dataAlteracao: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Grid 5: Status & Economy values */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  Status da Solicitação
+                </label>
+                <select
+                  value={editingAdjustment.status || "Aguardando"}
+                  onChange={(e) =>
+                    setEditingAdjustment({
+                      ...editingAdjustment,
+                      status: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-bold"
+                >
+                  <option value="Aguardando">Aguardando</option>
+                  <option value="Concluída">Concluída</option>
+                  <option value="Cancelada">Cancelada</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-green-600 uppercase tracking-wider">
+                    Previsão Economia (R$)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: 1450.25 ou -"
+                    value={editingAdjustment.previsaoEconomia || ""}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        previsaoEconomia: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono font-bold text-green-700"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-green-700 uppercase tracking-wider">
+                    Eco. Realizada (R$)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: 1200"
+                    value={editingAdjustment.ecoRealizada || ""}
+                    onChange={(e) =>
+                      setEditingAdjustment({
+                        ...editingAdjustment,
+                        ecoRealizada: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono font-bold text-green-800"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-100">
+              <button
+                onClick={() => setIsAdjustmentModalOpen(false)}
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const {
+                    uc,
+                    origP,
+                    origFP,
+                    reqP,
+                    reqFP,
+                    city,
+                    gerencia,
+                    dataSolicitacao,
+                    dataAlteracao,
+                    previsaoEconomia,
+                    ecoRealizada,
+                    status
+                  } = editingAdjustment;
+                  
+                  if (!uc) {
+                    alert("Por favor, preencha o número de UC.");
+                    return;
+                  }
+                  
+                  // Save requested adjustments
+                  setCustomRequestedAdjustments((prev) => ({
+                    ...prev,
+                    [uc]: { p: reqP, fp: reqFP },
+                  }));
+                  
+                  // Save original adjustments
+                  setCustomOriginalContratadas((prev) => ({
+                    ...prev,
+                    [uc]: { p: origP, fp: origFP },
+                  }));
+
+                  // Save metadata adjustments
+                  setCustomAdjustmentsMetadata((prev) => ({
+                    ...prev,
+                    [uc]: {
+                      city: city || "",
+                      gerencia: gerencia || "",
+                      dataSolicitacao: dataSolicitacao || "",
+                      dataAlteracao: dataAlteracao || "",
+                      previsaoEconomia: previsaoEconomia || "",
+                      ecoRealizada: ecoRealizada || "",
+                      status: status || "Aguardando",
+                    },
+                  }));
+                  
+                  setIsAdjustmentModalOpen(false);
+                }}
+                className="px-6 py-2 bg-sanesul-primary text-white hover:bg-sanesul-secondary rounded-xl text-xs font-bold transition-all shadow-lg shadow-sanesul-primary/20"
+              >
+                Salvar Alterações
               </button>
             </div>
           </div>
