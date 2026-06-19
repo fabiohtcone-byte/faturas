@@ -163,6 +163,8 @@ interface BillData {
   demandaPotenciaMedidaForaPonta: string;
   anoLeitura: string;
   mesReferencia: string;
+  consumoGrupoB?: string;
+  demandaTodosPeriodosKW?: string;
   consumoKwhPonta: string;
   consumoKwhForaPonta: string;
   valorConsumoKwhPonta: string;
@@ -1134,6 +1136,14 @@ const EXTRACTION_SCHEMA = {
       description:
         "Mês de referência da fatura (ex: Agosto). Extraia apenas o nome do mês, sem o ano.",
     },
+    consumoGrupoB: {
+      type: Type.STRING,
+      description: "Quantidade de consumo em kWh para o Grupo B (se aplicável).",
+    },
+    demandaTodosPeriodosKW: {
+      type: Type.STRING,
+      description: "Demanda de Potência para todos os períodos (kW).",
+    },
     consumoKwhPonta: {
       type: Type.STRING,
       description:
@@ -1727,6 +1737,8 @@ const mapDbToBillData = (dbBill: any): BillData => {
       dbBill.demanda_potencia_medida_fora_ponta || "",
     anoLeitura: dbBill.ano_leitura || "",
     mesReferencia: dbBill.mes_referencia || "",
+    consumoGrupoB: dbBill.consumo_grupo_b || "",
+    demandaTodosPeriodosKW: dbBill.demanda_todos_periodos_kw || "",
     consumoKwhPonta: dbBill.consumo_kwh_ponta || "",
     consumoKwhForaPonta: dbBill.consumo_kwh_fora_ponta || "",
     valorConsumoKwhPonta: dbBill.valor_consumo_kwh_ponta || "",
@@ -1775,11 +1787,11 @@ const mapDbToBillData = (dbBill: any): BillData => {
     modalidadeTarifaria: mod,
     subgrupo: dbBill.subgrupo || "",
     tipo: tipo,
-    mercado: UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc))
-      ? "LIVRE"
-      : "CATIVO",
+    mercado:
+      dbBill.mercado ||
+      (UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc)) ? "LIVRE" : "CATIVO"),
     gerencia: dbBill.gerencia || "",
-    locin: dbBill.locins || "",
+    locin: dbBill.locin || dbBill.locins || "",
     dataVencimento: dbBill.data_vencimento || "",
     status: dbBill.status as any,
     error: dbBill.error || undefined,
@@ -1798,6 +1810,8 @@ const mapBillDataToDb = (bill: BillData, userId: string) => ({
   demanda_potencia_medida_fora_ponta: bill.demandaPotenciaMedidaForaPonta,
   ano_leitura: bill.anoLeitura,
   mes_referencia: bill.mesReferencia,
+  consumo_grupo_b: bill.consumoGrupoB,
+  demanda_todos_periodos_kw: bill.demandaTodosPeriodosKW,
   consumo_kwh_ponta: bill.consumoKwhPonta,
   consumo_kwh_fora_ponta: bill.consumoKwhForaPonta,
   valor_consumo_kwh_ponta: bill.valorConsumoKwhPonta,
@@ -6801,6 +6815,30 @@ export default function App() {
       }))
       .sort((a, b) => b.totalCurrent - a.totalCurrent);
 
+    const timelineDataMap: Record<string, { monthYear: string; sortKey: string; currentTotal: number; referenceTotal: number; economy: number }> = {};
+    changedUCs.forEach((uc) => {
+      uc.monthlyData.forEach((md) => {
+        if (md.referenceTotal > 0) {
+          const monthName = formatMonth(md.mes);
+          const monthYear = `${monthName}/${md.ano}`;
+          const sortKey = `${md.ano}${getMonthNumber(md.mes.toString()).toString().padStart(2, "0")}`;
+          if (!timelineDataMap[sortKey]) {
+            timelineDataMap[sortKey] = {
+              monthYear,
+              sortKey,
+              currentTotal: 0,
+              referenceTotal: 0,
+              economy: 0,
+            };
+          }
+          timelineDataMap[sortKey].currentTotal += md.currentTotal;
+          timelineDataMap[sortKey].referenceTotal += md.referenceTotal;
+          timelineDataMap[sortKey].economy += md.economy;
+        }
+      });
+    });
+    const timelineData = Object.values(timelineDataMap).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
     setMonitoringResults({
       changedUCs,
       unchangedUCs,
@@ -6808,6 +6846,7 @@ export default function App() {
       generalTotalEconomy,
       generalTotalCurrent,
       cityData,
+      timelineData,
     });
   };
 
@@ -8191,12 +8230,12 @@ export default function App() {
   };
 
   const exportToCSV = () => {
-    // Use sortedBills which are already filtered by the selected reference
-    const completedBills = sortedBills.filter((b) => b.status === "completed");
+    // Export all completed bills without filtering by the selected reference
+    const completedBills = bills.filter((b) => b.status === "completed");
     if (completedBills.length === 0) {
       showAlert(
         "Exportação",
-        "Não há faturas concluídas para exportar nesta referência.",
+        "Não há faturas concluídas para exportar.",
       );
       return;
     }
@@ -8217,6 +8256,7 @@ export default function App() {
       "Modalidade Tarifária",
       "Subgrupo",
       "Valor Total (R$)",
+      "Consumo Grupo B (kWh)",
       "Demanda Contratada Ponta (kW)",
       "Demanda Contratada Fora Ponta (kW)",
       "Demanda Medida Ponta (kW)",
@@ -8227,6 +8267,7 @@ export default function App() {
       "Valor Consumo Ponta (R$)",
       "Consumo Fora Ponta (kWh)",
       "Valor Consumo Fora Ponta (R$)",
+      "Demanda Todos os Períodos (kW)",
       "Demanda Não Consumida Ponta (kW)",
       "Valor Demanda Não Consumida Ponta (R$)",
       "Demanda Não Consumida Fora Ponta (kW)",
@@ -8285,6 +8326,7 @@ export default function App() {
         b.modalidadeTarifaria || "",
         b.subgrupo || "",
         b.valorTotal,
+        b.consumoGrupoB || "",
         b.demandaPontaKW,
         b.demandaForaPontaKW,
         b.demandaPotenciaMedidaPonta,
@@ -8295,6 +8337,7 @@ export default function App() {
         b.valorConsumoKwhPonta,
         b.consumoKwhForaPonta,
         b.valorConsumoKwhForaPonta,
+        b.demandaTodosPeriodosKW || "",
         b.demandaPotenciaNaoConsumidaPonta,
         b.valorDemandaPotenciaNaoConsumidaPonta,
         b.demandaPotenciaNaoConsumidaFPonta,
@@ -8331,126 +8374,10 @@ export default function App() {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
-    const fileName =
-      filterReference === "all"
-        ? `extracao_faturas_consolidado_${new Date().toISOString().split("T")[0]}.csv`
-        : `extracao_faturas_${filterReference.replace("/", "_")}.csv`;
+    const fileName = `extracao_faturas_consolidado_${new Date().toISOString().split("T")[0]}.csv`;
 
     link.setAttribute("href", url);
     link.setAttribute("download", fileName);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const exportRelatorioToCSV = () => {
-    if (filteredRelatorioData.length === 0) {
-      showAlert(
-        "Exportação",
-        "Não há dados para exportar com os filtros selecionados.",
-      );
-      return;
-    }
-
-    const headers = [
-      "Nome do Arquivo",
-      "Mês/Ano",
-      "UC",
-      "Gerência",
-      "LOCINS",
-      "Tipo",
-      "Mercado",
-      "Concessionária",
-      "Cidade",
-      "Nota Fiscal",
-      "Modalidade Tarifária",
-      "Subgrupo",
-      "Valor Total (R$)",
-      "Consumo Ponta (kWh)",
-      "Consumo Fora Ponta (kWh)",
-      "Demanda Medida Ponta (kW)",
-      "Demanda Medida Fora Ponta (kW)",
-      "Demanda Contratada Ponta (kW)",
-      "Demanda Contratada Fora Ponta (kW)",
-      "Ultrapassagem Ponta (kW)",
-      "Ultrapassagem Fora Ponta (kW)",
-      "Reativa Ponta (kVArh)",
-      "Reativa Fora Ponta (kVArh)",
-      "Solar Injetada OUC (kWh)",
-      "Solar Injetada MUC (kWh)",
-      "Valor GDI oUC (R$)",
-      "Valor GDI mUC (R$)",
-      "CIP (R$)",
-      "Outros Encargos (R$)",
-      "PIS (R$)",
-      "COFINS (R$)",
-      "ICMS (R$)",
-    ];
-
-    const formatCSVValue = (val: any) => {
-      if (val === null || val === undefined) return "";
-      let str = String(val);
-      if (!isNaN(Number(val)) && str.includes(".") && !str.includes(",")) {
-        str = str.replace(".", ",");
-      }
-      str = str.replace(/;/g, ",");
-      return `"${str}"`;
-    };
-
-    const rows = filteredRelatorioData.map((d) => {
-      return [
-        d.fileName,
-        d.name,
-        d.uc,
-        getGerencia(String(d.uc)),
-        getLocin(String(d.uc)),
-        d.tipo,
-        d.mercado,
-        d.concessionaria,
-        getCidade(String(d.uc), d.cidade),
-        d.numeroNotaFiscal,
-        d.modalidadeTarifaria,
-        d.subgrupo,
-        d.valorTotal,
-        d.consumoPonta,
-        d.consumoForaPonta,
-        d.demandaMedidaPonta,
-        d.demandaMedidaForaPonta,
-        d.demandaContratadaPonta,
-        d.demandaContratadaForaPonta,
-        d.ultrapassagemPonta,
-        d.ultrapassagemForaPonta,
-        d.reativaPonta,
-        d.reativaForaPonta,
-        d.solarInjetadaOUC,
-        d.solarInjetadaMUC,
-        d.valorSolarOUC,
-        d.valorSolarMUC,
-        d.cip,
-        d.outrosEncargos,
-        d.pis,
-        d.cofins,
-        d.icms,
-      ];
-    });
-
-    const csvContent =
-      "\uFEFF" +
-      [
-        headers.join(";"),
-        ...rows.map((row) => row.map(formatCSVValue).join(";")),
-      ].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `Relatorio_Financeiro_${selectedRelatorioMonth.replace("/", "_")}.csv`,
-    );
     link.style.visibility = "hidden";
     document.body.appendChild(link);
     link.click();
@@ -9130,8 +9057,7 @@ export default function App() {
                 Resetar Travados
               </button>
             )}
-            {bills.some((b) => b.status === "completed") &&
-              activeTab === "faturas" && (
+            {bills.some((b) => b.status === "completed") && (
                 <button
                   onClick={exportToCSV}
                   className="flex items-center gap-2 px-6 py-3 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-secondary/20 active:scale-95"
@@ -12707,6 +12633,84 @@ export default function App() {
                   </div>
                 </div>
 
+                {monitoringResults.timelineData && monitoringResults.timelineData.length > 0 && (
+                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
+                    <div className="flex items-center justify-between mb-8">
+                      <h3 className="text-xl font-display font-bold text-sanesul-primary">
+                        Evolução Mensal Pós Alteração
+                      </h3>
+                      <div className="px-4 py-2 bg-sanesul-primary/5 rounded-full">
+                        <span className="text-xs font-bold text-sanesul-primary uppercase tracking-wider">
+                          Economia x Valor Simulado
+                        </span>
+                      </div>
+                    </div>
+                    <div className="h-96 w-full mt-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart
+                          data={monitoringResults.timelineData}
+                          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis 
+                            dataKey="monthYear" 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fontSize: 12, fill: "#64748b" }} 
+                            dy={10} 
+                          />
+                          <YAxis 
+                            yAxisId="left"
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fontSize: 12, fill: "#64748b" }}
+                            tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
+                          />
+                          <YAxis 
+                            yAxisId="right"
+                            orientation="right"
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fontSize: 12, fill: "#64748b" }}
+                            tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
+                          />
+                          <Tooltip
+                            contentStyle={{ borderRadius: "16px", border: "none", boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05)" }}
+                            formatter={(value: number) => `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                          />
+                          <Legend wrapperStyle={{ paddingTop: "20px" }} />
+                          <Bar 
+                            yAxisId="left"
+                            dataKey="referenceTotal" 
+                            name="Valor Sem Alteração (Simulado)" 
+                            fill="#cbd5e1" 
+                            radius={[6, 6, 0, 0]} 
+                            barSize={40}
+                          />
+                          <Bar 
+                            yAxisId="left"
+                            dataKey="currentTotal" 
+                            name="Valor Real Pago" 
+                            fill="#0d2551" 
+                            radius={[6, 6, 0, 0]} 
+                            barSize={40}
+                          />
+                          <Line 
+                            yAxisId="right"
+                            type="monotone" 
+                            dataKey="economy" 
+                            name="Valor Economizado" 
+                            stroke="#16a34a" 
+                            strokeWidth={3}
+                            dot={{ r: 4, strokeWidth: 2, fill: "#fff" }}
+                            activeDot={{ r: 6, strokeWidth: 0 }}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
                 {/* Charts Section - Replaced with Text Summary */}
                 <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
                   <div className="flex items-center justify-between mb-8">
@@ -14364,7 +14368,7 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={exportRelatorioToCSV}
+                    onClick={exportToCSV}
                     className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/10 text-sanesul-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-sanesul-primary/5 transition-all"
                   >
                     <Download size={16} />
@@ -15760,6 +15764,47 @@ export default function App() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">
+                    Gerência
+                  </label>
+                  <input
+                    type="text"
+                    value={editingBill.gerencia || ""}
+                    onChange={(e) =>
+                      setEditingBill({ ...editingBill, gerencia: e.target.value })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
+                    LOCINS
+                  </label>
+                  <input
+                    type="text"
+                    value={editingBill.locin || ""}
+                    onChange={(e) =>
+                      setEditingBill({ ...editingBill, locin: e.target.value })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
+                    Mercado
+                  </label>
+                  <select
+                    value={editingBill.mercado || "CATIVO"}
+                    onChange={(e) =>
+                      setEditingBill({ ...editingBill, mercado: e.target.value })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  >
+                    <option value="CATIVO">CATIVO</option>
+                    <option value="LIVRE">LIVRE</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
                     Concessionária
                   </label>
                   <select
@@ -15926,6 +15971,22 @@ export default function App() {
                   <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">
                     Demanda
                   </h3>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
+                    Todos os Períodos (kW)
+                  </label>
+                  <input
+                    type="text"
+                    value={editingBill.demandaTodosPeriodosKW || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        demandaTodosPeriodosKW: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">
@@ -16167,6 +16228,22 @@ export default function App() {
                   <h3 className="text-sm font-bold text-sanesul-primary border-b border-slate-200 pb-1">
                     Consumo
                   </h3>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
+                    Consumo Grupo B (kWh)
+                  </label>
+                  <input
+                    type="text"
+                    value={editingBill.consumoGrupoB || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        consumoGrupoB: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">
