@@ -102,6 +102,7 @@ import {
   MapPin,
   CalendarX2,
   ListX,
+  Cloud,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -4341,7 +4342,7 @@ export default function App() {
     };
 
     fetchBills();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, fetchTrigger]);
 
   const saveTimeoutRef = React.useRef<NodeJS.Timeout>();
 
@@ -5392,6 +5393,106 @@ export default function App() {
 
   const [isMercadoLivreModalOpen, setIsMercadoLivreModalOpen] = useState(false);
   const [mercadoLivreInput, setMercadoLivreInput] = useState("");
+
+  const [fetchTrigger, setFetchTrigger] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const syncLocalToSupabase = async () => {
+    if (!isSupabaseConfigured || !isAuthenticated) {
+      showAlert("Atenção", "O Supabase não está configurado ou você não está autenticado.");
+      return;
+    }
+
+    try {
+      setIsSyncing(true);
+      
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        showAlert("Atenção", "Usuário não autenticado no Supabase.");
+        setIsSyncing(false);
+        return;
+      }
+
+      // 1. Carrega todas as faturas locais do SQLite
+      showAlert("Sincronização", "Lendo faturas do banco de dados local SQLite...");
+      const localBills = await fetchBillsSqlite();
+      if (!localBills || localBills.length === 0) {
+        showAlert("Sincronização", "Nenhuma fatura encontrada no SQLite local para sincronizar.");
+        setIsSyncing(false);
+        return;
+      }
+
+      // 2. Busca todas as faturas existentes no Supabase para evitar duplicados
+      showAlert("Sincronização", "Buscando faturas já existentes na nuvem...");
+      let cloudBills: any[] = [];
+      let from = 0;
+      let to = 999;
+      let finished = false;
+
+      while (!finished) {
+        const { data, error } = await supabase
+          .from("bills")
+          .select("id, updated_at")
+          .range(from, to);
+
+        if (error) throw error;
+        if (data && data.length > 0) {
+          cloudBills = [...cloudBills, ...data];
+          if (data.length < 1000) {
+            finished = true;
+          } else {
+            from += 1000;
+            to += 1000;
+          }
+        } else {
+          finished = true;
+        }
+      }
+
+      const cloudMap = new Map(cloudBills.map(b => [b.id, b.updated_at]));
+
+      // 3. Filtra as faturas locais que precisam ser enviadas (não existem no Supabase)
+      const billsToUpload = localBills.filter(b => !cloudMap.has(b.id));
+
+      if (billsToUpload.length === 0) {
+        showAlert("Sucesso", "Todas as faturas locais já estão sincronizadas com o Supabase!");
+        setIsSyncing(false);
+        return;
+      }
+
+      // 4. Faz o upload em lotes (ex: 50 por vez)
+      const batchSize = 50;
+      let uploadedCount = 0;
+      
+      for (let i = 0; i < billsToUpload.length; i += batchSize) {
+        const chunk = billsToUpload.slice(i, i + batchSize);
+        const dbDataChunk = chunk.map(b => mapBillDataToDb(b, user.id));
+        
+        const { error } = await supabase
+          .from("bills")
+          .upsert(dbDataChunk);
+
+        if (error) {
+          console.error("Erro ao enviar lote para o Supabase:", error);
+          throw error;
+        }
+        
+        uploadedCount += chunk.length;
+      }
+
+      showAlert("Sucesso", `Sincronização concluída! ${uploadedCount} faturas foram enviadas para o Supabase.`);
+      
+      // Recarrega as faturas
+      setFetchTrigger(prev => prev + 1);
+    } catch (err: any) {
+      console.error("Erro na sincronização:", err);
+      showAlert("Erro", `Falha ao sincronizar com o Supabase: ${err.message || err}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const saveMercadoLivreUcs = () => {
     const tokens = mercadoLivreInput
@@ -9692,6 +9793,21 @@ export default function App() {
                   <DollarSign size={16} />
                   Mercado Livre
                 </button>
+                {isSupabaseConfigured && (
+                  <button
+                    onClick={syncLocalToSupabase}
+                    disabled={isSyncing}
+                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 disabled:opacity-50"
+                    title="Envia as faturas do banco de dados SQLite local para a nuvem do Supabase"
+                  >
+                    {isSyncing ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Cloud size={16} />
+                    )}
+                    Sincronizar Nuvem
+                  </button>
+                )}
               </>
             )}
             {bills.some((b) => b.status === "processing") && (
