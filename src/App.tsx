@@ -3760,6 +3760,43 @@ export default function App() {
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+    
+    if (!loginUsername || !loginPassword) {
+      setLoginError("Por favor, preencha todos os campos.");
+      return;
+    }
+    
+    try {
+      setIsSyncing(true);
+      const { data, error } = await supabase.auth.signUp({
+        email: loginUsername,
+        password: loginPassword,
+      });
+      
+      if (error) {
+        setLoginError(`Erro ao cadastrar: ${error.message}`);
+      } else if (data.user) {
+        if (data.session) {
+          setIsAuthenticated(true);
+          localStorage.setItem("sanesul_auth", "true");
+          showAlert("Sucesso", "Cadastro realizado e login efetuado com sucesso!");
+        } else {
+          showAlert("Sucesso", "Cadastro realizado! Por favor, confirme o e-mail em sua caixa de entrada.");
+          setIsSignUp(false);
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setLoginError(`Erro inesperado: ${err.message || err}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -9588,6 +9625,89 @@ export default function App() {
   const COLORS = ["#0054A6", "#00AEEF", "#1E293B", "#64748B"];
 
 
+
+  if (isSupabaseConfigured && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-md border border-slate-100 space-y-6"
+        >
+          <Logo isLogin={true} className="mb-4" />
+          
+          <div className="flex border-b border-slate-100">
+            <button
+              onClick={() => { setIsSignUp(false); setLoginError(""); }}
+              className={`flex-1 pb-3 text-sm font-bold border-b-2 transition-all ${
+                !isSignUp
+                  ? "border-sanesul-primary text-sanesul-primary"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Entrar
+            </button>
+            <button
+              onClick={() => { setIsSignUp(true); setLoginError(""); }}
+              className={`flex-1 pb-3 text-sm font-bold border-b-2 transition-all ${
+                isSignUp
+                  ? "border-sanesul-primary text-sanesul-primary"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Cadastrar-se
+            </button>
+          </div>
+
+          {loginError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2.5 text-xs text-red-700">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{loginError}</span>
+            </div>
+          )}
+
+          <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                E-mail
+              </label>
+              <input
+                type="email"
+                required
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                placeholder="nome@empresa.com"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-sanesul-primary/20 focus:border-sanesul-primary outline-none"
+              />
+            </div>
+            
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Senha
+              </label>
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="Sua senha secreta"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-sanesul-primary/20 focus:border-sanesul-primary outline-none"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSyncing}
+              className="w-full py-3.5 bg-sanesul-primary text-white hover:bg-sanesul-primary/95 transition-all rounded-2xl text-sm font-bold shadow-lg shadow-sanesul-primary/20 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {isSyncing && <Loader2 size={16} className="animate-spin" />}
+              {isSignUp ? "Cadastrar Conta" : "Entrar no Painel"}
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
 
   if (currentPage === "visao_geral") {
     return (
