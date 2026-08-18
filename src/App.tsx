@@ -10550,12 +10550,12 @@ export default function App() {
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs font-bold text-slate-800">
-                                      {getGerencia(bill.uc || "")}
+                                      {bill.gerencia && bill.gerencia !== "---" ? bill.gerencia : getGerencia(bill.uc || "")}
                                     </span>
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                                      {getCidade(String(bill.uc), bill.cidade)}
+                                      {bill.cidade && bill.cidade !== "---" ? bill.cidade : getCidade(String(bill.uc), bill.cidade)}
                                     </span>
                                   </td>
                                   <td className="px-4 py-3">
