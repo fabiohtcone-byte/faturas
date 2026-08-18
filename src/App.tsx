@@ -103,6 +103,15 @@ import {
   CalendarX2,
   ListX,
   Cloud,
+  FolderPlus,
+  FolderUp,
+  Sparkles,
+  Layers,
+  Settings2,
+  SlidersHorizontal,
+  RefreshCw,
+  FileUp,
+  FileCheck,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -9798,394 +9807,416 @@ export default function App() {
   return (
     <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
       {/* Header */}
-      <header className="max-w-[1600px] mx-auto mb-12 border-b border-sanesul-primary/10 pb-8">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-          <Logo className="h-12" />
-          <div className="flex flex-wrap gap-3 items-center">
+      <header className="max-w-[1600px] mx-auto mb-8 border-b border-slate-200/80 pb-6 space-y-6">
+        {/* Top Navbar */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Logo className="h-12" />
+            <div className="hidden sm:flex items-center gap-2 pl-4 border-l border-slate-200">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${sqliteHealth.connected ? "bg-emerald-400" : "bg-amber-400"}`}></span>
+                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${sqliteHealth.connected ? "bg-emerald-500" : "bg-amber-500"}`}></span>
+              </span>
+              <span className="text-[11px] font-bold text-slate-500 tracking-wider uppercase">
+                {sqliteHealth.connected ? "Sistema Operacional" : "Aguardando Conexão"}
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Actions & System Controls */}
+          <div className="flex flex-wrap gap-2.5 items-center">
+            {/* SQLite Health Badge */}
             <div
-              className={`flex items-center gap-2 px-4 py-3 border rounded-xl text-xs font-semibold shadow-sm ${
+              className={`flex items-center gap-2 px-3.5 py-2 border rounded-xl text-xs font-semibold shadow-xs transition-all ${
                 sqliteHealth.connected
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  : "bg-amber-50 text-amber-700 border-amber-200"
+                  ? "bg-emerald-50/80 text-emerald-700 border-emerald-200"
+                  : "bg-amber-50/80 text-amber-700 border-amber-200"
               }`}
               title={
                 sqliteHealth.connected
-                  ? `Banco SQLite Local Conectado: ${sqliteHealth.totalBills} faturas salvas localmente (${sqliteHealth.totalUcs} UCs)`
+                  ? `Banco SQLite Local: ${sqliteHealth.totalBills} faturas salvas (${sqliteHealth.totalUcs} UCs)`
                   : "Servidor SQLite local offline."
               }
             >
-              <Database size={16} className={sqliteHealth.connected ? "text-emerald-600" : "text-amber-600"} />
-              <span>
+              <Database size={15} className={sqliteHealth.connected ? "text-emerald-600" : "text-amber-600"} />
+              <span className="font-mono font-bold">
                 {sqliteHealth.connected
-                  ? `SQLite: ${sqliteHealth.totalBills} faturas`
+                  ? `SQLite: ${sqliteHealth.totalBills.toLocaleString()} faturas`
                   : "SQLite Offline"}
               </span>
             </div>
-            {activeTab === "faturas" && <></>}
-            <button
-              onClick={() => setCurrentPage("visao_geral")}
-              className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-            >
-              <ArrowLeft size={16} />
-              Voltar para Visão Geral
-            </button>
-            <button
-              onClick={handleSelectKey}
-              className={`flex items-center gap-2 px-4 py-3 ${hasApiKey ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"} border hover:opacity-80 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95`}
-              title={
-                hasApiKey ? "Trocar Chave de API" : "Selecionar Chave de API"
-              }
-            >
-              <Key size={16} />
-              {hasApiKey ? "Trocar Conta" : "Configurar API"}
-            </button>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-              title="Sair"
-            >
-              <LogOut size={16} />
-              Sair
-            </button>
-            {activeTab === "faturas" && (
-              <>
-                <button
-                  onClick={() => {
-                    setEditingBill({
-                      id: crypto.randomUUID(),
-                      fileName: "Fatura Manual",
-                      status: "completed",
-                      tipo: "OPERACIONAL",
-                      concessionaria: "ENERGISA",
-                      mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, "0"))}/${new Date().getFullYear()}`,
-                      anoLeitura: new Date().getFullYear().toString(),
-                    });
-                    setIsBillModalOpen(true);
-                  }}
-                  className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                >
-                  <Plus size={16} />
-                  Nova Fatura Manual
-                </button>
-                <button
-                  onClick={downloadExcelTemplate}
-                  className="flex items-center gap-2 px-6 py-3 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                >
-                  <Download size={16} />
-                  Baixar Modelo
-                </button>
-                <label className="flex items-center gap-2 px-6 py-3 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 cursor-pointer">
-                  <FileSpreadsheet size={16} />
-                  Importar Planilha
-                  <input
-                    type="file"
-                    accept=".xlsx, .xls"
-                    className="hidden"
-                    onChange={handleExcelImport}
-                  />
-                </label>
-                <button
-                  onClick={() => fileInputEnergisaRef.current?.click()}
-                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
-                >
-                  <Plus size={16} />
-                  Adicionar Faturas - ENERGISA
-                </button>
-                <input
-                  type="file"
-                  ref={fileInputEnergisaRef}
-                  onChange={(e) => handleFileUpload(e, "ENERGISA")}
-                  multiple
-                  accept="application/pdf,image/*"
-                  className="hidden"
-                />
-                
-                <button
-                  onClick={() => folderInputEnergisaRef.current?.click()}
-                  className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white hover:bg-emerald-700 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-emerald-600/20 active:scale-95"
-                >
-                  <Plus size={16} />
-                  Adicionar Pasta - ENERGISA
-                </button>
-                <input
-                  type="file"
-                  ref={folderInputEnergisaRef}
-                  onChange={(e) => handleFileUpload(e, "ENERGISA")}
-                  webkitdirectory=""
-                  directory=""
-                  multiple
-                  className="hidden"
-                />
 
-                <button
-                  onClick={() => fileInputElektroRef.current?.click()}
-                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-primary/20 active:scale-95"
-                >
-                  <Plus size={16} />
-                  Adicionar Faturas - ELEKTRO
-                </button>
-                <input
-                  type="file"
-                  ref={fileInputElektroRef}
-                  onChange={(e) => handleFileUpload(e, "ELEKTRO")}
-                  multiple
-                  accept="application/pdf,image/*"
-                  className="hidden"
-                />
-
-                <button
-                  onClick={() => folderInputElektroRef.current?.click()}
-                  className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white hover:bg-emerald-700 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-emerald-600/20 active:scale-95"
-                >
-                  <Plus size={16} />
-                  Adicionar Pasta - ELEKTRO
-                </button>
-                <input
-                  type="file"
-                  ref={folderInputElektroRef}
-                  onChange={(e) => handleFileUpload(e, "ELEKTRO")}
-                  webkitdirectory=""
-                  directory=""
-                  multiple
-                  className="hidden"
-                />
-              </>
-            )}
-            {bills.length > 0 && activeTab === "faturas" && (
+            {/* Sincronizar Nuvem */}
+            {isSupabaseConfigured && (
               <button
-                onClick={startProcessing}
-                disabled={
-                  isProcessing || !bills.some((b) => b.status === "pending")
-                }
-                className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider disabled:opacity-30 disabled:cursor-not-allowed shadow-sm active:scale-95"
+                onClick={syncLocalToSupabase}
+                disabled={isSyncing}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
+                title="Sincronizar banco local com Supabase na Nuvem"
               >
-                {isProcessing ? (
-                  <Loader2 size={16} className="animate-spin" />
+                {isSyncing ? (
+                  <Loader2 size={15} className="animate-spin text-sanesul-primary" />
                 ) : (
-                  <FileText size={16} />
+                  <Cloud size={15} className="text-sanesul-primary" />
                 )}
-                Processar Arquivos
+                <span>Sincronizar Nuvem</span>
               </button>
             )}
-            {activeTab === "faturas" && (
-              <>
+
+            {/* Configurar API */}
+            <button
+              onClick={handleSelectKey}
+              className={`flex items-center gap-2 px-4 py-2 border transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 ${
+                hasApiKey
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                  : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+              }`}
+              title={hasApiKey ? "Chave de IA Ativa - Trocar Chave" : "Configurar Chave Gemini AI"}
+            >
+              <Key size={15} />
+              <span>{hasApiKey ? "IA Conectada" : "Configurar API"}</span>
+            </button>
+
+            {/* Voltar para Visão Geral */}
+            <button
+              onClick={() => setCurrentPage("visao_geral")}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+            >
+              <ArrowLeft size={15} />
+              <span>Visão Geral</span>
+            </button>
+
+            {/* Sair */}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-red-300 text-slate-600 hover:text-red-600 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+              title="Encerrar Sessão"
+            >
+              <LogOut size={15} />
+              <span>Sair</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Navigation Tabs Bar */}
+        <div className="flex items-center overflow-x-auto no-scrollbar py-1">
+          <div className="flex gap-1.5 p-1.5 bg-slate-100/80 backdrop-blur-sm border border-slate-200/80 rounded-2xl w-fit">
+            {[
+              { id: "faturas", label: "Gestão de Faturas", icon: FileText },
+              { id: "multas", label: "Multas", icon: AlertTriangle },
+              { id: "dashboard", label: "Dashboard Analítico", icon: LayoutDashboard },
+              { id: "analises", label: "Análises de Dados", icon: BarChart3 },
+              { id: "monitoramento", label: "Monitoramento Demanda", icon: DollarSign },
+              { id: "monitoramento_ajustes", label: "Ajuste de Demanda", icon: FileCheck },
+              { id: "monitoramento_reativo", label: "Monitoramento Reativo", icon: Zap },
+              { id: "monitoramento_usinas", label: "Monitoramento Usinas", icon: Leaf },
+              { id: "relatorio", label: "Relatório Financeiro", icon: FileSpreadsheet },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-2 px-5 py-2.5 transition-all rounded-xl text-xs font-bold tracking-wide whitespace-nowrap ${
+                    isActive
+                      ? "bg-sanesul-primary text-white shadow-md shadow-sanesul-primary/20 scale-[1.02]"
+                      : "text-slate-600 hover:text-sanesul-primary hover:bg-white/80"
+                  }`}
+                >
+                  <Icon size={15} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Modern Executive Action Toolbar (Displayed for activeTab === "faturas") */}
+        {activeTab === "faturas" && (
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 space-y-4">
+            {/* Top Toolbar Row: Ingestion, Process & Strategy */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              
+              {/* Group 1: Adicionar & Importar Faturas */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-xl p-1">
+                  {/* Energisa Group */}
+                  <span className="text-[10px] font-black text-blue-800 bg-blue-100/80 px-2 py-1 rounded-lg uppercase tracking-wider">
+                    Energisa
+                  </span>
+                  <button
+                    onClick={() => fileInputEnergisaRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-lg text-xs font-bold shadow-xs active:scale-95"
+                    title="Adicionar arquivos de faturas Energisa (PDF)"
+                  >
+                    <Plus size={14} />
+                    <span>Faturas</span>
+                  </button>
+                  <button
+                    onClick={() => folderInputEnergisaRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-all rounded-lg text-xs font-bold shadow-xs active:scale-95"
+                    title="Adicionar pasta completa de faturas Energisa"
+                  >
+                    <FolderPlus size={14} />
+                    <span>Pasta</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-xl p-1">
+                  {/* Elektro Group */}
+                  <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/80 px-2 py-1 rounded-lg uppercase tracking-wider">
+                    Elektro
+                  </span>
+                  <button
+                    onClick={() => fileInputElektroRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-sanesul-primary text-white hover:bg-sanesul-primary/90 transition-all rounded-lg text-xs font-bold shadow-xs active:scale-95"
+                    title="Adicionar arquivos de faturas Elektro (PDF)"
+                  >
+                    <Plus size={14} />
+                    <span>Faturas</span>
+                  </button>
+                  <button
+                    onClick={() => folderInputElektroRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-all rounded-lg text-xs font-bold shadow-xs active:scale-95"
+                    title="Adicionar pasta completa de faturas Elektro"
+                  >
+                    <FolderPlus size={14} />
+                    <span>Pasta</span>
+                  </button>
+                </div>
+
+                {/* Planilhas & Manual Group */}
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1.5 px-3 py-2 bg-blue-50/80 border border-blue-200/80 text-blue-700 hover:bg-blue-100 transition-all rounded-xl text-xs font-bold cursor-pointer active:scale-95 shadow-xs">
+                    <FileSpreadsheet size={15} />
+                    <span>Importar Planilha</span>
+                    <input
+                      type="file"
+                      accept=".xlsx, .xls"
+                      className="hidden"
+                      onChange={handleExcelImport}
+                    />
+                  </label>
+                  <button
+                    onClick={downloadExcelTemplate}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50/80 border border-emerald-200/80 text-emerald-700 hover:bg-emerald-100 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title="Baixar modelo de planilha Excel para preenchimento"
+                  >
+                    <Download size={15} />
+                    <span>Baixar Modelo</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingBill({
+                        id: crypto.randomUUID(),
+                        fileName: "Fatura Manual",
+                        status: "completed",
+                        tipo: "OPERACIONAL",
+                        concessionaria: "ENERGISA",
+                        mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, "0"))}/${new Date().getFullYear()}`,
+                        anoLeitura: new Date().getFullYear().toString(),
+                      });
+                      setIsBillModalOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title="Cadastrar fatura manualmente"
+                  >
+                    <Plus size={15} />
+                    <span>Nova Manual</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Group 2: Processamento IA (Gemini) Highlight Button */}
+              {bills.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={startProcessing}
+                    disabled={isProcessing || !bills.some((b) => b.status === "pending")}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide transition-all shadow-md active:scale-95 ${
+                      bills.some((b) => b.status === "pending") && !isProcessing
+                        ? "bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-[1.02] ring-2 ring-blue-400/30"
+                        : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none"
+                    }`}
+                  >
+                    {isProcessing ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin text-white" />
+                        <span>Processando IA...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} className={bills.some((b) => b.status === "pending") ? "text-amber-300 animate-pulse" : ""} />
+                        <span>
+                          Processar Arquivos
+                          {bills.some((b) => b.status === "pending") && (
+                            <span className="ml-1.5 px-1.5 py-0.5 bg-white/20 rounded-md text-[10px] font-black">
+                              {bills.filter((b) => b.status === "pending").length}
+                            </span>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Toolbar Row: Filters, Cadastros, Export & Batch Operations */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+              
+              {/* Left Subgroup: Cadastros & Gestão */}
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setIsGerenciasModalOpen(true)}
-                  className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                  className="flex items-center gap-2 px-3.5 py-2 bg-slate-50 border border-slate-200/90 text-slate-700 hover:bg-slate-100 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
                 >
-                  <Building size={16} />
-                  Gerências
+                  <Building size={15} className="text-sanesul-primary" />
+                  <span>Gerências & LOCINs</span>
                 </button>
+
                 <button
                   onClick={() => {
                     setMercadoLivreInput(Array.from(UCS_LIVRE_MERCADO_LIVRE).join("\n"));
                     setIsMercadoLivreModalOpen(true);
                   }}
-                  className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
+                  className="flex items-center gap-2 px-3.5 py-2 bg-slate-50 border border-slate-200/90 text-slate-700 hover:bg-slate-100 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
                 >
-                  <DollarSign size={16} />
-                  Mercado Livre
+                  <DollarSign size={15} className="text-emerald-600" />
+                  <span>Mercado Livre</span>
                 </button>
-                {isSupabaseConfigured && (
+              </div>
+
+              {/* Right Subgroup: Filtering, Export, Selection & Deletion */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Reference Filter */}
+                {bills.length > 0 && (
+                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 rounded-xl px-3 py-1.5 shadow-xs">
+                    <Filter size={14} className="text-sanesul-primary" />
+                    <select
+                      value={filterReference}
+                      onChange={(e) => setFilterReference(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer pr-2"
+                    >
+                      <option value="all">Todas as Referências</option>
+                      {availableReferences.map((ref) => (
+                        <option key={ref} value={ref}>
+                          {ref}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Exportar CSV */}
+                {bills.some((b) => b.status === "completed") && (
                   <button
-                    onClick={syncLocalToSupabase}
-                    disabled={isSyncing}
-                    className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95 disabled:opacity-50"
-                    title="Envia as faturas do banco de dados SQLite local para a nuvem do Supabase"
+                    onClick={exportToCSV}
+                    className="flex items-center gap-2 px-4 py-2 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold shadow-xs shadow-sanesul-secondary/20 active:scale-95"
+                    title="Exportar todas as faturas para formato CSV"
                   >
-                    {isSyncing ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Cloud size={16} />
-                    )}
-                    Sincronizar Nuvem
+                    <Download size={15} />
+                    <span>Exportar CSV</span>
                   </button>
                 )}
-              </>
-            )}
-            {bills.some((b) => b.status === "processing") && (
-              <button
-                onClick={resetStuckProcesses}
-                className="flex items-center gap-2 px-6 py-3 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                title="Reseta faturas que ficaram presas no status 'Extraindo'"
-              >
-                <RotateCcw size={16} />
-                Resetar Travados
-              </button>
-            )}
-            {bills.some((b) => b.status === "completed") && (
-                <button
-                  onClick={exportToCSV}
-                  className="flex items-center gap-2 px-6 py-3 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold tracking-wider shadow-lg shadow-sanesul-secondary/20 active:scale-95"
-                >
-                  <Download size={16} />
-                  Exportar CSV
-                </button>
-              )}
-            {bills.length > 0 && activeTab === "faturas" && (
-              <div className="flex items-center gap-2 bg-white border border-sanesul-primary/20 rounded-xl px-4 py-2 shadow-sm">
-                <Filter size={14} className="text-sanesul-primary" />
-                <select
-                  value={filterReference}
-                  onChange={(e) => setFilterReference(e.target.value)}
-                  className="bg-transparent text-xs font-bold text-sanesul-primary outline-none cursor-pointer min-w-[140px]"
-                >
-                  <option value="all">Todas as Referências</option>
-                  {availableReferences.map((ref) => (
-                    <option key={ref} value={ref}>
-                      {ref}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {bills.length > 0 && activeTab === "faturas" && filterReference !== "all" && (
-              <button
-                onClick={() => removeMonthBills(filterReference)}
-                className="flex items-center gap-2 px-5 py-3 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 hover:border-red-300 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                title={`Excluir todas as faturas do mês ${filterReference}`}
-              >
-                <CalendarX2 size={16} />
-                Excluir Mês ({filterReference})
-              </button>
-            )}
-            {bills.length > 0 && activeTab === "faturas" && (
-              <button
-                onClick={() => {
-                  setDeleteUcListInput("");
-                  setIsDeleteByListModalOpen(true);
-                }}
-                className="flex items-center gap-2 px-6 py-3 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 hover:border-red-300 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-                title="Excluir faturas colando uma lista de UCs"
-              >
-                <ListX size={16} />
-                Excluir por Lista de UCs
-              </button>
-            )}
-            {bills.length > 0 && activeTab === "faturas" && (
-              <button
-                onClick={() =>
-                  setSelectedBills(
-                    bills
-                      .filter(
-                        (b) => b.status === "error" || b.status === "pending",
-                      )
-                      .map((b) => b.id),
-                  )
-                }
-                className="flex items-center gap-2 px-6 py-3 bg-white border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary/5 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95"
-              >
-                <CheckSquare size={16} />
-                Selecionar Pendentes/Erro
-              </button>
-            )}
-            {(bills.length > 0 || Object.keys(agrupadoraFiles).length > 0) &&
-              activeTab === "faturas" && <></>}
-          </div>
-        </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 p-1 bg-white/50 backdrop-blur-sm border border-sanesul-primary/10 rounded-2xl w-fit">
-          <button
-            onClick={() => setActiveTab("faturas")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "faturas"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <FileText size={14} />
-            Gestão de Faturas
-          </button>
-          <button
-            onClick={() => setActiveTab("multas")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "multas"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <AlertTriangle size={14} />
-            Multas
-          </button>
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "dashboard"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <LayoutDashboard size={14} />
-            Dashboard Analítico
-          </button>
-          <button
-            onClick={() => setActiveTab("analises")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "analises"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <BarChart3 size={14} />
-            Análises de Dados
-          </button>
-          <button
-            onClick={() => setActiveTab("monitoramento")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "monitoramento"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <DollarSign size={14} />
-            Monitoramento Demanda
-          </button>
-          <button
-            onClick={() => setActiveTab("monitoramento_ajustes")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "monitoramento_ajustes"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <FileText size={14} />
-            Monitoramento Ajuste de Demanda
-          </button>
-          <button
-            onClick={() => setActiveTab("monitoramento_reativo")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "monitoramento_reativo"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <Zap size={14} />
-            Monitoramento Reativo
-          </button>
-          <button
-            onClick={() => setActiveTab("monitoramento_usinas")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "monitoramento_usinas"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <Zap size={14} />
-            Monitoramento Usinas
-          </button>
-          <button
-            onClick={() => setActiveTab("relatorio")}
-            className={`flex items-center gap-2 px-8 py-3 transition-all rounded-xl text-xs font-bold tracking-wide ${
-              activeTab === "relatorio"
-                ? "bg-sanesul-primary text-white shadow-lg shadow-sanesul-primary/20"
-                : "text-sanesul-muted hover:text-sanesul-primary hover:bg-white"
-            }`}
-          >
-            <FileText size={14} />
-            Relatório Financeiro
-          </button>
-        </div>
+                {/* Selecionar Pendentes / Erros */}
+                {bills.length > 0 && (
+                  <button
+                    onClick={() =>
+                      setSelectedBills(
+                        bills
+                          .filter((b) => b.status === "error" || b.status === "pending")
+                          .map((b) => b.id),
+                      )
+                    }
+                    className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title="Selecionar faturas com erro ou aguardando processamento"
+                  >
+                    <CheckSquare size={15} />
+                    <span>Selecionar Pendentes/Erro</span>
+                  </button>
+                )}
+
+                {/* Resetar Travados (Condicional) */}
+                {bills.some((b) => b.status === "processing") && (
+                  <button
+                    onClick={resetStuckProcesses}
+                    className="flex items-center gap-2 px-3.5 py-2 bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title="Reseta faturas que ficaram presas no status 'Processando'"
+                  >
+                    <RotateCcw size={15} />
+                    <span>Resetar Travados</span>
+                  </button>
+                )}
+
+                {/* Excluir Mês Filtrado */}
+                {bills.length > 0 && filterReference !== "all" && (
+                  <button
+                    onClick={() => removeMonthBills(filterReference)}
+                    className="flex items-center gap-2 px-3.5 py-2 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 hover:border-red-300 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title={`Excluir todas as faturas do mês ${filterReference}`}
+                  >
+                    <CalendarX2 size={15} />
+                    <span>Excluir Mês ({filterReference})</span>
+                  </button>
+                )}
+
+                {/* Excluir por Lista de UCs */}
+                {bills.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setDeleteUcListInput("");
+                      setIsDeleteByListModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-2 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 hover:border-red-300 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title="Excluir faturas colando uma lista de UCs"
+                  >
+                    <ListX size={15} />
+                    <span>Excluir p/ Lista</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Hidden native file inputs (Required for file picker triggers) */}
+            <input
+              type="file"
+              ref={fileInputEnergisaRef}
+              onChange={(e) => handleFileUpload(e, "ENERGISA")}
+              multiple
+              accept="application/pdf,image/*"
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={folderInputEnergisaRef}
+              onChange={(e) => handleFileUpload(e, "ENERGISA")}
+              webkitdirectory=""
+              directory=""
+              multiple
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={fileInputElektroRef}
+              onChange={(e) => handleFileUpload(e, "ELEKTRO")}
+              multiple
+              accept="application/pdf,image/*"
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={folderInputElektroRef}
+              onChange={(e) => handleFileUpload(e, "ELEKTRO")}
+              webkitdirectory=""
+              directory=""
+              multiple
+              className="hidden"
+            />
+          </div>
+        )}
       </header>
 
 
