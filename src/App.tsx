@@ -17017,6 +17017,7 @@ export default function App() {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">
                     Consumo Ponta (kWh)
+                  </label>
                   <input
                     type="text"
                     value={editingBill.consumoKwhPonta || ""}
