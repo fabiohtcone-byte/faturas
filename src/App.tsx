@@ -3707,6 +3707,8 @@ export default function App() {
   });
 
   const [searchUC, setSearchUC] = useState("");
+  const [fetchTrigger, setFetchTrigger] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   React.useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -5394,8 +5396,6 @@ export default function App() {
   const [isMercadoLivreModalOpen, setIsMercadoLivreModalOpen] = useState(false);
   const [mercadoLivreInput, setMercadoLivreInput] = useState("");
 
-  const [fetchTrigger, setFetchTrigger] = useState(0);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   const syncLocalToSupabase = async () => {
     if (!isSupabaseConfigured || !isAuthenticated) {
