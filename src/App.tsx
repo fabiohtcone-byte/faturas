@@ -5494,13 +5494,42 @@ export default function App() {
         const chunk = billsToUpload.slice(i, i + batchSize);
         const dbDataChunk = chunk.map(b => mapBillDataToDb(b, user.id));
         
-        const { error } = await supabase
-          .from("bills")
-          .upsert(dbDataChunk);
+        try {
+          const { error } = await supabase
+            .from("bills")
+            .upsert(dbDataChunk);
 
-        if (error) {
-          console.error("Erro ao enviar lote para o Supabase:", error);
-          throw error;
+          if (error) throw error;
+        } catch (err: any) {
+          // Fallback: se colunas novas não existem no Supabase, tenta enviar sem elas
+          if (
+            err.message?.includes("consumo_grupo_b") ||
+            err.message?.includes("data_vencimento") ||
+            err.message?.includes("mercado") ||
+            err.message?.includes("gerencia") ||
+            err.message?.includes("locin") ||
+            err.message?.includes("demanda_todos_periodos_kw") ||
+            err.code === "PGRST204"
+          ) {
+            console.warn("Colunas novas não encontradas no Supabase. Enviando lote sem elas...");
+            const cleanDbDataChunk = dbDataChunk.map(({
+              data_vencimento,
+              mercado,
+              gerencia,
+              locin,
+              consumo_grupo_b,
+              demanda_todos_periodos_kw,
+              ...rest
+            }: any) => rest);
+            
+            const { error: retryError } = await supabase
+              .from("bills")
+              .upsert(cleanDbDataChunk);
+              
+            if (retryError) throw retryError;
+          } else {
+            throw err;
+          }
         }
         
         uploadedCount += chunk.length;
