@@ -4332,13 +4332,7 @@ export default function App() {
           });
 
           setBills((prev) => {
-            const pendingBills = prev.filter(
-              (b) =>
-                b.status === "pending" ||
-                b.status === "processing" ||
-                b.status === "error",
-            );
-            return deduplicateBills([...pendingBills, ...updatedBills]);
+            return deduplicateBills([...prev, ...updatedBills]);
           });
 
           // If changes were made, update Supabase sequentially to avoid locking
@@ -4365,15 +4359,8 @@ export default function App() {
             }
           }
         } else {
-          setBills((prev) => {
-            const pendingBills = prev.filter(
-              (b) =>
-                b.status === "pending" ||
-                b.status === "processing" ||
-                b.status === "error",
-            );
-            return deduplicateBills([...pendingBills]);
-          });
+          // Mantém as faturas locais do SQLite caso o Supabase esteja vazio
+          setBills((prev) => prev);
         }
       } catch (err) {
         console.error("Erro inesperado ao buscar faturas:", err);
