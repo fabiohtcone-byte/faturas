@@ -1,9 +1,10 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import { ErrorBoundary } from './ErrorBoundary.tsx';
 import './index.css';
 
-// Add robust global listeners to intercept and gracefully catch expected network/fetch errors 
+// Add robust global listeners to intercept and gracefully catch expected network/fetch errors
 // to prevent uncaught rejections or promise errors in sandboxed/offline environments.
 if (typeof window !== 'undefined') {
   const originalError = console.error;
@@ -25,7 +26,7 @@ if (typeof window !== 'undefined') {
       (reason && reason.name === 'TypeError')
     ) {
       console.warn('Interceded and caught background connection issue gracefully:', msg);
-      event.preventDefault(); // Intercept and prevent bubbling
+      event.preventDefault();
     }
   });
 
@@ -40,6 +41,8 @@ if (typeof window !== 'undefined') {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

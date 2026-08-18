@@ -1,16 +1,53 @@
+# Dependências
 node_modules/
-build/
-dist/
-coverage/
-.DS_Store
-*.log
-.env*
-!.env.example
+jspdf/
+html2canvas/
 
-# Temporary test files and binaries
-*.docx
-test-docx-out/
-test2/
-tmp.txt
-test-*.ts
-process_ucs.js
+# Builds
+dist/
+build/
+
+# Banco de dados local SQLite e temporários
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+npm-debug.log*
+
+# Arquivos de ambiente locais (com possíveis segredos)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Scripts de debug, teste e OCR
+*.cjs
+*.mjs
+*.js
+*.txt
+*.py
+*.pdf
+pdfParserNode.ts
+pdfParser_test_stripped.ts
+test_*.ts
+test_*.mts
+tester.mts
+scratch/
+src/utils/pdfParser.clean.ts
+src/utils/pdfParser.ts.bak
+src/utils/pdfParser_no_worker.ts
+src/utils/pdfParser_temp.ts
+
+!src/**/*.ts
+!src/**/*.tsx
+!vite.config.ts
+
+# Sistema / IDEs
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

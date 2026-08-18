@@ -10,8 +10,10 @@ export interface BillData {
   mesReferencia: string;
   consumoKwhPonta: string;
   consumoKwhForaPonta: string;
+  consumoKwhGrupoB?: string;
   valorConsumoKwhPonta: string;
   valorConsumoKwhForaPonta: string;
+  valorConsumoKwhGrupoB?: string;
   valorTotal: string;
   cidade: string;
   demandaPotenciaNaoConsumidaPonta: string;
@@ -44,6 +46,11 @@ export interface BillData {
   modalidadeTarifaria?: string;
   subgrupo?: string;
   tipo?: string;
+  mercado?: string;
+  gerencia?: string;
+  locin?: string;
+  dataVencimento?: string;
+  createdAt?: number;
   status: 'pending' | 'processing' | 'completed' | 'error';
   error?: string;
   file?: File;

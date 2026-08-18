@@ -18,8 +18,8 @@ import {
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
-  AreaChart, 
-  Area, 
+  BarChart, 
+  Bar, 
   XAxis, 
   YAxis, 
   CartesianGrid, 
@@ -51,7 +51,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   const calc = (filterFn: (d: any) => boolean) => {
     const filtered = filteredData.filter(filterFn);
     const custo = filtered.reduce((acc, curr) => acc + curr.valorTotal, 0);
-    const consumo = filtered.reduce((acc, curr) => acc + curr.consumoPonta + curr.consumoForaPonta, 0);
+    const consumo = filtered.reduce((acc, curr) => acc + (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0), 0);
     return { custo, consumo, tarifa: consumo > 0 ? custo / consumo : 0 };
   };
 
@@ -66,7 +66,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   
   const hasCompensacao = (d: any) => d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0;
   
-  const isConsumoMinimo = (d: any) => isGrupoB(d) && (d.consumoPonta + d.consumoForaPonta) <= 100 && d.valorTotal < 150;
+  const isConsumoMinimo = (d: any) => isGrupoB(d) && ((d.consumoPonta || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0) + (d.consumoKwh || 0)) <= 100 && d.valorTotal < 150;
   const isPPP = (d: any) => isGrupoB(d) && UCS_PPP.has(String(d.uc));
   const isUsina = (d: any) => isGrupoB(d) && UCS_USINA.has(String(d.uc));
   const isOptanteB = (d: any) => isGrupoB(d) && (d.modalidadeTarifaria || '').toUpperCase().includes('OPTANTE');
@@ -118,7 +118,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
           custo: 0 
         };
       }
-      acc[name].consumo += curr.consumoPonta + curr.consumoForaPonta;
+      acc[name].consumo += (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0);
       acc[name].custo += curr.valorTotal;
       return acc;
     }, {} as Record<string, GroupedItem>);
@@ -146,12 +146,14 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
     });
   }, [data]);
 
-  const chartDomain = useMemo(() => {
+  const unifiedMax = useMemo(() => {
     const maxConsumo = Math.max(...monthlyData.map(d => d.consumo), 0);
     const maxCusto = Math.max(...monthlyData.map(d => d.custo), 0);
-    const max = Math.max(maxConsumo, maxCusto);
-    return [0, Math.ceil(max * 1.1)];
+    return Math.max(maxConsumo, maxCusto);
   }, [monthlyData]);
+
+  const chartDomainConsumo = [0, Math.ceil(unifiedMax * 1.1)];
+  const chartDomainCusto = [0, Math.ceil(unifiedMax * 1.1)];
 
   const sparklineDataAzul = monthlyData.map(m => ({ value: m.custo * 0.6 })); 
   const sparklineDataVerde = monthlyData.map(m => ({ value: m.custo * 0.4 })); 
@@ -358,39 +360,33 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
           </div>
           <div className="h-[165px] w-full relative z-10">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={monthlyData} margin={{ top: 20, right: 80, bottom: 10, left: 80 }}>
+              <BarChart data={monthlyData} margin={{ top: 20, right: 80, bottom: 10, left: 80 }}>
                 <defs>
                   <linearGradient id="colorConsumo" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.3}/>
                   </linearGradient>
                   <linearGradient id="colorCusto" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.3}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} horizontal={true} stroke="#e2e8f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} dy={10} padding={{ left: 10, right: 10 }} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} 
+                  dy={10} 
+                />
                 <YAxis 
-                  yAxisId="left" 
                   axisLine={false} 
                   tickLine={false} 
                   tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} 
                   dx={-10} 
-                  domain={chartDomain}
+                  domain={[0, Math.ceil(unifiedMax * 1.1)]}
                   tickFormatter={(val) => formatNumber(val, false, 0)}
-                  label={{ value: 'Consumo (kWh)', angle: -90, position: 'insideLeft', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
-                />
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} 
-                  dx={10} 
-                  domain={chartDomain}
-                  tickFormatter={(val) => formatNumber(val, false, 0)}
-                  label={{ value: 'Custo (R$)', angle: 90, position: 'insideRight', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
+                  label={{ value: 'Valores', angle: -90, position: 'insideLeft', offset: -55, style: { textAnchor: 'middle', fill: '#64748b', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' } }}
                 />
                 <Tooltip 
                   contentStyle={{ borderRadius: '20px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '16px 20px', fontWeight: 'bold', backgroundColor: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(12px)' }}
@@ -401,29 +397,19 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
                   labelStyle={{ color: '#64748b', marginBottom: '8px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
                   itemStyle={{ color: '#1e293b' }}
                 />
-                <Area 
-                  yAxisId="left" 
-                  type="monotone" 
+                <Bar 
                   dataKey="consumo" 
-                  stroke="#0ea5e9" 
-                  strokeWidth={4} 
-                  fillOpacity={1} 
                   fill="url(#colorConsumo)" 
-                  dot={{ r: 4, fill: '#fff', strokeWidth: 2, stroke: '#0ea5e9' }} 
-                  activeDot={{ r: 6, strokeWidth: 0, fill: '#0ea5e9' }} 
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={40}
                 />
-                <Area 
-                  yAxisId="right" 
-                  type="monotone" 
+                <Bar 
                   dataKey="custo" 
-                  stroke="#6366f1" 
-                  strokeWidth={4} 
-                  fillOpacity={1} 
                   fill="url(#colorCusto)" 
-                  dot={{ r: 4, fill: '#fff', strokeWidth: 2, stroke: '#6366f1' }} 
-                  activeDot={{ r: 6, strokeWidth: 0, fill: '#6366f1' }} 
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={40}
                 />
-              </AreaChart>
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
