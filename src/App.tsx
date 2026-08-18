@@ -5458,7 +5458,7 @@ export default function App() {
       while (!finished) {
         const { data, error } = await supabase
           .from("bills")
-          .select("id, updated_at")
+          .select("id")
           .range(from, to);
 
         if (error) throw error;
@@ -5475,10 +5475,10 @@ export default function App() {
         }
       }
 
-      const cloudMap = new Map(cloudBills.map(b => [b.id, b.updated_at]));
+      const cloudIds = new Set(cloudBills.map(b => b.id));
 
       // 3. Filtra as faturas locais que precisam ser enviadas (não existem no Supabase)
-      const billsToUpload = localBills.filter(b => !cloudMap.has(b.id));
+      const billsToUpload = localBills.filter(b => !cloudIds.has(b.id));
 
       if (billsToUpload.length === 0) {
         showAlert("Sucesso", "Todas as faturas locais já estão sincronizadas com o Supabase!");
