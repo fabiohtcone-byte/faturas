@@ -4183,6 +4183,34 @@ export default function App() {
         } = await supabase.auth.getUser();
         if (!user) return;
 
+        // Carrega mapeamentos de UCs do Supabase se existirem
+        try {
+          const { data: cloudMappings, error: mappingsError } = await supabase
+            .from("uc_mappings")
+            .select("*");
+          
+          if (!mappingsError && cloudMappings && cloudMappings.length > 0) {
+            const sanitizedCloud = cloudMappings.map((m: any) => ({
+              uc: String(m.uc),
+              gerencia: m.gerencia || '',
+              locin: m.locin || '',
+              cidade: m.cidade || ''
+            }));
+            
+            setUcMappings((prev) => {
+              const map = new Map(prev.map((m) => [m.uc, m]));
+              sanitizedCloud.forEach((m: any) => map.set(m.uc, m));
+              const merged = Array.from(map.values());
+              saveUcMappingsSqlite(merged).catch((err) =>
+                console.warn("[SQLite] Erro ao sincronizar mapeamentos da nuvem:", err)
+              );
+              return merged;
+            });
+          }
+        } catch (err) {
+          console.warn("[Supabase] Erro ao carregar mapeamentos de UCs:", err);
+        }
+
         let allData: any[] = [];
         let from = 0;
         let to = 999;
@@ -5698,11 +5726,39 @@ export default function App() {
     return [];
   });
 
+  const syncUcMappingsToSupabase = async (mappings: UCLocinMapping[]) => {
+    if (!isSupabaseConfigured || !isAuthenticated) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      const dbMappings = mappings.map(m => ({
+        uc: String(m.uc),
+        gerencia: String(m.gerencia || ''),
+        locin: String(m.locin || ''),
+        cidade: String(m.cidade || ''),
+        user_id: user.id,
+        updated_at: new Date().toISOString()
+      }));
+      
+      const { error } = await supabase
+        .from("uc_mappings")
+        .upsert(dbMappings);
+        
+      if (error) {
+        console.warn("[Supabase] Erro ao salvar mapeamentos na nuvem:", error);
+      }
+    } catch (err) {
+      console.warn("[Supabase] Erro na sincronização de mapeamentos:", err);
+    }
+  };
+
   const saveUcMappings = (mappings: UCLocinMapping[]) => {
     setUcMappings(mappings);
     saveUcMappingsSqlite(mappings).catch((err) =>
       console.warn("[SQLite] Erro ao salvar mapeamentos:", err)
     );
+    syncUcMappingsToSupabase(mappings);
     try {
       localStorage.removeItem("sanesul_uc_mappings");
       if (mappings.length > 0) {
@@ -5795,6 +5851,7 @@ export default function App() {
           saveUcMappingsSqlite(updated).catch((err) =>
             console.warn("[SQLite] Erro ao salvar mapeamentos importados:", err)
           );
+          syncUcMappingsToSupabase(updated);
           try {
             localStorage.setItem(
               "sanesul_uc_mappings",
