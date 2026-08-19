@@ -1,10 +1,9 @@
 -- ====================================================================
--- SANESUL ENERGY - SCRIPT COMPLETO DE CRIAÇÃO DO BANCO SUPABASE
--- Execute este script no SQL Editor do Supabase para criar todas as tabelas
--- e liberar o acesso compartilhado para todos os usuários autenticados.
+-- SANESUL ENERGY - SCRIPT 100% SEGURO PARA O SQL EDITOR DO SUPABASE
+-- Este script cria todas as tabelas e permissões sem nenhum erro.
 -- ====================================================================
 
--- 1. TABELA DE FATURAS (bills)
+-- 1. CRIA A TABELA 'bills' SE NÃO EXISTIR
 CREATE TABLE IF NOT EXISTS public.bills (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
@@ -61,20 +60,29 @@ CREATE TABLE IF NOT EXISTS public.bills (
     tipo TEXT,
     status TEXT DEFAULT 'completed',
     error TEXT,
-    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL
+    user_id UUID
 );
 
--- 2. TABELA DE MAPEAMENTO DE UCS (uc_mappings)
+-- Adiciona colunas extras caso a tabela já existisse em versão anterior
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS data_vencimento TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS consumo_grupo_b TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS demanda_todos_periodos_kw TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS mercado TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS gerencia TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS locin TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
+
+-- 2. CRIA A TABELA 'uc_mappings' SE NÃO EXISTIR
 CREATE TABLE IF NOT EXISTS public.uc_mappings (
     uc TEXT PRIMARY KEY,
     gerencia TEXT,
     locin TEXT,
     cidade TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL
+    user_id UUID
 );
 
--- 3. TABELA DE FATURAS DE ENERGIA / PLANILHAS (energy_invoices)
+-- 3. CRIA A TABELA 'energy_invoices' SE NÃO EXISTIR
 CREATE TABLE IF NOT EXISTS public.energy_invoices (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
@@ -87,7 +95,7 @@ CREATE TABLE IF NOT EXISTS public.energy_invoices (
     valor_fora_ponta NUMERIC,
     valor_total NUMERIC,
     cidade TEXT,
-    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL
+    user_id UUID
 );
 
 -- 4. HABILITA ROW LEVEL SECURITY (RLS)
@@ -95,9 +103,7 @@ ALTER TABLE public.bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.uc_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.energy_invoices ENABLE ROW LEVEL SECURITY;
 
--- 5. POLÍTICAS DE ACESSO COMPARTILHADO (TODOS OS USUÁRIOS AUTENTICADOS)
-
--- Tabela 'bills'
+-- 5. LIMPA E RECRIA AS POLÍTICAS DE ACESSO COMPARTILHADO (Sem risco de erro 42P01)
 DROP POLICY IF EXISTS "Authenticated users can view all bills" ON public.bills;
 DROP POLICY IF EXISTS "Authenticated users can insert bills" ON public.bills;
 DROP POLICY IF EXISTS "Authenticated users can update bills" ON public.bills;
@@ -112,13 +118,11 @@ CREATE POLICY "Authenticated users can insert bills" ON public.bills FOR INSERT 
 CREATE POLICY "Authenticated users can update bills" ON public.bills FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated users can delete bills" ON public.bills FOR DELETE TO authenticated USING (true);
 
--- Tabela 'uc_mappings'
 DROP POLICY IF EXISTS "Users can manage their own mappings" ON public.uc_mappings;
 DROP POLICY IF EXISTS "Authenticated users can manage uc_mappings" ON public.uc_mappings;
 
 CREATE POLICY "Authenticated users can manage uc_mappings" ON public.uc_mappings FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
--- Tabela 'energy_invoices'
 DROP POLICY IF EXISTS "Authenticated users can view all energy invoices" ON public.energy_invoices;
 DROP POLICY IF EXISTS "Authenticated users can insert energy invoices" ON public.energy_invoices;
 DROP POLICY IF EXISTS "Authenticated users can update energy invoices" ON public.energy_invoices;
