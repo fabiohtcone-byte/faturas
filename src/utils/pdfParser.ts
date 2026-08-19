@@ -345,7 +345,7 @@ export function parseBillText(text: string): Record<string, string> {
   if (concessionaria === "ENERGISA" && !isGrupoB) {
     // Faturas Grupo A geralmente listam tarifas com 6 casas decimais
     let cleanTextForPairing = text;
-    const historyIdx = text.search(/(CONSUMO\s+DOS\s+ÚLTIMOS|INDICADORES\s+DE\s+QUALIDADE|LIMITES\s+DE\s+CONTINUIDADE|FIC\s+DMIC\s+DICRI|CONSUMO\s+DOS\s+13)/i);
+    const historyIdx = text.search(/(HIST.RICO\s+DE\s+(?:FATURAMENTO|CONSUMO)|CONSUMO\s+DOS\s+ÚLTIMOS|INDICADORES\s+DE\s+QUALIDADE|LIMITES\s+DE\s+CONTINUIDADE|FIC\s+DMIC\s+DICRI|CONSUMO\s+DOS\s+13)/i);
     if (historyIdx !== -1) {
         cleanTextForPairing = text.substring(0, historyIdx);
     }
@@ -702,6 +702,12 @@ export function parseBillText(text: string): Record<string, string> {
           for (let i = 0; i < demandaPairs.length; i++) {
             for (let j = i + 1; j < demandaPairs.length; j++) {
               const p1 = demandaPairs[i], p2 = demandaPairs[j];
+              const larger = p1.q > p2.q ? p1 : p2;
+              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
+              const larger = p1.q > p2.q ? p1 : p2;
+              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
               if (contForaPonta > 0 && Math.abs(p1.q + p2.q - contForaPonta) < 1.0) {
                 bestPair = p1.q > p2.q ? { med: p1, nc: p2 } : { med: p2, nc: p1 };
                 break;
@@ -726,6 +732,10 @@ export function parseBillText(text: string): Record<string, string> {
               const p1 = demandaPairs[i], p2 = demandaPairs[j];
               const larger = p1.q > p2.q ? p1 : p2;
               const smaller = p1.q > p2.q ? p2 : p1;
+              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
+              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
               if (contForaPonta > 0 && Math.abs(larger.q - smaller.q - contForaPonta) < 1.0) {
                 if (!bestUlt || smaller.t > bestUlt.ult.t) {
                   bestUlt = { med: larger, ult: smaller };
@@ -759,6 +769,9 @@ export function parseBillText(text: string): Record<string, string> {
           for (let i = 0; i < pontaPairs.length; i++) {
             for (let j = i + 1; j < pontaPairs.length; j++) {
               const p1 = pontaPairs[i], p2 = pontaPairs[j];
+              const larger = p1.q > p2.q ? p1 : p2;
+              const knownQ = demandaPotenciaMedidaPonta !== "0" && demandaPotenciaMedidaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
               if (contPonta > 0 && Math.abs(p1.q + p2.q - contPonta) < 1.0) {
                 bestNcPonta = p1.q > p2.q ? { med: p1, nc: p2 } : { med: p2, nc: p1 };
                 break;
@@ -782,6 +795,8 @@ export function parseBillText(text: string): Record<string, string> {
               const p1 = pontaPairs[i], p2 = pontaPairs[j];
               const larger = p1.q > p2.q ? p1 : p2;
               const smaller = p1.q > p2.q ? p2 : p1;
+              const knownQ = demandaPotenciaMedidaPonta !== "0" && demandaPotenciaMedidaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
               if (contPonta > 0 && Math.abs(larger.q - smaller.q - contPonta) < 1.0) {
                 if (!bestUltPonta || smaller.t > bestUltPonta.ult.t) {
                   bestUltPonta = { med: larger, ult: smaller };
