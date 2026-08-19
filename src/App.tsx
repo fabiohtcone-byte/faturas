@@ -4143,7 +4143,6 @@ export default function App() {
         // 2. Carrega todas as faturas paginadas com fetch nativo
         let allData: any[] = [];
         let from = 0;
-        let to = 999;
         let finished = false;
 
         while (!finished && !isCancelled) {
@@ -4154,12 +4153,10 @@ export default function App() {
 
           if (chunk && chunk.length > 0) {
             allData = [...allData, ...chunk];
-            console.log(`[Supabase REST] Chunk: ${chunk.length} — total: ${allData.length}`);
             if (chunk.length < 1000) {
               finished = true;
             } else {
               from += 1000;
-              to += 1000;
             }
           } else {
             finished = true;
@@ -4204,29 +4201,8 @@ export default function App() {
           }
 
           // Apply fixes & deduplicate
-          let hasChanges = false;
-          const updatedBills = mappedBills.map((b, i) => {
+          const updatedBills = mappedBills.map((b) => {
             let updatedBill = { ...b };
-            let changed = false;
-
-            const dbBill = allData[i];
-            if (UCS_OPER.has(String(b.uc))) {
-              if (dbBill.tipo !== "OPER") {
-                changed = true;
-              }
-            } else if (UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc))) {
-              let expectedMod = dbBill.modalidade_tarifaria || "";
-              if (!expectedMod.toUpperCase().includes("LIVRE")) {
-                expectedMod = expectedMod ? `${expectedMod} - LIVRE` : "LIVRE";
-              }
-              if (
-                dbBill.modalidade_tarifaria !== expectedMod ||
-                dbBill.tipo !== "LIVRE"
-              ) {
-                changed = true;
-              }
-            }
-
             // Fix Elektro/Energisa UC - filename is the authoritative UC
             const upperConc2 = (b.concessionaria || "").toUpperCase();
             const isElektroOrEnergisa =
@@ -4235,54 +4211,15 @@ export default function App() {
               const solvedUc = extractUcFromFileName(b.fileName, b.uc);
               if (solvedUc && b.uc !== solvedUc) {
                 updatedBill.uc = solvedUc;
-                changed = true;
               }
             }
 
             // Fix UC 117384 - FÁTIMA DO SUL
             if (b.uc === "93604305181" && b.cidade !== "FÁTIMA DO SUL") {
               updatedBill.cidade = "FÁTIMA DO SUL";
-              changed = true;
             }
 
-            // Fix 45839/2025 or other Excel dates
-            if (
-              updatedBill.mesReferencia === "45839" ||
-              updatedBill.mesReferencia === "45839/2025"
-            ) {
-              updatedBill.mesReferencia = "Julho";
-              updatedBill.anoLeitura = "2025";
-              changed = true;
-            } else if (
-              /^\d{5}$/.test(updatedBill.mesReferencia) &&
-              parseInt(updatedBill.mesReferencia) > 40000
-            ) {
-              const excelDate = parseInt(updatedBill.mesReferencia);
-              const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
-              const monthNames = [
-                "Janeiro",
-                "Fevereiro",
-                "Março",
-                "Abril",
-                "Maio",
-                "Junho",
-                "Julho",
-                "Agosto",
-                "Setembro",
-                "Outubro",
-                "Novembro",
-                "Dezembro",
-              ];
-              updatedBill.mesReferencia = monthNames[jsDate.getUTCMonth()];
-              updatedBill.anoLeitura = jsDate.getUTCFullYear().toString();
-              changed = true;
-            }
-
-            if (changed) {
-              hasChanges = true;
-              return updatedBill;
-            }
-            return b;
+            return updatedBill;
           });
 
           setBills((prev) => {
@@ -4301,35 +4238,11 @@ export default function App() {
             totalUcs: new Set(updatedBills.map(b => b.uc).filter(Boolean)).size,
             lastSync: new Date(),
           });
-
-          // If changes were made, update Supabase sequentially to avoid locking
-          if (hasChanges) {
-            const changedBills = updatedBills.filter(
-              (b, i) =>
-                b.uc !== mappedBills[i].uc ||
-                b.mesReferencia !== mappedBills[i].mesReferencia ||
-                b.anoLeitura !== mappedBills[i].anoLeitura ||
-                b.modalidadeTarifaria !==
-                  (allData[i].modalidade_tarifaria || "") ||
-                b.tipo !== (allData[i].tipo || ""),
-            );
-            for (const billToSave of changedBills) {
-              try {
-                const dbData = mapBillDataToDb(billToSave);
-                await supabase
-                  .from("bills")
-                  .update(dbData)
-                  .eq("id", billToSave.id);
-              } catch (err) {
-                console.error("Erro ao atualizar dados no Supabase:", err);
-              }
-            }
-          }
         }
       } catch (err) {
         console.error("[Supabase] Erro inesperado ao buscar faturas:", err);
       } finally {
-        if (!isCancelled) setIsSyncing(false);
+        setIsSyncing(false);
       }
     };
 
