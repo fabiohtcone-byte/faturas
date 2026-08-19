@@ -4148,7 +4148,7 @@ export default function App() {
         while (!finished && !isCancelled) {
           const chunk = await supaFetch(
             'bills',
-            `select=*&order=created_at.desc&offset=${from}&limit=1000`
+            `select=*&order=created_at.desc,id.desc&offset=${from}&limit=1000`
           );
 
           if (chunk && chunk.length > 0) {
@@ -7353,10 +7353,10 @@ export default function App() {
     if (!monitoringResults) return [];
     const meses = new Set<string>();
     monitoringResults.changedUCs.forEach((uc: any) => {
-      uc.monthlyData.forEach((m: any) => meses.add(m.mes + '/' + m.ano));
+      uc.monthlyData.forEach((m: any) => meses.add(formatMonth(m.mes) + '/' + m.ano));
     });
     monitoringResults.unchangedUCs.forEach((uc: any) => {
-      uc.monthlyData.forEach((m: any) => meses.add(m.mes + '/' + m.ano));
+      uc.monthlyData.forEach((m: any) => meses.add(formatMonth(m.mes) + '/' + m.ano));
     });
     return Array.from(meses).sort((a, b) => {
       const partsA = a.split('/');
@@ -7373,7 +7373,7 @@ export default function App() {
 
     const processUcData = (ucDataList: any[]) => {
       return ucDataList.map((uc) => {
-        const filteredMonthly = uc.monthlyData.filter((m: any) => (m.mes + '/' + m.ano) === selectedMonitoramentoMes);
+        const filteredMonthly = uc.monthlyData.filter((m: any) => (formatMonth(m.mes) + '/' + m.ano) === selectedMonitoramentoMes);
         const totalEconomy = filteredMonthly.reduce((acc: number, curr: any) => acc + curr.economy, 0);
         const totalCurrent = filteredMonthly.reduce((acc: number, curr: any) => acc + curr.currentTotal, 0);
         return {
