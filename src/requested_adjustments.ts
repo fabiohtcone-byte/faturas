@@ -36,7 +36,6 @@ export const REQUESTED_ADJUSTMENTS: Record<string, { p: number; fp: number }> = 
   "87312605145": { p: 51, fp: 55 },
   "1626524": { p: 75.5, fp: 81.5 },
   "138266605137": { p: 38, fp: 45 },
-  "10926205169": { p: 0, fp: 0 },
 };
 
 export const ORIGINAL_CONTRATADAS: Record<string, { p: number; fp: number }> = {
@@ -77,5 +76,4 @@ export const ORIGINAL_CONTRATADAS: Record<string, { p: number; fp: number }> = {
   "87312605145": { p: 53, fp: 53 },
   "1626524": { p: 78, fp: 79 },
   "138266605137": { p: 42, fp: 42 },
-  "10926205169": { p: 0, fp: 0 },
 };

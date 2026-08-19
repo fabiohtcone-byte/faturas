@@ -39,18 +39,6 @@ import {
 import * as XLSX from "xlsx";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import { UC_MIGRATION_MAP } from "./uc_migration";
-import {
-  checkSqliteHealth,
-  fetchBillsSqlite,
-  saveBillSqlite,
-  saveBillsBatchSqlite,
-  deleteBillSqlite,
-  deleteBillsBatchSqlite,
-  clearAllBillsSqlite,
-  fetchUcMappingsSqlite,
-  saveUcMappingsSqlite,
-  type SqliteHealth,
-} from "./lib/sqliteApi";
 import { REQUESTED_ADJUSTMENTS, ORIGINAL_CONTRATADAS } from "./requested_adjustments";
 import {
   Upload,
@@ -2325,14 +2313,12 @@ const VisaoGeralDashboard = ({
   handleLogout,
   hasApiKey,
   handleSelectKey,
-  sqliteHealth,
 }: {
   data: any[];
   setCurrentPage: (page: string) => void;
   handleLogout: () => void;
   hasApiKey: boolean;
   handleSelectKey: () => void;
-  sqliteHealth?: SqliteHealth;
 }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
   const [hoveredLivreType, setHoveredLivreType] = useState<
@@ -2924,22 +2910,12 @@ const VisaoGeralDashboard = ({
         <Logo className="h-10" />
         <div className="flex items-center gap-4">
           <div
-            className={`flex items-center gap-2 px-3 py-2 border rounded-xl text-xs font-semibold shadow-sm ${
-              sqliteHealth?.connected
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                : "bg-amber-50 text-amber-700 border-amber-200"
-            }`}
-            title={
-              sqliteHealth?.connected
-                ? `Banco de Dados Local SQLite Ativo: ${sqliteHealth.totalBills || 0} faturas salvas (${sqliteHealth.totalUcs || 0} UCs)`
-                : "Banco de Dados Local Desconectado (iniciando...)"
-            }
+            className="flex items-center gap-2 px-3 py-2 border rounded-xl text-xs font-semibold shadow-sm bg-sky-50 text-sky-800 border-sky-200"
+            title={`Banco de Dados Supabase Cloud: ${data.length.toLocaleString()} faturas carregadas`}
           >
-            <Database size={14} className={sqliteHealth?.connected ? "text-emerald-600" : "text-amber-600"} />
+            <Cloud size={14} className="text-sky-600" />
             <span>
-              {sqliteHealth?.connected
-                ? `SQLite: ${sqliteHealth.totalBills || 0} faturas`
-                : "SQLite Offline"}
+              {`Supabase: ${data.length.toLocaleString()} faturas`}
             </span>
           </div>
           <button
@@ -4019,112 +3995,36 @@ export default function App() {
     }
   });
 
-    const [sqliteHealth, setSqliteHealth] = useState<SqliteHealth>({
-    connected: false,
+  // Estado de sincronização com o Supabase Cloud
+  const [supabaseHealth, setSupabaseHealth] = useState({
+    connected: isSupabaseConfigured,
     totalBills: 0,
     totalUcs: 0,
-    totalMappings: 0,
+    lastSync: new Date(),
   });
-  const isSqliteInitializedRef = React.useRef(false);
 
-  // Check SQLite health & load bills on startup
+  // Limpeza e sanitização inicial de UCs no armazenamento
   useEffect(() => {
-    let isMounted = true;
-    const initSqlite = async () => {
-      try {
-        // Run one-time localStorage sanitization for UC 12031 -> 179291005130
-        try {
-          ["PPP_UCS_OVERRIDE", "USINA_UCS_OVERRIDE"].forEach((key) => {
-            const val = localStorage.getItem(key);
-            if (val && val.includes("179291005130")) {
-              const arr = JSON.parse(val);
-              if (Array.isArray(arr)) {
-                const replaced = arr.map((x) => (x === "179291005130" ? "179291005130" : x));
-                localStorage.setItem(key, JSON.stringify(replaced));
-              }
-            }
-          });
-          const valMappings = localStorage.getItem("sanesul_uc_mappings");
-          if (valMappings && valMappings.includes("179291005130")) {
-            const arr = JSON.parse(valMappings);
-            if (Array.isArray(arr)) {
-              const replaced = arr.map((m: any) => (m.uc === "179291005130" ? { ...m, uc: "179291005130" } : m));
-              localStorage.setItem("sanesul_uc_mappings", JSON.stringify(replaced));
-            }
-          }
-        } catch (e) {}
-
-        const health = await checkSqliteHealth();
-        if (!isMounted) return;
-        setSqliteHealth(health);
-
-        if (health.connected) {
-          const dbBills = await fetchBillsSqlite();
-          if (!isMounted) return;
-
-          if (dbBills && dbBills.length > 0) {
-            const sanitizedDbBills = dbBills.map((b) => (b.uc === "179291005130" ? { ...b, uc: "179291005130" } : b));
-            console.log(`[SQLite] Carregadas ${sanitizedDbBills.length} faturas do banco de dados local.`);
-            setBills((prev) => {
-              const pending = prev.filter((b) => b.status !== "completed");
-              return deduplicateBills([...sanitizedDbBills, ...pending]);
-            });
-            // Synchronize localStorage with current SQLite DB
-            try {
-              localStorage.setItem("sanesul_bills", JSON.stringify(sanitizedDbBills));
-            } catch (e) {}
-          } else {
-            // If SQLite has 0 bills, migrate from localStorage if present
-            const savedLocal = localStorage.getItem("sanesul_bills");
-            if (savedLocal) {
-              try {
-                const parsed = JSON.parse(savedLocal);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                  const completedOnly = parsed
-                    .filter((b: any) => b.status === "completed")
-                    .map((b: any) => (b.uc === "179291005130" ? { ...b, uc: "179291005130" } : b));
-                  if (completedOnly.length > 0) {
-                    console.log(`[SQLite] Migrando ${completedOnly.length} faturas para o banco SQLite...`);
-                    await saveBillsBatchSqlite(completedOnly);
-                    const newHealth = await checkSqliteHealth();
-                    if (isMounted) setSqliteHealth(newHealth);
-                  }
-                }
-              } catch (err) {
-                console.warn("[SQLite] Erro ao migrar faturas do localStorage:", err);
-              }
-            }
-          }
-
-          // Load UC mappings from SQLite
-          const dbMappings = await fetchUcMappingsSqlite();
-          if (isMounted && dbMappings && dbMappings.length > 0) {
-            const sanitizedMappings = dbMappings.map((m: any) => (m.uc === "179291005130" ? { ...m, uc: "179291005130" } : m));
-            setUcMappings((prev) => {
-              const map = new Map(prev.map((m) => [m.uc, m]));
-              sanitizedMappings.forEach((m: any) => map.set(m.uc, m));
-              return Array.from(map.values());
-            });
+    try {
+      ["PPP_UCS_OVERRIDE", "USINA_UCS_OVERRIDE"].forEach((key) => {
+        const val = localStorage.getItem(key);
+        if (val && val.includes("179291005130")) {
+          const arr = JSON.parse(val);
+          if (Array.isArray(arr)) {
+            const replaced = arr.map((x) => (x === "179291005130" ? "179291005130" : x));
+            localStorage.setItem(key, JSON.stringify(replaced));
           }
         }
-        isSqliteInitializedRef.current = true;
-      } catch (err) {
-        isSqliteInitializedRef.current = true;
-        console.warn("[SQLite] Erro na conexão com banco SQLite:", err);
+      });
+      const valMappings = localStorage.getItem("sanesul_uc_mappings");
+      if (valMappings && valMappings.includes("179291005130")) {
+        const arr = JSON.parse(valMappings);
+        if (Array.isArray(arr)) {
+          const replaced = arr.map((m: any) => (m.uc === "179291005130" ? { ...m, uc: "179291005130" } : m));
+          localStorage.setItem("sanesul_uc_mappings", JSON.stringify(replaced));
+        }
       }
-    };
-
-    initSqlite();
-    const interval = setInterval(async () => {
-      if (!isMounted) return;
-      const h = await checkSqliteHealth();
-      if (isMounted) setSqliteHealth(h);
-    }, 15000);
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
+    } catch (e) {}
   }, []);
 
   const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
@@ -4216,22 +4116,11 @@ export default function App() {
     let isCancelled = false;
 
     const fetchBills = async () => {
-      if (!isSupabaseConfigured || !isAuthenticated) return;
+      if (!isSupabaseConfigured) return;
 
       try {
         setIsSyncing(true);
-
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        
-        if (!session?.user) {
-          console.warn("[Supabase] Aguardando sessão ativa para carregar faturas...");
-          if (!isCancelled) setIsSyncing(false);
-          return;
-        }
-
-        console.log(`[Supabase] Carregando faturas da nuvem para o usuário: ${session.user.email}`);
+        console.log("[Supabase Cloud] Carregando dados da nuvem...");
 
         // 1. Carrega mapeamentos de UCs do Supabase se existirem
         try {
@@ -4251,9 +4140,6 @@ export default function App() {
               const map = new Map(prev.map((m) => [m.uc, m]));
               sanitizedCloud.forEach((m: any) => map.set(m.uc, m));
               const merged = Array.from(map.values());
-              saveUcMappingsSqlite(merged).catch((err) =>
-                console.warn("[SQLite] Erro ao sincronizar mapeamentos da nuvem:", err)
-              );
               return merged;
             });
           }
@@ -4295,7 +4181,7 @@ export default function App() {
 
         if (isCancelled) return;
 
-        console.log(`[Supabase] Total de faturas recebidas da nuvem: ${allData.length}`);
+        console.log(`[Supabase Cloud] Total de faturas recebidas: ${allData.length}`);
 
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
@@ -4422,6 +4308,13 @@ export default function App() {
             localStorage.setItem("sanesul_bills", JSON.stringify(updatedBills));
           } catch (e) {}
 
+          setSupabaseHealth({
+            connected: true,
+            totalBills: updatedBills.length,
+            totalUcs: new Set(updatedBills.map(b => b.uc).filter(Boolean)).size,
+            lastSync: new Date(),
+          });
+
           // If changes were made, update Supabase sequentially to avoid locking
           if (hasChanges) {
             const changedBills = updatedBills.filter(
@@ -4435,7 +4328,7 @@ export default function App() {
             );
             for (const billToSave of changedBills) {
               try {
-                const dbData = mapBillDataToDb(billToSave, session.user.id);
+                const dbData = mapBillDataToDb(billToSave);
                 await supabase
                   .from("bills")
                   .update(dbData)
@@ -4464,28 +4357,27 @@ export default function App() {
 
   React.useEffect(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
+    saveTimeoutRef.current = setTimeout(async () => {
       try {
         const completedBillsList = bills.filter((b) => b.status === "completed");
 
-        // Save batch to SQLite database ONLY after SQLite has finished initial load
-        if (isSqliteInitializedRef.current && completedBillsList.length > 0) {
-          saveBillsBatchSqlite(completedBillsList)
-            .then(() => checkSqliteHealth().then(setSqliteHealth))
-            .catch((err) => console.warn("[SQLite] Falha ao persistir faturas no banco:", err));
+        // Direct auto-save batch to Supabase Cloud
+        if (isSupabaseConfigured && completedBillsList.length > 0) {
+          try {
+            const dbData = completedBillsList.map(b => mapBillDataToDb(b));
+            for (let i = 0; i < dbData.length; i += 100) {
+              const chunk = dbData.slice(i, i + 100);
+              await supabase.from("bills").upsert(chunk, { onConflict: "id" });
+            }
+          } catch (cloudErr) {
+            console.warn("[Supabase] Erro ao persistir faturas na nuvem:", cloudErr);
+          }
         }
 
-        const billsToSave = bills
-          .filter((b) => {
-            if (isSupabaseConfigured && isAuthenticated) {
-              return b.status !== "completed";
-            }
-            return true;
-          })
-          .map((b) => {
-            const { file, ...rest } = b as any;
-            return rest;
-          });
+        const billsToSave = bills.map((b) => {
+          const { file, ...rest } = b as any;
+          return rest;
+        });
         localStorage.setItem("sanesul_bills", JSON.stringify(billsToSave));
 
         // Save files to localforage ONLY if files changed to prevent UI freezing
@@ -4508,7 +4400,7 @@ export default function App() {
       } catch (e) {
         console.warn("LocalStorage limit reached, skipping save:", e);
       }
-    }, 1000); // 1 segundo de debounce
+    }, 1500);
   }, [bills, isAuthenticated]);
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -5511,144 +5403,13 @@ export default function App() {
   const [mercadoLivreInput, setMercadoLivreInput] = useState("");
 
 
-  const syncLocalToSupabase = async () => {
-    if (!isSupabaseConfigured || !isAuthenticated) {
-      showAlert("Atenção", "O Supabase não está configurado ou você não está autenticado.");
-      return;
-    }
-
-    try {
-      setIsSyncing(true);
-      
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        showAlert("Atenção", "Usuário não autenticado no Supabase.");
-        setIsSyncing(false);
-        return;
-      }
-
-      // 1. Carrega todas as faturas locais do SQLite
-      showAlert("Sincronização", "Lendo faturas do banco de dados local SQLite...");
-      const localBills = await fetchBillsSqlite();
-      if (!localBills || localBills.length === 0) {
-        showAlert("Sincronização", "Nenhuma fatura encontrada no SQLite local para sincronizar.");
-        setIsSyncing(false);
-        return;
-      }
-
-      // 2. Busca todas as faturas existentes no Supabase para evitar duplicados
-      showAlert("Sincronização", "Buscando faturas já existentes na nuvem...");
-      let cloudBills: any[] = [];
-      let from = 0;
-      let to = 999;
-      let finished = false;
-
-      while (!finished) {
-        const { data, error } = await supabase
-          .from("bills")
-          .select("id")
-          .range(from, to);
-
-        if (error) throw error;
-        if (data && data.length > 0) {
-          cloudBills = [...cloudBills, ...data];
-          if (data.length < 1000) {
-            finished = true;
-          } else {
-            from += 1000;
-            to += 1000;
-          }
-        } else {
-          finished = true;
-        }
-      }
-
-      const cloudIds = new Set(cloudBills.map(b => b.id));
-
-      // 3. Filtra as faturas locais que precisam ser enviadas (não existem no Supabase)
-      const billsToUpload = localBills.filter(b => !cloudIds.has(b.id));
-
-      if (billsToUpload.length === 0) {
-        showAlert("Sucesso", "Todas as faturas locais já estão sincronizadas com o Supabase!");
-        setIsSyncing(false);
-        return;
-      }
-
-      // 4. Faz o upload em lotes (ex: 50 por vez)
-      const batchSize = 50;
-      let uploadedCount = 0;
-      
-      for (let i = 0; i < billsToUpload.length; i += batchSize) {
-        const chunk = billsToUpload.slice(i, i + batchSize);
-        const dbDataChunk = chunk.map(b => mapBillDataToDb(b, user.id));
-        
-        try {
-          const { error } = await supabase
-            .from("bills")
-            .upsert(dbDataChunk);
-
-          if (error) throw error;
-        } catch (err: any) {
-          // Fallback: se colunas novas não existem no Supabase, tenta enviar sem elas
-          if (
-            err.message?.includes("consumo_grupo_b") ||
-            err.message?.includes("data_vencimento") ||
-            err.message?.includes("mercado") ||
-            err.message?.includes("gerencia") ||
-            err.message?.includes("locin") ||
-            err.message?.includes("demanda_todos_periodos_kw") ||
-            err.code === "PGRST204"
-          ) {
-            console.warn("Colunas novas não encontradas no Supabase. Enviando lote sem elas...");
-            const cleanDbDataChunk = dbDataChunk.map(({
-              data_vencimento,
-              mercado,
-              gerencia,
-              locin,
-              consumo_grupo_b,
-              demanda_todos_periodos_kw,
-              ...rest
-            }: any) => rest);
-            
-            const { error: retryError } = await supabase
-              .from("bills")
-              .upsert(cleanDbDataChunk);
-              
-            if (retryError) throw retryError;
-          } else {
-            throw err;
-          }
-        }
-        
-        uploadedCount += chunk.length;
-      }
-
-      showAlert("Sucesso", `Sincronização concluída! ${uploadedCount} faturas foram enviadas para o Supabase.`);
-      
-      // Recarrega as faturas
-      setFetchTrigger(prev => prev + 1);
-    } catch (err: any) {
-      console.error("Erro na sincronização:", err);
-      showAlert("Erro", `Falha ao sincronizar com o Supabase: ${err.message || err}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
   const handleSyncCloud = async () => {
-    if (!isSupabaseConfigured || !isAuthenticated) {
-      showAlert("Atenção", "O Supabase não está configurado ou você não está autenticado.");
+    if (!isSupabaseConfigured) {
+      showAlert("Atenção", "O Supabase não está configurado.");
       return;
     }
-
-    if (sqliteHealth.connected) {
-      await syncLocalToSupabase();
-    } else {
-      showAlert("Sincronização", "Recarregando faturas diretamente da nuvem Supabase...");
-      setFetchTrigger((prev) => prev + 1);
-    }
+    showAlert("Sincronização", "Recarregando faturas diretamente da nuvem Supabase...");
+    setFetchTrigger((prev) => prev + 1);
   };
 
   const saveMercadoLivreUcs = () => {
@@ -5729,13 +5490,8 @@ export default function App() {
       async () => {
         setIsDeletingByList(true);
         try {
-          // Delete batch from SQLite
-          deleteBillsBatchSqlite(targetBillIds)
-            .then(() => checkSqliteHealth().then(setSqliteHealth))
-            .catch((err) => console.warn("[SQLite] Erro ao deletar lote por lista de UCs:", err));
-
           // Delete from Supabase if configured
-          if (isSupabaseConfigured && isAuthenticated) {
+          if (isSupabaseConfigured) {
             try {
               let error = null;
               for (let i = 0; i < targetBillIds.length; i += 100) {
@@ -5831,9 +5587,6 @@ export default function App() {
 
   const saveUcMappings = (mappings: UCLocinMapping[]) => {
     setUcMappings(mappings);
-    saveUcMappingsSqlite(mappings).catch((err) =>
-      console.warn("[SQLite] Erro ao salvar mapeamentos:", err)
-    );
     syncUcMappingsToSupabase(mappings);
     try {
       localStorage.removeItem("sanesul_uc_mappings");
@@ -5924,9 +5677,6 @@ export default function App() {
           const existingMap = new Map(prev.map((m) => [m.uc, m]));
           importedMappings.forEach((m) => existingMap.set(m.uc, m));
           const updated = Array.from(existingMap.values());
-          saveUcMappingsSqlite(updated).catch((err) =>
-            console.warn("[SQLite] Erro ao salvar mapeamentos importados:", err)
-          );
           syncUcMappingsToSupabase(updated);
           try {
             localStorage.setItem(
@@ -7844,9 +7594,11 @@ export default function App() {
       let isDuplicateInCurrentList = !!duplicateInClosure;
 
       if (duplicateInClosure) {
-        // We found a duplicate that existed before this upload batch.
-        // Delete it from SQLite so it gets properly replaced by this new extraction.
-        await deleteBillSqlite(duplicateInClosure.id);
+        if (isSupabaseConfigured) {
+          try {
+            await supabase.from("bills").delete().eq("id", duplicateInClosure.id);
+          } catch (e) {}
+        }
       }
 
       if (result.uc && UCS_OPER.has(String(result.uc))) {
@@ -8588,12 +8340,7 @@ export default function App() {
   };
 
   const removeBill = async (id: string) => {
-    // Delete from SQLite database
-    deleteBillSqlite(id)
-      .then(() => checkSqliteHealth().then(setSqliteHealth))
-      .catch((err) => console.warn("[SQLite] Erro ao deletar fatura do banco:", err));
-
-    if (isSupabaseConfigured && isAuthenticated) {
+    if (isSupabaseConfigured) {
       try {
         const { error } = await supabase.from("bills").delete().eq("id", id);
         if (error) console.error("Erro ao deletar fatura do Supabase:", error);
@@ -8619,14 +8366,7 @@ export default function App() {
   };
 
   const removeSelectedBills = async () => {
-    if (selectedBills.length > 0) {
-      // Delete batch from SQLite
-      deleteBillsBatchSqlite(selectedBills)
-        .then(() => checkSqliteHealth().then(setSqliteHealth))
-        .catch((err) => console.warn("[SQLite] Erro ao deletar lote do banco:", err));
-    }
-
-    if (isSupabaseConfigured && isAuthenticated && selectedBills.length > 0) {
+    if (isSupabaseConfigured && selectedBills.length > 0) {
       try {
         let error = null;
         for (let i = 0; i < selectedBills.length; i += 100) {
@@ -8672,12 +8412,7 @@ export default function App() {
     
     if (ucBillIds.length === 0) return;
 
-    // Delete batch from SQLite
-    deleteBillsBatchSqlite(ucBillIds)
-      .then(() => checkSqliteHealth().then(setSqliteHealth))
-      .catch((err) => console.warn("[SQLite] Erro ao deletar faturas da UC do banco:", err));
-
-    if (isSupabaseConfigured && isAuthenticated) {
+    if (isSupabaseConfigured) {
       try {
         let error = null;
         for (let i = 0; i < ucBillIds.length; i += 100) {
@@ -8730,12 +8465,7 @@ export default function App() {
     );
     if (!confirmed) return;
 
-    // Delete batch from SQLite
-    deleteBillsBatchSqlite(monthBillIds)
-      .then(() => checkSqliteHealth().then(setSqliteHealth))
-      .catch((err) => console.warn("[SQLite] Erro ao deletar faturas do mês:", err));
-
-    if (isSupabaseConfigured && isAuthenticated) {
+    if (isSupabaseConfigured) {
       try {
         let error = null;
         for (let i = 0; i < monthBillIds.length; i += 100) {
@@ -9949,7 +9679,6 @@ export default function App() {
         handleLogout={handleLogout}
         hasApiKey={hasApiKey}
         handleSelectKey={handleSelectKey}
-        sqliteHealth={sqliteHealth}
       />
     );
   }
@@ -9964,74 +9693,45 @@ export default function App() {
             <Logo className="h-12" />
             <div className="hidden sm:flex items-center gap-2 pl-4 border-l border-slate-200">
               <span className="flex h-2.5 w-2.5 relative">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                  sqliteHealth.connected || (isSupabaseConfigured && isAuthenticated) ? "bg-emerald-400" : "bg-amber-400"
-                }`}></span>
-                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                  sqliteHealth.connected || (isSupabaseConfigured && isAuthenticated) ? "bg-emerald-500" : "bg-amber-500"
-                }`}></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
               <span className="text-[11px] font-bold text-slate-600 tracking-wider uppercase">
-                {sqliteHealth.connected
-                  ? "Sistema Operacional (SQLite)"
-                  : isSupabaseConfigured && isAuthenticated
-                  ? "Sistema Operacional (Nuvem)"
-                  : "Modo Local"}
+                Sistema Operacional (Nuvem Supabase)
               </span>
             </div>
           </div>
 
           {/* Quick Actions & System Controls */}
           <div className="flex flex-wrap gap-2.5 items-center">
-            {/* Database Health Badge */}
+            {/* Supabase Database Badge */}
             <div
-              className={`flex items-center gap-2 px-3.5 py-2 border rounded-xl text-xs font-semibold shadow-xs transition-all ${
-                sqliteHealth.connected
-                  ? "bg-emerald-50/80 text-emerald-700 border-emerald-200"
-                  : isSupabaseConfigured && isAuthenticated
-                  ? "bg-sky-50/80 text-sky-700 border-sky-200"
-                  : "bg-amber-50/80 text-amber-700 border-amber-200"
-              }`}
-              title={
-                sqliteHealth.connected
-                  ? `Banco SQLite Local: ${sqliteHealth.totalBills} faturas salvas (${sqliteHealth.totalUcs} UCs)`
-                  : isSupabaseConfigured && isAuthenticated
-                  ? `Nuvem Supabase: ${bills.filter(b => b.status === "completed").length} faturas sincronizadas`
-                  : "Modo de armazenamento em cache local."
-              }
+              className="flex items-center gap-2 px-3.5 py-2 border rounded-xl text-xs font-semibold shadow-xs transition-all bg-sky-50/90 text-sky-800 border-sky-200"
+              title={`Banco de Dados Supabase Cloud: ${bills.length.toLocaleString()} faturas`}
             >
-              {sqliteHealth.connected ? (
-                <Database size={15} className="text-emerald-600" />
-              ) : isSupabaseConfigured && isAuthenticated ? (
-                <Cloud size={15} className="text-sky-600" />
-              ) : (
-                <Database size={15} className="text-amber-600" />
-              )}
+              <Cloud size={15} className="text-sky-600" />
               <span className="font-mono font-bold">
-                {sqliteHealth.connected
-                  ? `SQLite: ${sqliteHealth.totalBills.toLocaleString()} faturas`
-                  : isSupabaseConfigured && isAuthenticated
-                  ? `Nuvem: ${bills.filter(b => b.status === "completed").length.toLocaleString()} faturas`
-                  : `Local: ${bills.length.toLocaleString()} faturas`}
+                {`Supabase: ${bills.length.toLocaleString()} faturas`}
               </span>
             </div>
 
-            {/* Sincronizar Nuvem */}
-            {isSupabaseConfigured && (
-              <button
-                onClick={handleSyncCloud}
-                disabled={isSyncing}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
-                title="Sincronizar e recarregar faturas da Nuvem (Supabase)"
-              >
-                {isSyncing ? (
-                  <Loader2 size={15} className="animate-spin text-sanesul-primary" />
-                ) : (
-                  <Cloud size={15} className="text-sanesul-primary" />
-                )}
-                <span>Sincronizar Nuvem</span>
-              </button>
-            )}
+            {/* Recarregar Nuvem */}
+            <button
+              onClick={() => {
+                showAlert("Sincronização", "Recarregando faturas diretamente do Supabase Cloud...");
+                setFetchTrigger((prev) => prev + 1);
+              }}
+              disabled={isSyncing}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
+              title="Recarregar faturas da Nuvem (Supabase)"
+            >
+              {isSyncing ? (
+                <Loader2 size={15} className="animate-spin text-sanesul-primary" />
+              ) : (
+                <Cloud size={15} className="text-sanesul-primary" />
+              )}
+              <span>{isSyncing ? "Sincronizando..." : "Recarregar Nuvem"}</span>
+            </button>
 
             {/* Configurar API */}
             <button
