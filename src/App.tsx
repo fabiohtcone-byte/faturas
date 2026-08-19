@@ -13840,8 +13840,18 @@ export default function App() {
                         <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
                           {(() => {
                             let runningSum = 0;
-                            return monitoringResults.timelineData.map((item: any, idx: number) => {
+                            // Calculate cumulative sum chronologically
+                            const itemsWithAccumulated = monitoringResults.timelineData.map((item: any) => {
                               runningSum += item.economy;
+                              return {
+                                ...item,
+                                accumulated: runningSum,
+                              };
+                            });
+                            // Reverse so current/most recent month is first
+                            const reversedItems = [...itemsWithAccumulated].reverse();
+
+                            return reversedItems.map((item: any, idx: number) => {
                               const isPositive = item.economy >= 0;
                               return (
                                 <div
@@ -13854,10 +13864,15 @@ export default function App() {
                                       <span className="text-xs font-bold text-sanesul-primary">
                                         {item.monthYear}
                                       </span>
+                                      {idx === 0 && (
+                                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-[9px] font-extrabold uppercase tracking-wider">
+                                          Atual / Recente
+                                        </span>
+                                      )}
                                     </div>
                                     <span className="text-[10px] font-mono text-slate-400 block pl-4">
                                       Acumulado: R${" "}
-                                      {runningSum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {item.accumulated.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                   </div>
 
