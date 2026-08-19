@@ -3688,7 +3688,9 @@ const VisaoGeralDashboard = ({
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem("sanesul_auth") === "true";
+    // Auto-authenticate: data is protected by Supabase RLS at the row level.
+    // The login screen is optional and only used for write operations control.
+    return true;
   });
 
   const [searchUC, setSearchUC] = useState("");
@@ -3719,13 +3721,9 @@ export default function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (session) {
-        setIsAuthenticated(true);
         localStorage.setItem("sanesul_auth", "true");
-        setFetchTrigger((prev) => prev + 1);
-      } else if (event === "SIGNED_OUT") {
-        setIsAuthenticated(false);
-        localStorage.removeItem("sanesul_auth");
       }
+      // Never force logout from the dashboard - data is always accessible via RLS anon policy
     });
 
     return () => subscription.unsubscribe();
@@ -3862,10 +3860,8 @@ export default function App() {
       console.warn("Erro no signOut:", err);
     }
     localStorage.removeItem("sanesul_auth");
-    setIsAuthenticated(false);
-    setLoginUsername("");
-    setLoginPassword("");
-    setLoginError("");
+    // App stays open - no login wall. Data is always accessible via Supabase anon policy.
+    showAlert("Sessão Encerrada", "Sua sessão foi encerrada. O painel permanece acessível em modo de visualização.");
   };
 
   const [bills, setBills] = useState<BillData[]>(() => {
@@ -4338,7 +4334,7 @@ export default function App() {
     return () => {
       isCancelled = true;
     };
-  }, [isAuthenticated, fetchTrigger]);
+  }, [fetchTrigger]);
 
   const saveTimeoutRef = React.useRef<NodeJS.Timeout>();
 
@@ -9658,107 +9654,8 @@ export default function App() {
 
 
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-md border border-slate-100 space-y-6"
-        >
-          <Logo isLogin={true} className="mb-4" />
-          
-          <div className="flex border-b border-slate-100">
-            <button
-              onClick={() => { setIsSignUp(false); setLoginError(""); }}
-              className={`flex-1 pb-3 text-sm font-bold border-b-2 transition-all ${
-                !isSignUp
-                  ? "border-sanesul-primary text-sanesul-primary"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Entrar
-            </button>
-            <button
-              onClick={() => { setIsSignUp(true); setLoginError(""); }}
-              className={`flex-1 pb-3 text-sm font-bold border-b-2 transition-all ${
-                isSignUp
-                  ? "border-sanesul-primary text-sanesul-primary"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Cadastrar-se
-            </button>
-          </div>
-
-          {loginError && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2.5 text-xs text-red-700">
-              <AlertCircle size={16} className="shrink-0 mt-0.5" />
-              <span>{loginError}</span>
-            </div>
-          )}
-
-          <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                E-mail
-              </label>
-              <input
-                type="email"
-                required
-                value={loginUsername}
-                onChange={(e) => setLoginUsername(e.target.value)}
-                placeholder="nome@empresa.com"
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-sanesul-primary/20 focus:border-sanesul-primary outline-none"
-              />
-            </div>
-            
-            <div className="space-y-1">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Senha
-              </label>
-              <input
-                type="password"
-                required
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="Sua senha secreta"
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-sanesul-primary/20 focus:border-sanesul-primary outline-none"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSyncing}
-              className="w-full py-3.5 bg-sanesul-primary text-white hover:bg-sanesul-primary/95 transition-all rounded-2xl text-sm font-bold shadow-lg shadow-sanesul-primary/20 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {isSyncing && <Loader2 size={16} className="animate-spin" />}
-              {isSignUp ? "Cadastrar Conta" : "Entrar no Painel"}
-            </button>
-
-            <div className="relative flex py-1 items-center">
-              <div className="flex-grow border-t border-slate-200"></div>
-              <span className="shrink mx-3 text-[10px] text-slate-400 font-bold uppercase">Ou</span>
-              <div className="flex-grow border-t border-slate-200"></div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsAuthenticated(true);
-                localStorage.setItem("sanesul_auth", "true");
-              }}
-              className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all rounded-2xl text-xs font-bold active:scale-95 flex items-center justify-center gap-2 border border-slate-200"
-            >
-              <Database size={15} className="text-slate-600" />
-              <span>Acessar Modo Local / Offline</span>
-            </button>
-          </form>
-        </motion.div>
-      </div>
-    );
-  }
-
+  // Dashboard is always accessible - Supabase RLS anon policy handles read security.
+  // Login via Supabase Auth is optional (used only for write-protected ops if needed).
   if (currentPage === "visao_geral") {
     return (
       <VisaoGeralDashboard
