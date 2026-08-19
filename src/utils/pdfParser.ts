@@ -345,7 +345,7 @@ export function parseBillText(text: string): Record<string, string> {
   if (concessionaria === "ENERGISA" && !isGrupoB) {
     // Faturas Grupo A geralmente listam tarifas com 6 casas decimais
     let cleanTextForPairing = text;
-    const historyIdx = text.search(/(HIST.RICO\s+DE\s+(?:FATURAMENTO|CONSUMO)|CONSUMO\s+DOS\s+ÚLTIMOS|INDICADORES\s+DE\s+QUALIDADE|LIMITES\s+DE\s+CONTINUIDADE|FIC\s+DMIC\s+DICRI|CONSUMO\s+DOS\s+13)/i);
+    const historyIdx = text.search(/(HIST.RICO|CONSUMO\s+DOS\s+ÚLTIMOS|INDICADORES\s+DE\s+QUALIDADE|LIMITES\s+DE\s+CONTINUIDADE|FIC\s+DMIC\s+DICRI|CONSUMO\s+DOS\s+13)/i);
     if (historyIdx !== -1) {
         cleanTextForPairing = text.substring(0, historyIdx);
     }
@@ -697,64 +697,30 @@ export function parseBillText(text: string): Record<string, string> {
       valorUltrapassagemPonta = "0,00";
 
       if (demandaPairs.length > 0) {
-        if (hasNcForaPonta) {
-          let bestPair: { med: any; nc: any } | null = null;
-          for (let i = 0; i < demandaPairs.length; i++) {
-            for (let j = i + 1; j < demandaPairs.length; j++) {
-              const p1 = demandaPairs[i], p2 = demandaPairs[j];
-              const larger = p1.q > p2.q ? p1 : p2;
-              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
-              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
-              const larger = p1.q > p2.q ? p1 : p2;
-              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
-              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
-              if (contForaPonta > 0 && Math.abs(p1.q + p2.q - contForaPonta) < 1.0) {
-                bestPair = p1.q > p2.q ? { med: p1, nc: p2 } : { med: p2, nc: p1 };
-                break;
-              }
-            }
-            if (bestPair) break;
-          }
+        let knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+        let matched = knownQ > 0 ? demandaPairs.find(p => Math.abs(p.q - knownQ) < 0.1) : null;
 
-          if (bestPair) {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(bestPair.med.q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(bestPair.med.v);
-            demandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestPair.nc.q);
-            valorDemandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestPair.nc.v);
-          } else {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].v);
-          }
-        } else if (hasUltForaPonta) {
-          let bestUlt: { med: any; ult: any } | null = null;
-          for (let i = 0; i < demandaPairs.length; i++) {
-            for (let j = i + 1; j < demandaPairs.length; j++) {
-              const p1 = demandaPairs[i], p2 = demandaPairs[j];
-              const larger = p1.q > p2.q ? p1 : p2;
-              const smaller = p1.q > p2.q ? p2 : p1;
-              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
-              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
-              const knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
-              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
-              if (contForaPonta > 0 && Math.abs(larger.q - smaller.q - contForaPonta) < 1.0) {
-                if (!bestUlt || smaller.t > bestUlt.ult.t) {
-                  bestUlt = { med: larger, ult: smaller };
+        if (matched) {
+            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(matched.v);
+            
+            if (hasUltForaPonta) {
+                let bestUlt = demandaPairs.find(p => p !== matched && Math.abs(Math.max(p.q, matched.q) - Math.min(p.q, matched.q) - contForaPonta) < 1.0);
+                if (bestUlt) {
+                    ultrapassagemForaPontaKW = formatNumberToBR(bestUlt.q);
+                    valorUltrapassagemForaPonta = formatNumberToBR(bestUlt.v);
                 }
-              }
+            } else if (hasNcForaPonta) {
+                let bestNc = demandaPairs.find(p => p !== matched && Math.abs(p.q + matched.q - contForaPonta) < 1.0);
+                if (bestNc) {
+                    demandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestNc.q);
+                    valorDemandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestNc.v);
+                }
             }
-          }
-          if (bestUlt) {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(bestUlt.med.q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(bestUlt.med.v);
-            ultrapassagemForaPontaKW = formatNumberToBR(bestUlt.ult.q);
-            valorUltrapassagemForaPonta = formatNumberToBR(bestUlt.ult.v);
-          } else {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].v);
-          }
         } else {
-          demandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].q);
-          valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].v);
+            if (knownQ === 0) {
+                demandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].q);
+                valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(demandaPairs[0].v);
+            }
         }
       }
     } else {
@@ -764,110 +730,62 @@ export function parseBillText(text: string): Record<string, string> {
 
       // PONTA
       if (pontaPairs.length > 0) {
-        if (hasNcPonta) {
-          let bestNcPonta: { med: any; nc: any } | null = null;
-          for (let i = 0; i < pontaPairs.length; i++) {
-            for (let j = i + 1; j < pontaPairs.length; j++) {
-              const p1 = pontaPairs[i], p2 = pontaPairs[j];
-              const larger = p1.q > p2.q ? p1 : p2;
-              const knownQ = demandaPotenciaMedidaPonta !== "0" && demandaPotenciaMedidaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaPonta.replace(/\./g, "").replace(",", ".")) : 0;
-              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
-              if (contPonta > 0 && Math.abs(p1.q + p2.q - contPonta) < 1.0) {
-                bestNcPonta = p1.q > p2.q ? { med: p1, nc: p2 } : { med: p2, nc: p1 };
-                break;
-              }
-            }
-            if (bestNcPonta) break;
-          }
-          if (bestNcPonta) {
-            demandaPotenciaMedidaPonta = formatNumberToBR(bestNcPonta.med.q);
-            valorDemandaPotenciaMedidaPonta = formatNumberToBR(bestNcPonta.med.v);
-            demandaPotenciaNaoConsumidaPonta = formatNumberToBR(bestNcPonta.nc.q);
-            valorDemandaPotenciaNaoConsumidaPonta = formatNumberToBR(bestNcPonta.nc.v);
-          } else {
-            demandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].q);
-            valorDemandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].v);
-          }
-        } else if (hasUltPonta) {
-          let bestUltPonta: { med: any; ult: any } | null = null;
-          for (let i = 0; i < pontaPairs.length; i++) {
-            for (let j = i + 1; j < pontaPairs.length; j++) {
-              const p1 = pontaPairs[i], p2 = pontaPairs[j];
-              const larger = p1.q > p2.q ? p1 : p2;
-              const smaller = p1.q > p2.q ? p2 : p1;
-              const knownQ = demandaPotenciaMedidaPonta !== "0" && demandaPotenciaMedidaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaPonta.replace(/\./g, "").replace(",", ".")) : 0;
-              if (knownQ > 0 && Math.abs(larger.q - knownQ) > 0.1) continue;
-              if (contPonta > 0 && Math.abs(larger.q - smaller.q - contPonta) < 1.0) {
-                if (!bestUltPonta || smaller.t > bestUltPonta.ult.t) {
-                  bestUltPonta = { med: larger, ult: smaller };
+        let knownQ = demandaPotenciaMedidaPonta !== "0" && demandaPotenciaMedidaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+        let matched = knownQ > 0 ? pontaPairs.find(p => Math.abs(p.q - knownQ) < 0.1) : null;
+        
+        if (matched) {
+            valorDemandaPotenciaMedidaPonta = formatNumberToBR(matched.v);
+            
+            if (hasUltPonta) {
+                let bestUlt = pontaPairs.find(p => p !== matched && Math.abs(Math.max(p.q, matched.q) - Math.min(p.q, matched.q) - contPonta) < 1.0);
+                if (bestUlt) {
+                    ultrapassagemPontaKW = formatNumberToBR(Math.min(bestUlt.q, matched.q));
+                    valorUltrapassagemPonta = formatNumberToBR(bestUlt.v); // Wait, bestUlt.v is the ultrapassagem value? Yes, bestUlt is the ultrapassagem pair!
+                    // Actually, if matched is Medida, then bestUlt is Ultrapassagem!
+                    ultrapassagemPontaKW = formatNumberToBR(bestUlt.q);
+                    valorUltrapassagemPonta = formatNumberToBR(bestUlt.v);
                 }
-              }
+            } else if (hasNcPonta) {
+                let bestNc = pontaPairs.find(p => p !== matched && Math.abs(p.q + matched.q - contPonta) < 1.0);
+                if (bestNc) {
+                    demandaPotenciaNaoConsumidaPonta = formatNumberToBR(bestNc.q);
+                    valorDemandaPotenciaNaoConsumidaPonta = formatNumberToBR(bestNc.v);
+                }
             }
-          }
-          if (bestUltPonta) {
-            demandaPotenciaMedidaPonta = formatNumberToBR(bestUltPonta.med.q);
-            valorDemandaPotenciaMedidaPonta = formatNumberToBR(bestUltPonta.med.v);
-            ultrapassagemPontaKW = formatNumberToBR(bestUltPonta.ult.q);
-            valorUltrapassagemPonta = formatNumberToBR(bestUltPonta.ult.v);
-          } else {
-            demandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].q);
-            valorDemandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].v);
-          }
         } else {
-          demandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].q);
-          valorDemandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].v);
+            if (knownQ === 0) {
+                demandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].q);
+                valorDemandaPotenciaMedidaPonta = formatNumberToBR(pontaPairs[0].v);
+            }
         }
       }
 
       // FORA PONTA
       if (foraPairs.length > 0) {
-        if (hasNcForaPonta) {
-          let bestNcFora: { med: any; nc: any } | null = null;
-          for (let i = 0; i < foraPairs.length; i++) {
-            for (let j = i + 1; j < foraPairs.length; j++) {
-              const p1 = foraPairs[i], p2 = foraPairs[j];
-              if (contForaPonta > 0 && Math.abs(p1.q + p2.q - contForaPonta) < 1.0) {
-                bestNcFora = p1.q > p2.q ? { med: p1, nc: p2 } : { med: p2, nc: p1 };
-                break;
-              }
-            }
-            if (bestNcFora) break;
-          }
-          if (bestNcFora) {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(bestNcFora.med.q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(bestNcFora.med.v);
-            demandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestNcFora.nc.q);
-            valorDemandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestNcFora.nc.v);
-          } else {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].v);
-          }
-        } else if (hasUltForaPonta) {
-          let bestUltFora: { med: any; ult: any } | null = null;
-          for (let i = 0; i < foraPairs.length; i++) {
-            for (let j = i + 1; j < foraPairs.length; j++) {
-              const p1 = foraPairs[i], p2 = foraPairs[j];
-              const larger = p1.q > p2.q ? p1 : p2;
-              const smaller = p1.q > p2.q ? p2 : p1;
-              if (contForaPonta > 0 && Math.abs(larger.q - smaller.q - contForaPonta) < 1.0) {
-                if (!bestUltFora || smaller.t > bestUltFora.ult.t) {
-                  bestUltFora = { med: larger, ult: smaller };
+        let knownQ = demandaPotenciaMedidaForaPonta !== "0" && demandaPotenciaMedidaForaPonta !== "0,00" ? parseFloat(demandaPotenciaMedidaForaPonta.replace(/\./g, "").replace(",", ".")) : 0;
+        let matched = knownQ > 0 ? foraPairs.find(p => Math.abs(p.q - knownQ) < 0.1) : null;
+        
+        if (matched) {
+            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(matched.v);
+            
+            if (hasUltForaPonta) {
+                let bestUlt = foraPairs.find(p => p !== matched && Math.abs(Math.max(p.q, matched.q) - Math.min(p.q, matched.q) - contForaPonta) < 1.0);
+                if (bestUlt) {
+                    ultrapassagemForaPontaKW = formatNumberToBR(bestUlt.q);
+                    valorUltrapassagemForaPonta = formatNumberToBR(bestUlt.v);
                 }
-              }
+            } else if (hasNcForaPonta) {
+                let bestNc = foraPairs.find(p => p !== matched && Math.abs(p.q + matched.q - contForaPonta) < 1.0);
+                if (bestNc) {
+                    demandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestNc.q);
+                    valorDemandaPotenciaNaoConsumidaForaPonta = formatNumberToBR(bestNc.v);
+                }
             }
-          }
-          if (bestUltFora) {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(bestUltFora.med.q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(bestUltFora.med.v);
-            ultrapassagemForaPontaKW = formatNumberToBR(bestUltFora.ult.q);
-            valorUltrapassagemForaPonta = formatNumberToBR(bestUltFora.ult.v);
-          } else {
-            demandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].q);
-            valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].v);
-          }
         } else {
-          demandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].q);
-          valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].v);
+            if (knownQ === 0) {
+                demandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].q);
+                valorDemandaPotenciaMedidaForaPonta = formatNumberToBR(foraPairs[0].v);
+            }
         }
       }
     }
