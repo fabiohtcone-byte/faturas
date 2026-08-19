@@ -3780,6 +3780,12 @@ export default function App() {
       setLoginError("Por favor, preencha todos os campos.");
       return;
     }
+
+    if (!isSupabaseConfigured) {
+      setIsAuthenticated(true);
+      localStorage.setItem("sanesul_auth", "true");
+      return;
+    }
     
     try {
       setIsSyncing(true);
@@ -3817,9 +3823,9 @@ export default function App() {
 
     try {
       if (!isSupabaseConfigured) {
-        setLoginError(
-          "O Supabase não está configurado. Por favor, adicione as chaves VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nas configurações do AI Studio.",
-        );
+        console.log("Modo local: autenticado com sucesso.");
+        setIsAuthenticated(true);
+        localStorage.setItem("sanesul_auth", "true");
         return;
       }
 
@@ -3871,11 +3877,18 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut();
+    try {
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+    } catch (err) {
+      console.warn("Erro no signOut:", err);
     }
-    setIsAuthenticated(false);
     localStorage.removeItem("sanesul_auth");
+    setIsAuthenticated(false);
+    setLoginUsername("");
+    setLoginPassword("");
+    setLoginError("");
   };
 
   const [bills, setBills] = useState<BillData[]>(() => {
@@ -9813,7 +9826,7 @@ export default function App() {
 
 
 
-  if (isSupabaseConfigured && !isAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <motion.div
