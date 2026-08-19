@@ -13488,10 +13488,21 @@ export default function App() {
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                             <XAxis 
                               dataKey="monthYear" 
+                              interval={0}
                               axisLine={false} 
                               tickLine={false} 
-                              tick={{ fontSize: 12, fill: "#64748b" }} 
+                              tick={{ fontSize: 11, fill: "#64748b", fontWeight: 600 }} 
                               dy={10} 
+                              tickFormatter={(val: string) => {
+                                if (!val) return "";
+                                const parts = val.split("/");
+                                if (parts.length === 2) {
+                                  const shortM = parts[0].substring(0, 3);
+                                  const shortY = parts[1].length === 4 ? parts[1].substring(2) : parts[1];
+                                  return `${shortM}/${shortY}`;
+                                }
+                                return val;
+                              }}
                             />
                             <YAxis 
                               yAxisId="left"
