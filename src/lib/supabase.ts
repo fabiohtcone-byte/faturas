@@ -1,28 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Use placeholders if environment variables are missing to prevent initialization crash.
-// The user must configure these in the Settings -> Secrets menu in AI Studio.
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
+const DEFAULT_SUPABASE_URL = 'https://yydvjgbfaapldtkhlqrh.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5ZHZqZ2JmYWFwbGR0a2hscXJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMjQ1NTMsImV4cCI6MjA4ODkwMDU1M30.GqUoGviAYXveiEs7YmtN6SE5eZ3ZbiENaZtPUfy8blU';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(
-  import.meta.env.VITE_SUPABASE_URL &&
-  import.meta.env.VITE_SUPABASE_URL !== 'https://placeholder.supabase.co' &&
-  !import.meta.env.VITE_SUPABASE_URL.includes('placeholder') &&
-  import.meta.env.VITE_SUPABASE_ANON_KEY &&
-  import.meta.env.VITE_SUPABASE_ANON_KEY !== 'placeholder'
+  supabaseUrl &&
+  supabaseUrl !== 'https://placeholder.supabase.co' &&
+  !supabaseUrl.includes('placeholder') &&
+  supabaseAnonKey &&
+  supabaseAnonKey !== 'placeholder'
 );
-
-if (!isSupabaseConfigured) {
-  console.warn(
-    'AVISO: Variáveis de ambiente do Supabase não configuradas.\n' +
-    'As funcionalidades de banco de dados e autenticação não funcionarão.\n' +
-    'Por favor, configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no menu de Configurações (Secrets) do AI Studio.'
-  );
-}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: true // Habilitando a persistência de sessão para manter o usuário logado
-  }
+    persistSession: true,
+  },
 });
