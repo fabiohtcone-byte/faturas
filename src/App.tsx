@@ -7256,63 +7256,94 @@ export default function App() {
         };
       });
 
-      // 2nd Pass: Detect Changes and Calculate Reference/Economy
-      let activeContract: { ponta: number; foraPonta: number } | null = null;
-      let currentContractStartIdx = 0;
+      // 2nd Pass: Identify the exact Contract Alteration month & Calculate Baseline and Economy from that month onwards
+      const orig = customOriginalContratadas[uc] || ORIGINAL_CONTRATADAS[uc] || null;
+      const meta = customAdjustmentsMetadata[uc] || {};
+      const metaAlteracao = meta.dataAlteracao;
+
+      // Find the alteration index
+      let alterationIdx = -1;
+      
+      // If explicit meta dataAlteracao is provided
+      if (metaAlteracao && metaAlteracao !== "-" && metaAlteracao.trim() !== "") {
+        const metaParts = metaAlteracao.trim().split("/");
+        let targetMonth = 0;
+        let targetYear = 0;
+        if (metaParts.length === 3) {
+          targetMonth = parseInt(metaParts[1], 10);
+          const yStr = metaParts[2].trim();
+          targetYear = parseInt(yStr.length === 2 ? "20" + yStr : yStr, 10);
+        } else if (metaParts.length === 2) {
+          targetMonth = getMonthNumber(metaParts[0]);
+          const yStr = metaParts[1].trim();
+          targetYear = parseInt(yStr.length === 2 ? "20" + yStr : yStr, 10);
+        }
+        if (targetMonth > 0 && targetYear > 0) {
+          alterationIdx = processedBills.findIndex((b) => {
+            const bM = getMonthNumber(b.mes);
+            const bY = parseInt(String(b.ano || "0"), 10);
+            return bY > targetYear || (bY === targetYear && bM >= targetMonth);
+          });
+        }
+      }
+
+      // If not found by metadata, detect by change against original contract
+      if (alterationIdx === -1) {
+        if (orig && (orig.p > 0 || orig.fp > 0)) {
+          alterationIdx = processedBills.findIndex(
+            (b) => b.dcp !== orig.p || b.dcfp !== orig.fp
+          );
+        }
+      }
+
+      // If still not found, check sequential contract change in processed bills
+      if (alterationIdx === -1 && processedBills.length > 1) {
+        let firstContract: { ponta: number; foraPonta: number } | null = null;
+        for (let i = 0; i < processedBills.length; i++) {
+          const b = processedBills[i];
+          if (b.dcp > 0 || b.dcfp > 0) {
+            if (firstContract === null) {
+              firstContract = { ponta: b.dcp, foraPonta: b.dcfp };
+            } else if (b.dcp !== firstContract.ponta || b.dcfp !== firstContract.foraPonta) {
+              alterationIdx = i;
+              break;
+            }
+          }
+        }
+      }
+
+      // Determine Reference Baseline (Average of Pre-Alteration Period)
       let previousContractAverageCost = 0;
+      if (alterationIdx > 0) {
+        const preBills = processedBills.slice(0, alterationIdx);
+        const sum = preBills.reduce((acc, item) => acc + item.currentTotal, 0);
+        previousContractAverageCost = sum / preBills.length;
+      } else if (alterationIdx === 0) {
+        // All uploaded bills are from the alteration month onwards; simulate base cost from orig contract if available
+        const baseDcp = orig ? orig.p : processedBills[0].dcp;
+        const baseDcfp = orig ? orig.fp : processedBills[0].dcfp;
+        const avgTariffP = isAzul ? 85.53 : 0;
+        const avgTariffFp = isAzul ? 42.90 : 43.17715;
+        const simulatedBase = (baseDcp * avgTariffP) + (baseDcfp * avgTariffFp);
+        previousContractAverageCost = simulatedBase > 0 ? simulatedBase : processedBills[0].currentTotal;
+      }
+
+      // 3rd Pass: Calculate monthly economy and accumulated economy starting from the alteration month onwards
       let accumulatedEconomy = 0;
+      const hasContractChange = alterationIdx !== -1;
 
       const monthlyData = processedBills.map((b, index) => {
-        // Initialize active contract on first bill
-        if (activeContract === null) {
-          activeContract = { ponta: b.dcp, foraPonta: b.dcfp };
-        }
+        const isFromAlterationOnwards = hasContractChange && index >= alterationIdx;
+        const hasChanged = hasContractChange && index === alterationIdx;
 
-        // Detect Change
-        const isValidContract =
-          activeContract.ponta > 0 || activeContract.foraPonta > 0;
-        const hasChanged =
-          isValidContract &&
-          (b.dcp !== activeContract.ponta ||
-            b.dcfp !== activeContract.foraPonta);
-
-        if (hasChanged) {
-          // Calculate average of the PREVIOUS contract period
-          const previousPeriodBills = processedBills.slice(
-            currentContractStartIdx,
-            index,
-          );
-          if (previousPeriodBills.length > 0) {
-            const sum = previousPeriodBills.reduce(
-              (acc, item) => acc + item.currentTotal,
-              0,
-            );
-            previousContractAverageCost = sum / previousPeriodBills.length;
-          } else {
-            previousContractAverageCost = 0;
-          }
-
-          // Update for new contract
-          currentContractStartIdx = index;
-          activeContract = { ponta: b.dcp, foraPonta: b.dcfp };
-        } else if (!isValidContract && (b.dcp > 0 || b.dcfp > 0)) {
-          // First valid contract found after 0s
-          activeContract = { ponta: b.dcp, foraPonta: b.dcfp };
-          currentContractStartIdx = index;
-          // previousContractAverageCost remains 0 as there was no valid previous contract
-        }
-
-        // Calculate Economy
-        // If we have a valid previous average (meaning we are in a changed state relative to something valid)
         let economyFromChange = 0;
         let referenceTotal = 0;
 
-        if (previousContractAverageCost > 0) {
+        if (isFromAlterationOnwards && previousContractAverageCost > 0) {
           referenceTotal = previousContractAverageCost;
-
-          // Cálculo da Economia para Monitoramento: (Ref. Anterior - Gasto Real)
+          // Economia no mês: (Ref. Anterior - Gasto Real)
           economyFromChange = referenceTotal - b.currentTotal;
-
+          // Economia Acumulada a partir do mês em que foi alterado o contrato em diante
           accumulatedEconomy += economyFromChange;
         }
 
@@ -7320,27 +7351,27 @@ export default function App() {
           mes: b.mes,
           ano: b.ano,
           currentTotal: b.currentTotal,
-          referenceTotal, // Fixed Average of Previous Contract
+          referenceTotal,
           economy: economyFromChange,
-          accumulatedEconomy,
+          accumulatedEconomy: isFromAlterationOnwards ? accumulatedEconomy : 0,
           dmp: b.dmp,
           dmfp: b.dmfp,
           dcp: b.dcp,
           dcfp: b.dcfp,
           hasChanged,
-          referenceContract: null, // Not used in new logic but kept for type compatibility if needed
+          referenceContract: null,
         };
       });
 
       // Reverse to show newest first in UI
       monthlyData.reverse();
 
-      const totalEconomy = accumulatedEconomy; // Total accumulated from changes
+      // Total economy = accumulated economy from alteration month onwards
+      const totalEconomy = accumulatedEconomy;
       const totalCurrent = monthlyData.reduce(
         (acc, curr) => acc + curr.currentTotal,
         0,
       );
-      const hasContractChange = monthlyData.some((m) => m.hasChanged);
 
       return {
         uc,
@@ -14065,7 +14096,7 @@ export default function App() {
                                                 Economia
                                               </h5>
                                             </div>
-                                            <div className="grid grid-cols-6 gap-4 mb-2 px-4">
+                                            <div className="grid grid-cols-7 gap-4 mb-2 px-4">
                                               <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest">
                                                 Mês/Ano
                                               </div>
@@ -14082,7 +14113,10 @@ export default function App() {
                                                 Ref. Anterior
                                               </div>
                                               <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-right">
-                                                Economia
+                                                Economia Mensal
+                                              </div>
+                                              <div className="text-[9px] font-bold text-sanesul-muted uppercase tracking-widest text-right">
+                                                Economia Acumulada
                                               </div>
                                             </div>
                                             <div className="space-y-2">
@@ -14090,7 +14124,7 @@ export default function App() {
                                                 (month: any, mIdx: number) => (
                                                   <div
                                                     key={mIdx}
-                                                    className={`grid grid-cols-6 gap-4 px-4 py-3 rounded-xl border transition-colors ${month.hasChanged ? "bg-yellow-50 border-yellow-200" : "bg-white border-slate-100 hover:border-sanesul-primary/20"}`}
+                                                    className={`grid grid-cols-7 gap-4 px-4 py-3 rounded-xl border transition-colors ${month.hasChanged ? "bg-yellow-50 border-yellow-200 ring-1 ring-yellow-300" : "bg-white border-slate-100 hover:border-sanesul-primary/20"}`}
                                                   >
                                                     <div className="flex flex-col">
                                                       <span className="text-xs font-bold text-slate-700">
@@ -14098,7 +14132,7 @@ export default function App() {
                                                         /{month.ano}
                                                       </span>
                                                       {month.hasChanged && (
-                                                        <span className="text-[9px] font-bold text-yellow-600 uppercase tracking-wider mt-1">
+                                                        <span className="text-[9px] font-bold text-yellow-700 uppercase tracking-wider mt-0.5">
                                                           Alteração de Contrato
                                                         </span>
                                                       )}
@@ -14128,8 +14162,15 @@ export default function App() {
                                                     <div
                                                       className={`text-xs font-mono text-right font-bold ${month.economy > 0 ? "text-green-600" : month.economy < 0 ? "text-red-500" : "text-slate-400"}`}
                                                     >
-                                                      {month.economy !== 0
+                                                      {month.referenceTotal > 0
                                                         ? `R$ ${month.economy.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+                                                        : "-"}
+                                                    </div>
+                                                    <div
+                                                      className={`text-xs font-mono text-right font-extrabold ${month.accumulatedEconomy > 0 ? "text-green-700" : month.accumulatedEconomy < 0 ? "text-red-600" : "text-slate-400"}`}
+                                                    >
+                                                      {month.referenceTotal > 0
+                                                        ? `R$ ${month.accumulatedEconomy.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
                                                         : "-"}
                                                     </div>
                                                   </div>
