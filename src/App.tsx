@@ -7534,8 +7534,7 @@ export default function App() {
       }
 
       // --- CHECK FOR DUPLICATES IN DB AFTER EXTRACTION ---
-      let existingDbId: string | null = null;
-
+      // existingDbId logic removed
       if (
         isSupabaseConfigured &&
         user &&
@@ -7543,26 +7542,8 @@ export default function App() {
         result.mesReferencia &&
         result.anoLeitura
       ) {
-        try {
-          const { data: existingData, error: dbCheckError } = await supabase
-            .from("bills")
-            .select("id")
-            .eq("uc", result.uc)
-            .eq("mes_referencia", result.mesReferencia)
-            .eq("ano_leitura", result.anoLeitura)
-            .limit(1);
-
-          if (!dbCheckError && existingData && existingData.length > 0) {
-            existingDbId = existingData[0].id;
-          }
-        } catch (dbCheckErr) {
-          console.warn(
-            "Erro ao verificar duplicatas no banco de dados:",
-            dbCheckErr,
-          );
-        }
-      }
-
+      // No longer querying for existingDbId. We will unconditionally delete any matching records in Supabase.
+      
       // Check duplicates in current list to delete them from SQLite
       let finalStatus: "completed" | "error" = "completed";
       let finalError: string | undefined = undefined;
@@ -7634,62 +7615,15 @@ export default function App() {
       if (isSupabaseConfigured && user) {
         const dbData = mapBillDataToDb(updatedBill, user.id);
 
-        if (existingDbId) {
-          // Delete existing record and insert new one to "give place" to the new one
-          const { error: deleteError } = await supabase.from("bills").delete().eq("id", existingDbId);
-          
-          if (deleteError) {
-             console.error("Erro ao deletar fatura antiga no Supabase:", deleteError);
-             updatedBill.status = "error";
-             updatedBill.error = deleteError.message || "Erro ao atualizar fatura no banco de dados (delete falhou).";
-          } else {
-            let { error: insertError } = await supabase
-              .from("bills")
-              .insert(dbData);
+        if (dbData.uc && dbData.mes_referencia && dbData.ano_leitura) {
+          // Unconditionally delete all older duplicates to guarantee only this latest one remains
+          await supabase.from("bills").delete()
+            .eq("uc", dbData.uc)
+            .eq("mes_referencia", dbData.mes_referencia)
+            .eq("ano_leitura", dbData.ano_leitura);
+        }
 
-            if (
-              insertError &&
-              (insertError.message.includes("data_vencimento") ||
-                insertError.message.includes("mercado") ||
-                insertError.message.includes("gerencia") ||
-                insertError.message.includes("locins") ||
-                insertError.message.includes("consumo_kwh_grupo_b") ||
-                insertError.message.includes("valor_consumo_kwh_grupo_b") ||
-                insertError.details?.includes("data_vencimento") ||
-                insertError.details?.includes("mercado") ||
-                insertError.code === "PGRST204")
-            ) {
-              console.warn(
-                "Colunas novas não encontradas no Supabase. Inserindo sem elas...",
-              );
-              const {
-                data_vencimento,
-                mercado,
-                gerencia,
-                locins,
-                consumo_kwh_grupo_b,
-                valor_consumo_kwh_grupo_b,
-                ...fallbackData
-              } = dbData;
-              if (consumo_kwh_grupo_b) fallbackData.consumo_kwh_ponta = consumo_kwh_grupo_b;
-              if (valor_consumo_kwh_grupo_b) fallbackData.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
-              const fallbackRes = await supabase
-                .from("bills")
-                .insert(fallbackData);
-              insertError = fallbackRes.error;
-            }
-
-            if (insertError) {
-              console.error(
-                "Erro ao substituir fatura no Supabase:",
-                insertError,
-              );
-              updatedBill.status = "error";
-              updatedBill.error = insertError.message || "Erro ao atualizar banco de dados.";
-            }
-          }
-        } else if (!isDuplicateInCurrentList) {
-          // Insert new record
+        // Insert new record
           let { error: insertError } = await supabase
             .from("bills")
             .insert(dbData);
