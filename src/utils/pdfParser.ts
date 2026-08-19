@@ -322,8 +322,8 @@ export function parseBillText(text: string): Record<string, string> {
   const directUltpPonta = extract(/ULTP\s+Ponta\s+(?:[\d\.,]+\s+){6}([\d\.,]+)/i);
   const directUltpForaPonta = extract(/ULTP\s+FPonta\s+(?:[\d\.,]+\s+){6}([\d\.,]+)/i);
 
-  let demandaPotenciaMedidaPonta = directKwMedPonta || getExplicitMedida('ponta') || extract(/Demanda Medida.*Ponta[^\d]*([\d\.,]+)/i) || "0";
-  let demandaPotenciaMedidaForaPonta = directKwMedForaPonta || getExplicitMedida('fora ponta') || extract(/Demanda Medida.*Fora Ponta[^\d]*([\d\.,]+)/i) || "0";
+  let demandaPotenciaMedidaPonta = directKwMedPonta || extract(/Demanda\s+de\s+Potência\s+Medida\s+-\s+Ponta[^\d]{0,50}?(\d+(?:,\d+)?)/i) || getExplicitMedida('ponta') || extract(/Demanda Medida.*Ponta[^\d]*([\d\.,]+)/i) || "0";
+  let demandaPotenciaMedidaForaPonta = directKwMedForaPonta || extract(/Demanda\s+de\s+Potência\s+Medida\s+-\s+Fora\s+Ponta[^\d]{0,50}?(\d+(?:,\d+)?)/i) || getExplicitMedida('fora ponta') || extract(/Demanda Medida.*Fora Ponta[^\d]*([\d\.,]+)/i) || "0";
   // Demanda Pot.ncia N.o Consumida – limit to 30 chars gap to avoid matching far-away numbers
   let demandaPotenciaNaoConsumidaPonta = extract(/Demanda\s+Pot.ncia\s+N.o\s+Consumida\s*-\s*Ponta[^\d]{0,30}(\d+(?:[\.,]\d+)*)/i) || "0";
 
