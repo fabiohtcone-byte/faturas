@@ -7606,7 +7606,7 @@ export default function App() {
       }
 
       const { file, ...billWithoutFile } = bill as any;
-      const updatedBill: BillData = {
+      var updatedBill: BillData = {
         ...billWithoutFile,
         ...result,
         status: finalStatus,
