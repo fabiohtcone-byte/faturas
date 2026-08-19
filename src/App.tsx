@@ -5412,6 +5412,107 @@ export default function App() {
     setFetchTrigger((prev) => prev + 1);
   };
 
+  const mirrorAppToSupabase = async () => {
+    if (!isSupabaseConfigured) {
+      showAlert("Atenção", "O Supabase não está configurado.");
+      return;
+    }
+
+    const completedBills = bills.filter((b) => b.status === "completed");
+    const countApp = completedBills.length;
+
+    showConfirm(
+      "Espelhar Faturas no Supabase (Sincronização 1:1)",
+      `Esta ação irá garantir que o banco Supabase contenha EXATAMENTE as ${countApp.toLocaleString()} faturas presentes no aplicativo.\n\n` +
+      `• Todas as ${countApp.toLocaleString()} faturas do app serão enviadas/atualizadas na nuvem.\n` +
+      `• Qualquer fatura antiga que exista na nuvem mas NÃO esteja no app será excluída.\n\n` +
+      `Deseja prosseguir com o espelhamento?`,
+      async () => {
+        setIsSyncing(true);
+        try {
+          // 1. Obter todos os IDs atualmente no Supabase
+          let cloudIds: string[] = [];
+          let from = 0;
+          let to = 999;
+          let finished = false;
+
+          while (!finished) {
+            const { data, error } = await supabase
+              .from("bills")
+              .select("id")
+              .range(from, to);
+
+            if (error) throw error;
+            if (data && data.length > 0) {
+              cloudIds = [...cloudIds, ...data.map((d) => d.id)];
+              if (data.length < 1000) {
+                finished = true;
+              } else {
+                from += 1000;
+                to += 1000;
+              }
+            } else {
+              finished = true;
+            }
+          }
+
+          const currentIdsSet = new Set(completedBills.map((b) => b.id));
+
+          // 2. Identifica registros órfãos no Supabase e remove
+          const orphanIds = cloudIds.filter((id) => !currentIdsSet.has(id));
+          if (orphanIds.length > 0) {
+            for (let i = 0; i < orphanIds.length; i += 100) {
+              const chunk = orphanIds.slice(i, i + 100);
+              const { error: delError } = await supabase.from("bills").delete().in("id", chunk);
+              if (delError) console.warn("[Supabase] Erro ao deletar órfãos:", delError);
+            }
+          }
+
+          // 3. Envia/atualiza todas as faturas do app no Supabase em lotes
+          const dbData = completedBills.map((b) => mapBillDataToDb(b));
+          for (let i = 0; i < dbData.length; i += 100) {
+            const chunk = dbData.slice(i, i + 100);
+            const { error: upsertError } = await supabase.from("bills").upsert(chunk, { onConflict: "id" });
+            if (upsertError) throw upsertError;
+          }
+
+          // 4. Mapeamentos de UCs
+          if (ucMappings.length > 0) {
+            const mappingsData = ucMappings.map((m) => ({
+              uc: String(m.uc),
+              gerencia: m.gerencia || "",
+              locin: m.locin || "",
+              cidade: m.cidade || "",
+              updated_at: new Date().toISOString(),
+            }));
+            await supabase.from("uc_mappings").upsert(mappingsData, { onConflict: "uc" });
+          }
+
+          setSupabaseHealth({
+            connected: true,
+            totalBills: countApp,
+            totalUcs: new Set(completedBills.map((b) => b.uc).filter(Boolean)).size,
+            lastSync: new Date(),
+          });
+
+          showAlert(
+            "Sucesso",
+            `Espelhamento 1:1 concluído com sucesso!\n\n` +
+            `• Faturas no App: ${countApp.toLocaleString()}\n` +
+            `• Faturas no Supabase: ${countApp.toLocaleString()}\n` +
+            (orphanIds.length > 0 ? `• Faturas órfãs removidas da nuvem: ${orphanIds.length.toLocaleString()}` : "• O banco de dados já estava 100% alinhado.")
+          );
+        } catch (err: any) {
+          console.error("Erro no espelhamento 1:1:", err);
+          showAlert("Erro", `Falha ao espelhar com Supabase: ${err.message || err}`);
+        } finally {
+          setIsSyncing(false);
+        }
+      },
+      "info"
+    );
+  };
+
   const saveMercadoLivreUcs = () => {
     const tokens = mercadoLivreInput
       .split(/[\n,;\s\t]+/)
@@ -9722,7 +9823,7 @@ export default function App() {
                 setFetchTrigger((prev) => prev + 1);
               }}
               disabled={isSyncing}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
+              className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
               title="Recarregar faturas da Nuvem (Supabase)"
             >
               {isSyncing ? (
@@ -9730,7 +9831,22 @@ export default function App() {
               ) : (
                 <Cloud size={15} className="text-sanesul-primary" />
               )}
-              <span>{isSyncing ? "Sincronizando..." : "Recarregar Nuvem"}</span>
+              <span>{isSyncing ? "Carregando..." : "Recarregar Nuvem"}</span>
+            </button>
+
+            {/* Espelhar no Supabase (1:1) */}
+            <button
+              onClick={mirrorAppToSupabase}
+              disabled={isSyncing}
+              className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-sky-600 to-blue-700 text-white hover:from-sky-500 hover:to-blue-600 transition-all rounded-xl text-xs font-bold shadow-sm shadow-blue-500/20 active:scale-95 disabled:opacity-50"
+              title="Garante que o Supabase contenha exatamente as faturas presentes no App (Sincronização Estrita 1:1)"
+            >
+              {isSyncing ? (
+                <Loader2 size={15} className="animate-spin text-white" />
+              ) : (
+                <FileUp size={15} />
+              )}
+              <span>Espelhar no Supabase (1:1)</span>
             </button>
 
             {/* Configurar API */}
@@ -9988,6 +10104,23 @@ export default function App() {
                   >
                     <Download size={15} />
                     <span>Exportar CSV</span>
+                  </button>
+                )}
+
+                {/* Espelhar Supabase 1:1 */}
+                {isSupabaseConfigured && bills.some((b) => b.status === "completed") && (
+                  <button
+                    onClick={mirrorAppToSupabase}
+                    disabled={isSyncing}
+                    className="flex items-center gap-2 px-3.5 py-2 bg-sky-50 border border-sky-200 text-sky-700 hover:bg-sky-100 hover:border-sky-300 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
+                    title="Espelhar faturas no Supabase mantendo a contagem 100% idêntica ao aplicativo"
+                  >
+                    {isSyncing ? (
+                      <Loader2 size={15} className="animate-spin text-sky-600" />
+                    ) : (
+                      <FileUp size={15} className="text-sky-600" />
+                    )}
+                    <span>Espelhar 1:1</span>
                   </button>
                 )}
 
