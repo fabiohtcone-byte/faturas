@@ -1774,10 +1774,10 @@ const mapDbToBillData = (dbBill: any): BillData => {
     demandaTodosPeriodosKW: dbBill.demanda_todos_periodos_kw || "",
     consumoKwhPonta: dbBill.consumo_kwh_ponta || "",
     consumoKwhForaPonta: dbBill.consumo_kwh_fora_ponta || "",
-    consumoKwhGrupoB: consumoKwhGrupoB,
-    valorConsumoKwhPonta: valorConsumoKwhPonta,
+    consumoKwhGrupoB: dbBill.consumo_kwh_grupo_b || dbBill.consumo_grupo_b || "",
+    valorConsumoKwhPonta: dbBill.valor_consumo_kwh_ponta || "",
     valorConsumoKwhForaPonta: dbBill.valor_consumo_kwh_fora_ponta || "",
-    valorConsumoKwhGrupoB: valorConsumoKwhGrupoB,
+    valorConsumoKwhGrupoB: dbBill.valor_consumo_kwh_grupo_b || "",
     valorTotal: dbBill.valor_total || "",
     cidade: dbBill.cidade || "",
     demandaPotenciaNaoConsumidaPonta:
