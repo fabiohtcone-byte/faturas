@@ -4098,60 +4098,64 @@ export default function App() {
   React.useEffect(() => {
     let isCancelled = false;
 
-    const fetchBills = async () => {
-      if (!isSupabaseConfigured) return;
+    const SUPA_URL = 'https://yydvjgbfaapldtkhlqrh.supabase.co';
+    const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5ZHZqZ2JmYWFwbGR0a2hscXJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMjQ1NTMsImV4cCI6MjA4ODkwMDU1M30.GqUoGviAYXveiEs7YmtN6SE5eZ3ZbiENaZtPUfy8blU';
 
+    const supaFetch = async (table: string, params: string) => {
+      const res = await fetch(`${SUPA_URL}/rest/v1/${table}?${params}`, {
+        method: 'GET',
+        headers: {
+          'apikey': SUPA_KEY,
+          'Authorization': `Bearer ${SUPA_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation',
+        },
+      });
+      if (!res.ok) throw new Error(`Supabase REST error: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+
+    const fetchBills = async () => {
       try {
         setIsSyncing(true);
-        console.log("[Supabase Cloud] Carregando dados da nuvem...");
+        console.log('[Supabase REST] Carregando dados da nuvem...');
 
-        // 1. Carrega mapeamentos de UCs do Supabase se existirem
+        // 1. Carrega mapeamentos de UCs
         try {
-          const { data: cloudMappings, error: mappingsError } = await supabase
-            .from("uc_mappings")
-            .select("*");
-          
-          if (!mappingsError && cloudMappings && cloudMappings.length > 0 && !isCancelled) {
+          const cloudMappings = await supaFetch('uc_mappings', 'select=*');
+          if (cloudMappings && cloudMappings.length > 0 && !isCancelled) {
             const sanitizedCloud = cloudMappings.map((m: any) => ({
               uc: String(m.uc),
               gerencia: m.gerencia || '',
               locin: m.locin || '',
               cidade: m.cidade || ''
             }));
-            
             setUcMappings((prev) => {
               const map = new Map(prev.map((m) => [m.uc, m]));
               sanitizedCloud.forEach((m: any) => map.set(m.uc, m));
-              const merged = Array.from(map.values());
-              return merged;
+              return Array.from(map.values());
             });
           }
         } catch (err) {
-          console.warn("[Supabase] Erro ao carregar mapeamentos de UCs:", err);
+          console.warn('[Supabase REST] Erro ao carregar uc_mappings:', err);
         }
 
-        // 2. Carrega todas as faturas do Supabase paginadas
+        // 2. Carrega todas as faturas paginadas com fetch nativo
         let allData: any[] = [];
         let from = 0;
         let to = 999;
         let finished = false;
 
         while (!finished && !isCancelled) {
-          const { data, error } = await supabase
-            .from("bills")
-            .select("*")
-            .range(from, to)
-            .order("created_at", { ascending: false });
+          const chunk = await supaFetch(
+            'bills',
+            `select=*&order=created_at.desc&offset=${from}&limit=1000`
+          );
 
-          if (error) {
-            console.error("[Supabase] Erro ao buscar faturas:", error);
-            finished = true;
-            break;
-          }
-
-          if (data && data.length > 0) {
-            allData = [...allData, ...data];
-            if (data.length < 1000) {
+          if (chunk && chunk.length > 0) {
+            allData = [...allData, ...chunk];
+            console.log(`[Supabase REST] Chunk: ${chunk.length} — total: ${allData.length}`);
+            if (chunk.length < 1000) {
               finished = true;
             } else {
               from += 1000;
@@ -4164,7 +4168,7 @@ export default function App() {
 
         if (isCancelled) return;
 
-        console.log(`[Supabase Cloud] Total de faturas recebidas: ${allData.length}`);
+        console.log(`[Supabase REST] Total de faturas recebidas: ${allData.length}`);
 
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
