@@ -5303,14 +5303,6 @@ export default function App() {
   const [mercadoLivreInput, setMercadoLivreInput] = useState("");
 
 
-  const handleSyncCloud = async () => {
-    if (!isSupabaseConfigured) {
-      showAlert("Atenção", "O Supabase não está configurado.");
-      return;
-    }
-    showAlert("Sincronização", "Recarregando faturas diretamente da nuvem Supabase...");
-    setFetchTrigger((prev) => prev + 1);
-  };
 
   const mirrorAppToSupabase = async () => {
     if (!isSupabaseConfigured) {
@@ -9632,23 +9624,6 @@ export default function App() {
               </span>
             </div>
 
-            {/* Recarregar Nuvem */}
-            <button
-              onClick={() => {
-                showAlert("Sincronização", "Recarregando faturas diretamente do Supabase Cloud...");
-                setFetchTrigger((prev) => prev + 1);
-              }}
-              disabled={isSyncing}
-              className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
-              title="Recarregar faturas da Nuvem (Supabase)"
-            >
-              {isSyncing ? (
-                <Loader2 size={15} className="animate-spin text-sanesul-primary" />
-              ) : (
-                <Cloud size={15} className="text-sanesul-primary" />
-              )}
-              <span>{isSyncing ? "Carregando..." : "Recarregar Nuvem"}</span>
-            </button>
 
             {/* Espelhar no Supabase (1:1) */}
             <button
