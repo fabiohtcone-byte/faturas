@@ -3797,6 +3797,8 @@ export default function App() {
       if (error) {
         if (error.message?.includes("Failed to fetch") || error.message?.includes("fetch failed")) {
           setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+        } else if (error.message?.toLowerCase().includes("rate limit")) {
+          setLoginError("Limite de envio de e-mails do Supabase atingido. Tente fazer login direto na aba 'Entrar' (caso já tenha cadastrado) ou desative 'Confirm email' em Authentication -> Providers -> Email no Supabase.");
         } else {
           setLoginError(`Erro ao cadastrar: ${error.message}`);
         }
@@ -3815,6 +3817,8 @@ export default function App() {
       console.error(err);
       if (err.message?.includes("Failed to fetch") || err.message?.includes("fetch failed")) {
         setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+      } else if (err.message?.toLowerCase().includes("rate limit")) {
+        setLoginError("Limite de envio de e-mails do Supabase atingido. Tente fazer login direto na aba 'Entrar' ou desative 'Confirm email' em Authentication -> Providers -> Email no Supabase.");
       } else {
         setLoginError(`Erro inesperado: ${err.message || err}`);
       }
