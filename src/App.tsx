@@ -3759,6 +3759,7 @@ export default function App() {
       setIsAuthenticated(!!session);
       if (session) {
         localStorage.setItem("sanesul_auth", "true");
+        setFetchTrigger((prev) => prev + 1);
       } else {
         localStorage.removeItem("sanesul_auth");
       }
@@ -3793,6 +3794,7 @@ export default function App() {
         if (data.session) {
           setIsAuthenticated(true);
           localStorage.setItem("sanesul_auth", "true");
+          setFetchTrigger((prev) => prev + 1);
           showAlert("Sucesso", "Cadastro realizado e login efetuado com sucesso!");
         } else {
           showAlert("Sucesso", "Cadastro realizado! Por favor, confirme o e-mail em sua caixa de entrada.");
@@ -3833,6 +3835,7 @@ export default function App() {
         console.log("Login bem-sucedido:", data.user);
         setIsAuthenticated(true);
         localStorage.setItem("sanesul_auth", "true");
+        setFetchTrigger((prev) => prev + 1);
       }
     } catch (err: any) {
       console.error("Erro inesperado no handleLogin:", err);
@@ -4183,22 +4186,33 @@ export default function App() {
   }, []);
 
   React.useEffect(() => {
+    let isCancelled = false;
+
     const fetchBills = async () => {
       if (!isSupabaseConfigured || !isAuthenticated) return;
 
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) return;
+        setIsSyncing(true);
 
-        // Carrega mapeamentos de UCs do Supabase se existirem
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        
+        if (!session?.user) {
+          console.warn("[Supabase] Aguardando sessão ativa para carregar faturas...");
+          if (!isCancelled) setIsSyncing(false);
+          return;
+        }
+
+        console.log(`[Supabase] Carregando faturas da nuvem para o usuário: ${session.user.email}`);
+
+        // 1. Carrega mapeamentos de UCs do Supabase se existirem
         try {
           const { data: cloudMappings, error: mappingsError } = await supabase
             .from("uc_mappings")
             .select("*");
           
-          if (!mappingsError && cloudMappings && cloudMappings.length > 0) {
+          if (!mappingsError && cloudMappings && cloudMappings.length > 0 && !isCancelled) {
             const sanitizedCloud = cloudMappings.map((m: any) => ({
               uc: String(m.uc),
               gerencia: m.gerencia || '',
@@ -4220,12 +4234,13 @@ export default function App() {
           console.warn("[Supabase] Erro ao carregar mapeamentos de UCs:", err);
         }
 
+        // 2. Carrega todas as faturas do Supabase paginadas
         let allData: any[] = [];
         let from = 0;
         let to = 999;
         let finished = false;
 
-        while (!finished) {
+        while (!finished && !isCancelled) {
           const { data, error } = await supabase
             .from("bills")
             .select("*")
@@ -4233,9 +4248,9 @@ export default function App() {
             .order("created_at", { ascending: false });
 
           if (error) {
-            console.error("Erro ao buscar faturas do Supabase:", error);
+            console.error("[Supabase] Erro ao buscar faturas:", error);
             finished = true;
-            return;
+            break;
           }
 
           if (data && data.length > 0) {
@@ -4251,10 +4266,14 @@ export default function App() {
           }
         }
 
+        if (isCancelled) return;
+
+        console.log(`[Supabase] Total de faturas recebidas da nuvem: ${allData.length}`);
+
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
 
-          // Extract unique mappings from the database to keep localStorage updated
+          // Extract unique mappings from the database
           const dbMappings: Record<string, UCLocinMapping> = {};
           mappedBills.forEach((b) => {
             if (b.uc && b.gerencia && b.locin) {
@@ -4270,11 +4289,9 @@ export default function App() {
           if (Object.keys(dbMappings).length > 0) {
             setUcMappings((prev) => {
               const existingMap = new Map(prev.map((m) => [m.uc, m]));
-
               Object.values(dbMappings).forEach((m) => {
                 existingMap.set(m.uc, m);
               });
-
               const updated = Array.from(existingMap.values());
               try {
                 localStorage.setItem(
@@ -4286,7 +4303,7 @@ export default function App() {
             });
           }
 
-          // Apply fixes to data from Supabase
+          // Apply fixes & deduplicate
           let hasChanges = false;
           const updatedBills = mappedBills.map((b, i) => {
             let updatedBill = { ...b };
@@ -4369,8 +4386,14 @@ export default function App() {
           });
 
           setBills((prev) => {
-            return deduplicateBills([...prev, ...updatedBills]);
+            const pending = prev.filter((b) => b.status !== "completed");
+            return deduplicateBills([...updatedBills, ...pending]);
           });
+
+          // Cache in localStorage as fallback
+          try {
+            localStorage.setItem("sanesul_bills", JSON.stringify(updatedBills));
+          } catch (e) {}
 
           // If changes were made, update Supabase sequentially to avoid locking
           if (hasChanges) {
@@ -4385,7 +4408,7 @@ export default function App() {
             );
             for (const billToSave of changedBills) {
               try {
-                const dbData = mapBillDataToDb(billToSave, user.id);
+                const dbData = mapBillDataToDb(billToSave, session.user.id);
                 await supabase
                   .from("bills")
                   .update(dbData)
@@ -4395,16 +4418,19 @@ export default function App() {
               }
             }
           }
-        } else {
-          // Mantém as faturas locais do SQLite caso o Supabase esteja vazio
-          setBills((prev) => prev);
         }
       } catch (err) {
-        console.error("Erro inesperado ao buscar faturas:", err);
+        console.error("[Supabase] Erro inesperado ao buscar faturas:", err);
+      } finally {
+        if (!isCancelled) setIsSyncing(false);
       }
     };
 
     fetchBills();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [isAuthenticated, fetchTrigger]);
 
   const saveTimeoutRef = React.useRef<NodeJS.Timeout>();
@@ -5581,6 +5607,20 @@ export default function App() {
       showAlert("Erro", `Falha ao sincronizar com o Supabase: ${err.message || err}`);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleSyncCloud = async () => {
+    if (!isSupabaseConfigured || !isAuthenticated) {
+      showAlert("Atenção", "O Supabase não está configurado ou você não está autenticado.");
+      return;
+    }
+
+    if (sqliteHealth.connected) {
+      await syncLocalToSupabase();
+    } else {
+      showAlert("Sincronização", "Recarregando faturas diretamente da nuvem Supabase...");
+      setFetchTrigger((prev) => prev + 1);
     }
   };
 
@@ -9934,10 +9974,10 @@ export default function App() {
             {/* Sincronizar Nuvem */}
             {isSupabaseConfigured && (
               <button
-                onClick={syncLocalToSupabase}
+                onClick={handleSyncCloud}
                 disabled={isSyncing}
                 className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
-                title="Sincronizar banco local com Supabase na Nuvem"
+                title="Sincronizar e recarregar faturas da Nuvem (Supabase)"
               >
                 {isSyncing ? (
                   <Loader2 size={15} className="animate-spin text-sanesul-primary" />
