@@ -3795,7 +3795,11 @@ export default function App() {
       });
       
       if (error) {
-        setLoginError(`Erro ao cadastrar: ${error.message}`);
+        if (error.message?.includes("Failed to fetch") || error.message?.includes("fetch failed")) {
+          setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+        } else {
+          setLoginError(`Erro ao cadastrar: ${error.message}`);
+        }
       } else if (data.user) {
         if (data.session) {
           setIsAuthenticated(true);
@@ -3809,7 +3813,11 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setLoginError(`Erro inesperado: ${err.message || err}`);
+      if (err.message?.includes("Failed to fetch") || err.message?.includes("fetch failed")) {
+        setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+      } else {
+        setLoginError(`Erro inesperado: ${err.message || err}`);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -3836,7 +3844,11 @@ export default function App() {
 
       if (error) {
         console.error("Erro no Supabase Auth:", error);
-        setLoginError(`Erro de autenticação: ${error.message}`);
+        if (error.message?.includes("Failed to fetch") || error.message?.includes("fetch failed")) {
+          setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+        } else {
+          setLoginError(`Erro de autenticação: ${error.message}`);
+        }
       } else if (data.user) {
         console.log("Login bem-sucedido:", data.user);
         setIsAuthenticated(true);
@@ -3845,10 +3857,8 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("Erro inesperado no handleLogin:", err);
-      if (err.message === "Failed to fetch") {
-        setLoginError(
-          "Erro de conexão com o Supabase. Verifique se a URL está correta nas configurações.",
-        );
+      if (err.message?.includes("Failed to fetch") || err.message?.includes("fetch failed")) {
+        setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
       } else {
         setLoginError("Erro inesperado ao tentar logar. Verifique a conexão.");
       }
@@ -9902,6 +9912,24 @@ export default function App() {
             >
               {isSyncing && <Loader2 size={16} className="animate-spin" />}
               {isSignUp ? "Cadastrar Conta" : "Entrar no Painel"}
+            </button>
+
+            <div className="relative flex py-1 items-center">
+              <div className="flex-grow border-t border-slate-200"></div>
+              <span className="shrink mx-3 text-[10px] text-slate-400 font-bold uppercase">Ou</span>
+              <div className="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsAuthenticated(true);
+                localStorage.setItem("sanesul_auth", "true");
+              }}
+              className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all rounded-2xl text-xs font-bold active:scale-95 flex items-center justify-center gap-2 border border-slate-200"
+            >
+              <Database size={15} className="text-slate-600" />
+              <span>Acessar Modo Local / Offline</span>
             </button>
           </form>
         </motion.div>
