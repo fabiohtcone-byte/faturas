@@ -7256,15 +7256,47 @@ export default function App() {
         };
       });
 
-      // 2nd Pass: Identify the exact Contract Alteration month & Calculate Baseline and Economy from that month onwards
+      // 2nd Pass: Identify all contract transitions and select the LAST (última) contract alteration
       const orig = customOriginalContratadas[uc] || ORIGINAL_CONTRATADAS[uc] || null;
       const meta = customAdjustmentsMetadata[uc] || {};
       const metaAlteracao = meta.dataAlteracao;
 
-      // Find the alteration index
+      // Scan all contract transitions in chronological order
+      const contractTransitions: {
+        idx: number;
+        prevStart: number;
+        prevEnd: number;
+        prevContract: { ponta: number; foraPonta: number };
+        newContract: { ponta: number; foraPonta: number };
+      }[] = [];
+
+      let runningContract: { ponta: number; foraPonta: number } | null = null;
+      let runningContractStart = 0;
+
+      for (let i = 0; i < processedBills.length; i++) {
+        const b = processedBills[i];
+        if (b.dcp > 0 || b.dcfp > 0) {
+          if (runningContract === null) {
+            runningContract = { ponta: b.dcp, foraPonta: b.dcfp };
+            runningContractStart = i;
+          } else if (b.dcp !== runningContract.ponta || b.dcfp !== runningContract.foraPonta) {
+            contractTransitions.push({
+              idx: i,
+              prevStart: runningContractStart,
+              prevEnd: i,
+              prevContract: runningContract,
+              newContract: { ponta: b.dcp, foraPonta: b.dcfp },
+            });
+            runningContract = { ponta: b.dcp, foraPonta: b.dcfp };
+            runningContractStart = i;
+          }
+        }
+      }
+
       let alterationIdx = -1;
-      
-      // If explicit meta dataAlteracao is provided
+      let previousContractAverageCost = 0;
+
+      // Check if explicit meta dataAlteracao is defined
       if (metaAlteracao && metaAlteracao !== "-" && metaAlteracao.trim() !== "") {
         const metaParts = metaAlteracao.trim().split("/");
         let targetMonth = 0;
@@ -7284,42 +7316,44 @@ export default function App() {
             const bY = parseInt(String(b.ano || "0"), 10);
             return bY > targetYear || (bY === targetYear && bM >= targetMonth);
           });
-        }
-      }
-
-      // If not found by metadata, detect by change against original contract
-      if (alterationIdx === -1) {
-        if (orig && (orig.p > 0 || orig.fp > 0)) {
-          alterationIdx = processedBills.findIndex(
-            (b) => b.dcp !== orig.p || b.dcfp !== orig.fp
-          );
-        }
-      }
-
-      // If still not found, check sequential contract change in processed bills
-      if (alterationIdx === -1 && processedBills.length > 1) {
-        let firstContract: { ponta: number; foraPonta: number } | null = null;
-        for (let i = 0; i < processedBills.length; i++) {
-          const b = processedBills[i];
-          if (b.dcp > 0 || b.dcfp > 0) {
-            if (firstContract === null) {
-              firstContract = { ponta: b.dcp, foraPonta: b.dcfp };
-            } else if (b.dcp !== firstContract.ponta || b.dcfp !== firstContract.foraPonta) {
-              alterationIdx = i;
-              break;
-            }
+          if (alterationIdx > 0) {
+            const preBills = processedBills.slice(0, alterationIdx);
+            previousContractAverageCost = preBills.reduce((acc, item) => acc + item.currentTotal, 0) / preBills.length;
           }
         }
       }
 
-      // Determine Reference Baseline (Average of Pre-Alteration Period)
-      let previousContractAverageCost = 0;
-      if (alterationIdx > 0) {
-        const preBills = processedBills.slice(0, alterationIdx);
-        const sum = preBills.reduce((acc, item) => acc + item.currentTotal, 0);
-        previousContractAverageCost = sum / preBills.length;
-      } else if (alterationIdx === 0) {
-        // All uploaded bills are from the alteration month onwards; simulate base cost from orig contract if available
+      // If not set by metadata, select the LAST (última) contract alteration
+      if (alterationIdx === -1 && contractTransitions.length > 0) {
+        const lastTransition = contractTransitions[contractTransitions.length - 1];
+        alterationIdx = lastTransition.idx;
+        const preBills = processedBills.slice(lastTransition.prevStart, lastTransition.prevEnd);
+        if (preBills.length > 0) {
+          previousContractAverageCost = preBills.reduce((acc, item) => acc + item.currentTotal, 0) / preBills.length;
+        } else if (alterationIdx > 0) {
+          const preAll = processedBills.slice(0, alterationIdx);
+          previousContractAverageCost = preAll.reduce((acc, item) => acc + item.currentTotal, 0) / preAll.length;
+        }
+      }
+
+      // If still not found, check change against original baseline contract
+      if (alterationIdx === -1 && orig && (orig.p > 0 || orig.fp > 0)) {
+        // Find last bill that differs from orig
+        for (let i = processedBills.length - 1; i >= 0; i--) {
+          const b = processedBills[i];
+          if (b.dcp !== orig.p || b.dcfp !== orig.fp) {
+            alterationIdx = i;
+            break;
+          }
+        }
+        if (alterationIdx > 0) {
+          const preBills = processedBills.slice(0, alterationIdx);
+          previousContractAverageCost = preBills.reduce((acc, item) => acc + item.currentTotal, 0) / preBills.length;
+        }
+      }
+
+      // Fallback if all bills uploaded are already from the alteration period onwards
+      if (alterationIdx === 0 && previousContractAverageCost === 0) {
         const baseDcp = orig ? orig.p : processedBills[0].dcp;
         const baseDcfp = orig ? orig.fp : processedBills[0].dcfp;
         const avgTariffP = isAzul ? 85.53 : 0;
@@ -7328,7 +7362,7 @@ export default function App() {
         previousContractAverageCost = simulatedBase > 0 ? simulatedBase : processedBills[0].currentTotal;
       }
 
-      // 3rd Pass: Calculate monthly economy and accumulated economy starting from the alteration month onwards
+      // 3rd Pass: Calculate monthly economy and accumulated economy starting strictly from the LAST alteration month onwards
       let accumulatedEconomy = 0;
       const hasContractChange = alterationIdx !== -1;
 
@@ -7343,7 +7377,7 @@ export default function App() {
           referenceTotal = previousContractAverageCost;
           // Economia no mês: (Ref. Anterior - Gasto Real)
           economyFromChange = referenceTotal - b.currentTotal;
-          // Economia Acumulada a partir do mês em que foi alterado o contrato em diante
+          // Economia Acumulada a partir da última alteração do contrato em diante
           accumulatedEconomy += economyFromChange;
         }
 
