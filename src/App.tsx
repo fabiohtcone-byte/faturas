@@ -9656,6 +9656,21 @@ export default function App() {
 
   // Dashboard is always accessible - Supabase RLS anon policy handles read security.
   // Login via Supabase Auth is optional (used only for write-protected ops if needed).
+
+  // Show full-screen loading while fetching from Supabase
+  if (currentPage === "visao_geral" && isSyncing && bills.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-6">
+        <Logo className="h-14" />
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 size={36} className="animate-spin text-sanesul-primary" />
+          <p className="text-sm font-bold text-slate-600">Carregando faturas do Supabase Cloud...</p>
+          <p className="text-xs text-slate-400">Aguarde enquanto buscamos os dados</p>
+        </div>
+      </div>
+    );
+  }
+
   if (currentPage === "visao_geral") {
     return (
       <VisaoGeralDashboard
