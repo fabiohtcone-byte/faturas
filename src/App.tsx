@@ -9879,35 +9879,55 @@ export default function App() {
             <Logo className="h-12" />
             <div className="hidden sm:flex items-center gap-2 pl-4 border-l border-slate-200">
               <span className="flex h-2.5 w-2.5 relative">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${sqliteHealth.connected ? "bg-emerald-400" : "bg-amber-400"}`}></span>
-                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${sqliteHealth.connected ? "bg-emerald-500" : "bg-amber-500"}`}></span>
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                  sqliteHealth.connected || (isSupabaseConfigured && isAuthenticated) ? "bg-emerald-400" : "bg-amber-400"
+                }`}></span>
+                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                  sqliteHealth.connected || (isSupabaseConfigured && isAuthenticated) ? "bg-emerald-500" : "bg-amber-500"
+                }`}></span>
               </span>
-              <span className="text-[11px] font-bold text-slate-500 tracking-wider uppercase">
-                {sqliteHealth.connected ? "Sistema Operacional" : "Aguardando Conexão"}
+              <span className="text-[11px] font-bold text-slate-600 tracking-wider uppercase">
+                {sqliteHealth.connected
+                  ? "Sistema Operacional (SQLite)"
+                  : isSupabaseConfigured && isAuthenticated
+                  ? "Sistema Operacional (Nuvem)"
+                  : "Modo Local"}
               </span>
             </div>
           </div>
 
           {/* Quick Actions & System Controls */}
           <div className="flex flex-wrap gap-2.5 items-center">
-            {/* SQLite Health Badge */}
+            {/* Database Health Badge */}
             <div
               className={`flex items-center gap-2 px-3.5 py-2 border rounded-xl text-xs font-semibold shadow-xs transition-all ${
                 sqliteHealth.connected
                   ? "bg-emerald-50/80 text-emerald-700 border-emerald-200"
+                  : isSupabaseConfigured && isAuthenticated
+                  ? "bg-sky-50/80 text-sky-700 border-sky-200"
                   : "bg-amber-50/80 text-amber-700 border-amber-200"
               }`}
               title={
                 sqliteHealth.connected
                   ? `Banco SQLite Local: ${sqliteHealth.totalBills} faturas salvas (${sqliteHealth.totalUcs} UCs)`
-                  : "Servidor SQLite local offline."
+                  : isSupabaseConfigured && isAuthenticated
+                  ? `Nuvem Supabase: ${bills.filter(b => b.status === "completed").length} faturas sincronizadas`
+                  : "Modo de armazenamento em cache local."
               }
             >
-              <Database size={15} className={sqliteHealth.connected ? "text-emerald-600" : "text-amber-600"} />
+              {sqliteHealth.connected ? (
+                <Database size={15} className="text-emerald-600" />
+              ) : isSupabaseConfigured && isAuthenticated ? (
+                <Cloud size={15} className="text-sky-600" />
+              ) : (
+                <Database size={15} className="text-amber-600" />
+              )}
               <span className="font-mono font-bold">
                 {sqliteHealth.connected
                   ? `SQLite: ${sqliteHealth.totalBills.toLocaleString()} faturas`
-                  : "SQLite Offline"}
+                  : isSupabaseConfigured && isAuthenticated
+                  ? `Nuvem: ${bills.filter(b => b.status === "completed").length.toLocaleString()} faturas`
+                  : `Local: ${bills.length.toLocaleString()} faturas`}
               </span>
             </div>
 
