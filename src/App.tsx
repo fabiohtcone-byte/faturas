@@ -3706,37 +3706,24 @@ export default function App() {
     supabase.auth
       .getSession()
       .then(({ data: { session } }) => {
-        setIsAuthenticated(!!session);
         if (session) {
+          setIsAuthenticated(true);
           localStorage.setItem("sanesul_auth", "true");
-        } else {
-          localStorage.removeItem("sanesul_auth");
         }
       })
-      .catch(async (err) => {
-        console.error("Erro ao buscar sessão do Supabase:", err);
-        if (
-          err.message?.includes("Refresh Token Not Found") ||
-          err.message?.includes("invalid refresh token")
-        ) {
-          try {
-            await supabase.auth.signOut();
-          } catch (signOutErr) {
-            console.error("Erro ao realizar signOut:", signOutErr);
-          }
-          localStorage.removeItem("sanesul_auth");
-          setIsAuthenticated(false);
-        }
+      .catch((err) => {
+        console.warn("Aviso ao recuperar sessão do Supabase:", err);
       });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthenticated(!!session);
+    } = supabase.auth.onAuthStateChange((event, session) => {
       if (session) {
+        setIsAuthenticated(true);
         localStorage.setItem("sanesul_auth", "true");
         setFetchTrigger((prev) => prev + 1);
-      } else {
+      } else if (event === "SIGNED_OUT") {
+        setIsAuthenticated(false);
         localStorage.removeItem("sanesul_auth");
       }
     });
