@@ -7543,6 +7543,7 @@ export default function App() {
         result.anoLeitura
       ) {
       // No longer querying for existingDbId. We will unconditionally delete any matching records in Supabase.
+      }
       
       // Check duplicates in current list to delete them from SQLite
       let finalStatus: "completed" | "error" = "completed";
