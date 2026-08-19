@@ -7665,7 +7665,6 @@ export default function App() {
             updatedBill.status = "error";
             updatedBill.error = insertError.message || "Erro ao salvar no banco de dados.";
           }
-        }
       }
 
       setBills((prev) =>
