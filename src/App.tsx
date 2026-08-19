@@ -13712,79 +13712,178 @@ export default function App() {
                 </div>
 
                 {monitoringResults.timelineData && monitoringResults.timelineData.length > 0 && (
-                  <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl">
-                    <div className="flex items-center justify-between mb-8">
-                      <h3 className="text-xl font-display font-bold text-sanesul-primary">
-                        Evolução Mensal Pós Alteração
-                      </h3>
-                      <div className="px-4 py-2 bg-sanesul-primary/5 rounded-full">
-                        <span className="text-xs font-bold text-sanesul-primary uppercase tracking-wider">
-                          Economia x Valor Simulado
-                        </span>
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                    {/* Left Column (Span 2): Gráfico de Evolução Mensal */}
+                    <div className="xl:col-span-2 bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-6">
+                        <h3 className="text-xl font-display font-bold text-sanesul-primary">
+                          Evolução Mensal Pós Alteração
+                        </h3>
+                        <div className="px-4 py-2 bg-sanesul-primary/5 rounded-full">
+                          <span className="text-xs font-bold text-sanesul-primary uppercase tracking-wider">
+                            Economia x Valor Simulado
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-96 w-full mt-2">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart
+                            data={monitoringResults.timelineData}
+                            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                            <XAxis 
+                              dataKey="monthYear" 
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fontSize: 12, fill: "#64748b" }} 
+                              dy={10} 
+                            />
+                            <YAxis 
+                              yAxisId="left"
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fontSize: 12, fill: "#64748b" }}
+                              tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
+                            />
+                            <YAxis 
+                              yAxisId="right"
+                              orientation="right"
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fontSize: 12, fill: "#64748b" }}
+                              tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
+                            />
+                            <Tooltip
+                              contentStyle={{ borderRadius: "16px", border: "none", boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05)" }}
+                              formatter={(value: number) => `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                            />
+                            <Legend wrapperStyle={{ paddingTop: "20px" }} />
+                            <Bar 
+                              yAxisId="left"
+                              dataKey="referenceTotal" 
+                              name="Valor Sem Alteração (Simulado)" 
+                              fill="#cbd5e1" 
+                              radius={[6, 6, 0, 0]} 
+                              barSize={36}
+                            />
+                            <Bar 
+                              yAxisId="left"
+                              dataKey="currentTotal" 
+                              name="Valor Real Pago" 
+                              fill="#0d2551" 
+                              radius={[6, 6, 0, 0]} 
+                              barSize={36}
+                            />
+                            <Line 
+                              yAxisId="right"
+                              type="monotone" 
+                              dataKey="economy" 
+                              name="Valor Economizado" 
+                              stroke="#16a34a" 
+                              strokeWidth={3}
+                              dot={{ r: 4, strokeWidth: 2, fill: "#fff" }}
+                              activeDot={{ r: 6, strokeWidth: 0 }}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
                       </div>
                     </div>
-                    <div className="h-96 w-full mt-4">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart
-                          data={monitoringResults.timelineData}
-                          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis 
-                            dataKey="monthYear" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 12, fill: "#64748b" }} 
-                            dy={10} 
-                          />
-                          <YAxis 
-                            yAxisId="left"
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 12, fill: "#64748b" }}
-                            tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
-                          />
-                          <YAxis 
-                            yAxisId="right"
-                            orientation="right"
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 12, fill: "#64748b" }}
-                            tickFormatter={(value) => `R$ ${(value / 1000).toFixed(0)}k`}
-                          />
-                          <Tooltip
-                            contentStyle={{ borderRadius: "16px", border: "none", boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05)" }}
-                            formatter={(value: number) => `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
-                          />
-                          <Legend wrapperStyle={{ paddingTop: "20px" }} />
-                          <Bar 
-                            yAxisId="left"
-                            dataKey="referenceTotal" 
-                            name="Valor Sem Alteração (Simulado)" 
-                            fill="#cbd5e1" 
-                            radius={[6, 6, 0, 0]} 
-                            barSize={40}
-                          />
-                          <Bar 
-                            yAxisId="left"
-                            dataKey="currentTotal" 
-                            name="Valor Real Pago" 
-                            fill="#0d2551" 
-                            radius={[6, 6, 0, 0]} 
-                            barSize={40}
-                          />
-                          <Line 
-                            yAxisId="right"
-                            type="monotone" 
-                            dataKey="economy" 
-                            name="Valor Economizado" 
-                            stroke="#16a34a" 
-                            strokeWidth={3}
-                            dot={{ r: 4, strokeWidth: 2, fill: "#fff" }}
-                            activeDot={{ r: 6, strokeWidth: 0 }}
-                          />
-                        </ComposedChart>
-                      </ResponsiveContainer>
+
+                    {/* Right Column (Span 1): Card Somatório das Economias Mês a Mês */}
+                    <div className="bg-white p-8 rounded-[32px] border border-sanesul-primary/5 shadow-xl flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
+                              <TrendingUp size={20} />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-display font-bold text-sanesul-primary">
+                                Somatório Mês a Mês
+                              </h3>
+                              <p className="text-[11px] font-bold text-sanesul-muted uppercase tracking-wider">
+                                Economia Realizada Consolidada
+                              </p>
+                            </div>
+                          </div>
+                          <div className="px-3 py-1 bg-green-50 text-green-700 rounded-full text-[10px] font-black uppercase tracking-wider">
+                            {monitoringResults.timelineData.length} {monitoringResults.timelineData.length === 1 ? "Mês" : "Meses"}
+                          </div>
+                        </div>
+
+                        {/* Totalizador Geral */}
+                        <div className="bg-gradient-to-br from-green-50/80 to-emerald-50/40 p-5 rounded-2xl border border-green-100/80 mb-6">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-green-700 block mb-1">
+                            Economia Total Acumulada
+                          </span>
+                          <p className="text-3xl font-display font-extrabold text-green-700">
+                            R${" "}
+                            {monitoringResults.timelineData
+                              .reduce((sum: number, item: any) => sum + item.economy, 0)
+                              .toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-green-200/50 text-xs">
+                            <span className="text-slate-500 font-medium">Média mensal:</span>
+                            <span className="font-bold font-mono text-green-800">
+                              R${" "}
+                              {(
+                                monitoringResults.timelineData.reduce((sum: number, item: any) => sum + item.economy, 0) /
+                                (monitoringResults.timelineData.length || 1)
+                              ).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              /mês
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Lista Mês a Mês */}
+                        <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                          {(() => {
+                            let runningSum = 0;
+                            return monitoringResults.timelineData.map((item: any, idx: number) => {
+                              runningSum += item.economy;
+                              const isPositive = item.economy >= 0;
+                              return (
+                                <div
+                                  key={idx}
+                                  className="p-3.5 bg-slate-50/80 hover:bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between transition-colors"
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`w-2 h-2 rounded-full ${isPositive ? "bg-green-500" : "bg-red-500"}`} />
+                                      <span className="text-xs font-bold text-sanesul-primary">
+                                        {item.monthYear}
+                                      </span>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-slate-400 block pl-4">
+                                      Acumulado: R${" "}
+                                      {runningSum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+
+                                  <div className="text-right">
+                                    <span
+                                      className={`text-sm font-display font-extrabold ${
+                                        isPositive ? "text-green-600" : "text-red-600"
+                                      }`}
+                                    >
+                                      {isPositive ? "+" : ""}R${" "}
+                                      {item.economy.toLocaleString("pt-BR", {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                      })}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 block font-mono">
+                                      Ref: R${" "}
+                                      {(item.referenceTotal / 1000).toFixed(1)}k
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
