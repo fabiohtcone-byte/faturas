@@ -1,5 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { UC_MIGRATION_MAP } from "../uc_migration";
 
 // Set the workerSrc to the local file
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -32,8 +33,8 @@ export async function extractTextFromPdf(file: File | Blob): Promise<string> {
     try {
       if (typeof loadingTask.destroy === "function") {
         await loadingTask.destroy();
-      } else if (typeof pdf.destroy === "function") {
-        await pdf.destroy();
+      } else if (typeof (pdf as any).destroy === "function") {
+        await (pdf as any).destroy();
       } else if (typeof pdf.cleanup === "function") {
         await pdf.cleanup();
       }
@@ -189,22 +190,52 @@ export function parseBillText(text: string): Record<string, string> {
   let mesReferencia = "";
   let anoLeitura = "";
   
-  // Tentativa 1: Formato "Junho / 2026", "Junho/2026", "Junho de 2026", "Junho 2026"
-  let matchMesAno = text.match(/(Janeiro|Fevereiro|Mar[çc]o|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro)\s*(?:\/|-|de|\s)?\s*(202\d)/i);
-  if (matchMesAno) {
-    mesReferencia = matchMesAno[1];
-    anoLeitura = matchMesAno[2];
+  const MONTH_MAP_EXTRACT: Record<string, string> = {
+    jan: "Janeiro", janeiro: "Janeiro",
+    fev: "Fevereiro", fevereiro: "Fevereiro",
+    mar: "Março", marco: "Março", março: "Março",
+    abr: "Abril", abril: "Abril",
+    mai: "Maio", maio: "Maio",
+    jun: "Junho", junho: "Junho",
+    jul: "Julho", julho: "Julho",
+    ago: "Agosto", agosto: "Agosto",
+    set: "Setembro", setembro: "Setembro",
+    out: "Outubro", outubro: "Outubro",
+    nov: "Novembro", novembro: "Novembro",
+    dez: "Dezembro", dezembro: "Dezembro",
+    "01": "Janeiro", "1": "Janeiro",
+    "02": "Fevereiro", "2": "Fevereiro",
+    "03": "Março", "3": "Março",
+    "04": "Abril", "4": "Abril",
+    "05": "Maio", "5": "Maio",
+    "06": "Junho", "6": "Junho",
+    "07": "Julho", "7": "Julho",
+    "08": "Agosto", "8": "Agosto",
+    "09": "Setembro", "9": "Setembro",
+    "10": "Outubro",
+    "11": "Novembro",
+    "12": "Dezembro",
+  };
+
+  // Prioridade 1: Formato explícito ancorado por palavras-chave (Mês/Ano, Referência, REF, Competência)
+  let matchNum = text.match(/(?:Referência:|M[êe]s\s*(?:\/|\s*e\s*|\s+)\s*Ano|REF:?|COMPET[ÊE]NCIA:?)\s*(?:VENCIMENTO\s*)?(\d{2}|Jan(?:eiro)?|Fev(?:ereiro)?|Mar(?:[çc]o)?|Abr(?:il)?|Mai(?:o)?|Jun(?:ho)?|Jul(?:ho)?|Ago(?:sto)?|Set(?:embro)?|Out(?:ubro)?|Nov(?:embro)?|Dez(?:embro)?)\s*(?:\/|-|\s)?\s*(202\d)/i);
+  if (matchNum) {
+    const rawM = matchNum[1].toLowerCase().trim();
+    mesReferencia = MONTH_MAP_EXTRACT[rawM] || matchNum[1];
+    anoLeitura = matchNum[2];
   } else {
-    // Tentativa 2: Formato numérico "06/2026" perto de palavras-chave
-    let matchNum = text.match(/(?:Referência:|M[êe]s\s*\/\s*Ano|REF:?)\s*(?:VENCIMENTO\s*)?(\d{2})\s*\/\s*(202\d)/i);
-    if (matchNum) {
-      mesReferencia = matchNum[1];
-      anoLeitura = matchNum[2];
+    // Prioridade 2: Formato textual explícito com separador: "Setembro / 2026", "SET/2026", "Setembro de 2026"
+    let matchMesAno = text.match(/(Janeiro|Fevereiro|Mar[çc]o|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro|Jan|Fev|Mar|Abr|Mai|Jun|Jul|Ago|Set|Out|Nov|Dez)\s*(?:\/|-|de|\s)\s*(202\d)/i);
+    if (matchMesAno) {
+      const rawM = matchMesAno[1].toLowerCase().trim();
+      mesReferencia = MONTH_MAP_EXTRACT[rawM] || matchMesAno[1];
+      anoLeitura = matchMesAno[2];
     } else {
-      // Tentativa 3: Qualquer "MM/202X" perto do topo/vencimento
+      // Prioridade 3: Qualquer "MM/202X" perto do topo/vencimento/apresentação
       let matchFallback = text.match(/(?:DATA DE EMISSÃO|VENCIMENTO|Data de apresenta[\s\S]{1,3}o)[\s\S]{0,150}?(0[1-9]|1[0-2])\s*\/\s*(202\d)/i);
       if (matchFallback) {
-        mesReferencia = matchFallback[1];
+        const rawM = matchFallback[1].toLowerCase().trim();
+        mesReferencia = MONTH_MAP_EXTRACT[rawM] || matchFallback[1];
         anoLeitura = matchFallback[2];
       }
     }
@@ -212,11 +243,10 @@ export function parseBillText(text: string): Record<string, string> {
 
   const dataVencimento = extract(/(\d{2}\/\d{2}\/\d{4})\s*VENCIMENTO/i) || extract(/VENCIMENTO.*?(\d{2}\/\d{2}\/\d{4})/i) || extract(/(\d{2}\/\d{2}\/\d{4})\s*R\$/i);
   const numeroNotaFiscal = extract(/NOTA FISCAL Nº:?\s*([\d\.]+)/i);
-  
   let modalidadeTarifaria = extract(/Classifica[\s\S]{1,3}o:\s*([^\/]+)/i);
   const subgrupo = extract(/Classifica[\s\S]{1,3}o:[^\/]+\/\s*([^\s]+)/i);
   const classificacaoLinha = extract(/Classifica[\s\S]{1,3}o:\s*([^\n\r]+)/i);
-  const isVerdeGlobal = modalidadeTarifaria ? /VERDE/i.test(modalidadeTarifaria) : false;
+  const isVerdeGlobal = modalidadeTarifaria ? /VERDE/i.test(modalidadeTarifaria) : (/VERDE/i.test(text) || /HOR[ÁA]RIA\s+VERDE/i.test(text) || /Classifica[\s\S]{1,3}o:[^\n\r]*VERDE/i.test(text));
   let isGrupoB = (modalidadeTarifaria && modalidadeTarifaria.toUpperCase().includes("CONVENCIONAL")) || (subgrupo && subgrupo.toUpperCase().includes("B3"));
   if (!isGrupoB && classificacaoLinha && (classificacaoLinha.toUpperCase().includes("CONVENCIONAL") || classificacaoLinha.toUpperCase().includes("B3"))) {
     isGrupoB = true;
@@ -228,6 +258,7 @@ export function parseBillText(text: string): Record<string, string> {
   // Consumo (Tratando B3 que não tem ponta/fora ponta explicito como verde)
   let consumoKwh = "";
   let consumoKwhPonta = extract(/Consumo[\s\S]{0,60}?(?<!Fora\s)(?<!F)Ponta[\s\S]{0,60}?(?<![\d\,])([\d\.,]+)/i);
+  let consumoKwhIntermediaria = extract(/Consumo[\s\S]{0,60}?Intermedi[aá]ri[ao][\s\S]{0,60}?(?<![\d\,])([\d\.,]+)/i);
   let consumoKwhForaPonta = extract(/Consumo[\s\S]{0,60}?Fora Ponta[\s\S]{0,60}?(?<![\d\,])([\d\.,]+)/i);
   let valorConsumoKwhPonta = extract(/Valor Consumo[\s\S]{0,60}?(?<!Fora\s)(?<!F)Ponta[\s\S]{0,60}?(?<![\d\,])([\d\.,]+)/i);
   let valorConsumoKwhForaPonta = extract(/Valor Consumo[\s\S]{0,60}?Fora Ponta[\s\S]{0,60}?(?<![\d\,])([\d\.,]+)/i);
@@ -292,7 +323,7 @@ export function parseBillText(text: string): Record<string, string> {
   }
   let demandaTodosPeriodos = extract(/Demanda Todos os Períodos:\s*([\d\.,]+)/i) || "0";
 
-  let demandaContratadaPonta = demandaPontaKW || extract(/(\d+(?:,\d+)?)\s*Demanda\s+ponta/i) || extract(/Demanda\s+ponta.*?[\D](\d+(?:,\d+)?)/i) || "0";
+  let demandaContratadaPonta = isVerdeGlobal ? "0,00" : (demandaPontaKW || extract(/(\d+(?:,\d+)?)\s*Demanda\s+ponta/i) || extract(/Demanda\s+ponta.*?[\D](\d+(?:,\d+)?)/i) || "0");
   let demandaContratadaForaPonta = demandaForaPontaKW || extract(/(\d+(?:,\d+)?)\s*Demanda\s+fora\s+ponta/i) || extract(/Demanda\s+fora\s+ponta.*?[\D](\d+(?:,\d+)?)/i) || "0";
   const getExplicitMedida = (type: string) => {
     const regex = /Demanda[\s\S]{0,100}?Medida[\s\S]{0,100}?[-\u2010-\u2015]?[\s\S]{0,30}?Ponta[^\d]{0,100}?(\d+(?:[\.,]\d+)*)/ig;
@@ -1050,140 +1081,239 @@ export function parseBillText(text: string): Record<string, string> {
     }
   }
 
-  // Extração de GDI (Geração Distribuída Injetada) para Energisa
+  // Extração de GDI (Geração Distribuída Injetada) para Energisa / Grupo A / Grupo B
   let energiaAtvInjetadaGDIOUC = 0;
   let valorEnergiaAtvInjetadaGDIOUC = 0;
   let energiaAtvInjetadaGDIMUC = 0;
   let valorEnergiaAtvInjetadaGDIMUC = 0;
 
-  if (concessionaria === "ENERGISA" && text.includes("GDI")) {
-    const oUcCount = (text.match(/GDI oUC/g) || []).length;
-    const mUcCount = (text.match(/GDI mUC/g) || []).length;
-    const expectedTotal = oUcCount + mUcCount;
-    let foundCount = 0;
+  const hasGdiInDoc = /GDI|GD[_\s]?I|Energia\s+(?:Atv|Ativa)?\s*Injetada|Injetada\s+GDI/i.test(text);
 
-    // Estratégia 1: "GDI mUC ... KWH <kWh> <tarifa> -<R$>" (Grupo A multi-mês com KWH inline)
-    const gdiLineRegex = /(GDI mUC|GDI oUC)[\s\S]{0,60}?(?:KWH|kWh)\s*([\d\.]+,\d{2})\s+[\d\.]+,\d+\s+([-\u2010-\u2015\u2212][\d\.]+,\d{2})/ig;
-    let gdiMatch;
-    while ((gdiMatch = gdiLineRegex.exec(text)) !== null) {
-      foundCount++;
-      const type = gdiMatch[1].toUpperCase();
-      const kwhVal = parseFloat(gdiMatch[2].replace(/\./g, "").replace(",", "."));
-      const rawR = gdiMatch[3].replace(/[^\d\.,-]/g, "");
-      const rVal = -Math.abs(parseFloat(rawR.replace(/\./g, "").replace(",", ".")));
-      if (type.includes("MUC")) {
-        energiaAtvInjetadaGDIMUC += kwhVal;
-        valorEnergiaAtvInjetadaGDIMUC += rVal;
-      } else {
-        energiaAtvInjetadaGDIOUC += kwhVal;
-        valorEnergiaAtvInjetadaGDIOUC += rVal;
+  if ((concessionaria === "ENERGISA" || /ENERGISA/i.test(text) || !concessionaria) && hasGdiInDoc) {
+    // Normalização inicial para desmembrar números colados e unificar sinais de menos
+    const normalizedText = text
+      .replace(/[\u2010-\u2015\u2212\uFE63\uFF0D]/g, "-")
+      .replace(/-\s+(\d)/g, "-$1")
+      .replace(/(\d{1,2},\d{6})(\d{1,7}(?:\.\d{3})*,\d{2})/g, "$1 $2")
+      .replace(/(KWH|kWh)(\d)/gi, "$1 $2");
+
+    // Identificar contagens e tipos de GDI presentes no documento
+    const oUcMatches = normalizedText.match(/GDI\s*oUC|GDI\s*OUC|Injetada\s+GDI\s*oUC|GD[_\s]?I\s*oUC/gi) || [];
+    const mUcMatches = normalizedText.match(/GDI\s*mUC|GDI\s*MUC|Injetada\s+GDI\s*mUC|GD[_\s]?I\s*mUC/gi) || [];
+    const genericGdiMatches = normalizedText.match(/Energia\s+(?:Atv|Ativa)?\s*Injetada\s+GDI|Injetada\s+GDI|GD[_\s]?I\s*oUC|GD[_\s]?I\s*mUC/gi) || [];
+    
+    const oUcCount = oUcMatches.length;
+    const mUcCount = mUcMatches.length;
+    const isExplicitOUC = oUcCount > 0 || /GDI\s*oUC/i.test(normalizedText);
+    const isExplicitMUC = mUcCount > 0 || /GDI\s*mUC/i.test(normalizedText);
+
+    let foundGdiItems: { type: 'OUC' | 'MUC'; kwh: number; valor: number; rawText?: string }[] = [];
+
+    // ── Estratégia 1: Regex Direta de Linhas (captura TODAS as ocorrências de mUC e oUC) ────────
+    // Ex: "Energia Atv Injetada GDI mUC 01/2026 mPT KWH 1.200,00 0,907120 -1.088,54"
+    // Ex: "Energia Atv Injetada GDI mUC KWH 3.451,00 0,907120 -3.130,52"
+    const lineRegexPatterns = [
+      /(?:Energia\s+(?:Atv|Ativa)?\s*)?Injetada\s+(GDI\s*(?:oUC|mUC|OUC|MUC)?[^\n\r]*?)(?:KWH|kWh)?\s+([\d\.]+,\d{2})\s+[\d\.]+,\d+\s+(-[\d\.]+,\d{2})/ig,
+      /(?:Energia\s+(?:Atv|Ativa)?\s*)?Injetada\s+(GDI\s*(?:oUC|mUC|OUC|MUC)?[^\n\r]*?)(?:KWH|kWh)?\s+([\d\.]+,\d{2})[^\n\r]*?(-[\d\.]+,\d{2})/ig,
+      /(GDI\s*(?:oUC|mUC|OUC|MUC)[^\n\r]*?)(?:KWH|kWh)?\s+([\d\.]+,\d{2})\s+[\d\.]+,\d+\s+(-[\d\.]+,\d{2})/ig,
+      /(GDI\s*(?:oUC|mUC|OUC|MUC)[^\n\r]*?)(?:KWH|kWh)?\s+([\d\.]+,\d{2})[^\n\r]*?(-[\d\.]+,\d{2})/ig,
+      /(GDI\s*(?:oUC|mUC|OUC|MUC)[^\n\r]*?)(-[\d\.]+,\d{2})[^\n\r]*?([\d\.]+,\d{2})/ig,
+    ];
+
+    for (const regex of lineRegexPatterns) {
+      let m;
+      while ((m = regex.exec(normalizedText)) !== null) {
+        const fullMatch = m[0];
+        const labelPart = (m[1] || fullMatch).toUpperCase();
+        const type: 'OUC' | 'MUC' = labelPart.includes("MUC") ? "MUC" : "OUC";
+        
+        let kwhStr = m[2];
+        let valStr = m[3];
+        
+        if (kwhStr && valStr) {
+          if (kwhStr.startsWith("-") && !valStr.startsWith("-")) {
+            const temp = kwhStr;
+            kwhStr = valStr;
+            valStr = temp;
+          }
+
+          const kwh = parseFloat(kwhStr.replace(/\./g, "").replace(",", "."));
+          const rawV = valStr.replace(/[^\d\.,-]/g, "");
+          const valor = -Math.abs(parseFloat(rawV.replace(/\./g, "").replace(",", ".")));
+
+          if (!isNaN(kwh) && kwh > 0 && !isNaN(valor) && valor < 0) {
+            // Evita duplicatas pelo índice aproximado ou valor exato já registrado
+            const alreadyAdded = foundGdiItems.some(
+              item => Math.abs(item.kwh - kwh) < 0.01 && Math.abs(item.valor - valor) < 0.01 && item.type === type
+            );
+            if (!alreadyAdded) {
+              foundGdiItems.push({ type, kwh, valor, rawText: fullMatch });
+            }
+          }
+        }
       }
     }
 
-    // Estratégia 2: varredura por janela (Grupo B - labels primeiro, valores depois)
-    // Também usado quando Estratégia 1 capturou menos itens do que o esperado
-    if (foundCount < expectedTotal) {
-      if (foundCount === 0) {
-        energiaAtvInjetadaGDIMUC = 0;
-        valorEnergiaAtvInjetadaGDIMUC = 0;
-        energiaAtvInjetadaGDIOUC = 0;
-        valorEnergiaAtvInjetadaGDIOUC = 0;
+    // ── Estratégia 2: Extração Estruturada por Correlação Matemática (DANF3E Colunar) ───
+    const expectedGdiCount = Math.max(1, oUcCount + mUcCount, genericGdiMatches.length);
+    if (foundGdiItems.length < expectedGdiCount) {
+      // 1. Coleta todas as tarifas (4 a 6 casas decimais)
+      const tariffs = Array.from(new Set(
+        Array.from(normalizedText.matchAll(/(?<![\d,])\d{1,3},\d{4,6}(?![\d,])/g))
+          .map(m => parseFloat(m[0].replace(",", ".")))
+      )).filter(t => t > 0.05 && t < 10.0);
+
+      // 2. Coleta todos os números positivos formatados como quantidade/valor
+      const allPositiveNumbers = Array.from(
+        normalizedText.matchAll(/(?<!-)(?<![\d,])(\d{1,7}(?:\.\d{3})*,\d{2})(?![\d,])/g)
+      ).map(m => ({
+        str: m[1],
+        num: parseFloat(m[1].replace(/\./g, "").replace(",", "."))
+      })).filter(n => n.num > 1.0);
+
+      // 3. Coleta todos os valores negativos (ex: -3.130,52, -100,19)
+      const allNegativeMatches = Array.from(
+        normalizedText.matchAll(/(-(?:\d{1,7}(?:\.\d{3})*|\d+),\d{2})/g)
+      ).map(m => ({
+        str: m[1],
+        val: -Math.abs(parseFloat(m[1].replace(/\./g, "").replace(",", ".")))
+      })).filter(n => Math.abs(n.val) > 0.5);
+
+      // Agrupa valores negativos excluindo os tributos de linha que são ~2% a ~15% de um valor maior (ex: PIS/COFINS)
+      const mainNegatives: { val: number; matchedKwh?: number }[] = [];
+      for (const neg of allNegativeMatches) {
+        const absVal = Math.abs(neg.val);
+        const isTaxOfAnother = allNegativeMatches.some(other => {
+          if (other === neg) return false;
+          const otherAbs = Math.abs(other.val);
+          if (otherAbs <= absVal) return false;
+          const ratio = absVal / otherAbs;
+          return ratio >= 0.02 && ratio <= 0.15;
+        });
+
+        if (!isTaxOfAnother) {
+          mainNegatives.push({ val: neg.val });
+        }
       }
 
-      // Isola janela: do primeiro ao último label GDI + 800 chars
-      const firstGdiIdx = text.search(/GDI (?:mUC|oUC)/i);
-      const lastGdiMatch = [...text.matchAll(/GDI (?:mUC|oUC)/ig)].pop();
-      const lastGdiIdx = lastGdiMatch ? (lastGdiMatch.index ?? firstGdiIdx) : firstGdiIdx;
-      const gdiWindow = text.substring(Math.max(0, firstGdiIdx - 50), Math.min(text.length, lastGdiIdx + 800));
+      // 4. Para cada valor negativo principal, encontra a quantidade (kWh) e tarifa correspondentes
+      for (const mainNeg of mainNegatives) {
+        const absV = Math.abs(mainNeg.val);
+        let bestKwh: number | null = null;
+        let bestDiff = 999999;
 
-      // Coleta todos os pares <tarifa_6dec> + <negativo> dentro da janela
-      const pairRegex = /(\d{1,3},\d{4,6})\s+([-\u2010-\u2015\u2212][\d\.]+,\d{2})/g;
-      const pairs: {tariff: number, rVal: number}[] = [];
-      let pairM;
-      while ((pairM = pairRegex.exec(gdiWindow)) !== null) {
-        const tariff = parseFloat(pairM[1].replace(",", "."));
-        const rawR = pairM[2].replace(/[^\d.,]/g, "");
-        const rVal = -Math.abs(parseFloat(rawR.replace(/\./g, "").replace(",", ".")));
-        pairs.push({ tariff, rVal });
+        // Procura entre as quantidades positivas presentes no PDF qual multiplicada pela tarifa dá absV
+        for (const pos of allPositiveNumbers) {
+          for (const t of tariffs) {
+            const expectedV = pos.num * t;
+            const diff = Math.abs(expectedV - absV);
+            if (diff < 2.0 && diff < bestDiff) {
+              bestDiff = diff;
+              bestKwh = pos.num;
+            }
+          }
+        }
+
+        // Se não achou quantidade exata no texto, calcula pelo divisor da tarifa mais próxima de número inteiro
+        if (bestKwh === null) {
+          for (const t of tariffs) {
+            const calculatedKwh = absV / t;
+            const roundedKwh = Math.round(calculatedKwh);
+            const diffFromInt = Math.abs(calculatedKwh - roundedKwh);
+            if (diffFromInt < 0.1) {
+              bestKwh = roundedKwh;
+              break;
+            }
+          }
+        }
+
+        if (bestKwh !== null && bestKwh > 0) {
+          mainNeg.matchedKwh = bestKwh;
+        }
       }
 
-      if (pairs.length >= expectedTotal) {
-        // Janela continha pares suficientes — distribui normalmente
-        let pIdx = 0;
-        for (let i = 0; i < oUcCount && pIdx < pairs.length; i++, pIdx++) {
-          const { tariff, rVal } = pairs[pIdx];
-          valorEnergiaAtvInjetadaGDIOUC += rVal;
-          energiaAtvInjetadaGDIOUC += tariff > 0 ? Math.round((Math.abs(rVal) / tariff) * 100) / 100 : 0;
+      // 5. Atribui aos itens encontrados
+      for (let i = 0; i < mainNegatives.length; i++) {
+        const neg = mainNegatives[i];
+        if (!neg.matchedKwh) continue;
+
+        let type: 'OUC' | 'MUC' = "OUC";
+        if (isExplicitMUC && !isExplicitOUC) {
+          type = "MUC";
+        } else if (isExplicitOUC && !isExplicitMUC) {
+          type = "OUC";
+        } else if (i < oUcCount) {
+          type = "OUC";
+        } else {
+          type = "MUC";
         }
-        for (let i = 0; i < mUcCount && pIdx < pairs.length; i++, pIdx++) {
-          const { tariff, rVal } = pairs[pIdx];
-          valorEnergiaAtvInjetadaGDIMUC += rVal;
-          energiaAtvInjetadaGDIMUC += tariff > 0 ? Math.round((Math.abs(rVal) / tariff) * 100) / 100 : 0;
+
+        if (!foundGdiItems.some(item => Math.abs(item.kwh - neg.matchedKwh!) < 0.01 && Math.abs(item.valor - neg.val) < 0.01)) {
+          foundGdiItems.push({
+            type,
+            kwh: neg.matchedKwh,
+            valor: neg.val
+          });
         }
+      }
+    }
+
+    // ── Consolidação e SOMA DE TODOS OS VALORES de GDI mUC e GDI oUC ───────────
+    for (const item of foundGdiItems) {
+      if (item.type === "MUC") {
+        energiaAtvInjetadaGDIMUC += item.kwh;
+        valorEnergiaAtvInjetadaGDIMUC += item.valor;
       } else {
-        // Estratégia 3: valores GDI aparecem ANTES dos labels no texto (padrão intercalado)
-        // Ex: "-151,75 -13,63 -158,25 -14,21 ..." = pares (principal, PIS+COFINS) intercalados
-        //
-        // Passo 1: Detecta a tarifa GDI avaliando todas as tarifas com 6 casas decimais
-        const tariffs = Array.from(new Set(Array.from(text.matchAll(/\d{1,3},\d{4,6}/g)).map(m => Math.round(parseFloat(m[0].replace(",", ".")) * 1000000) / 1000000)));
-        const possibleTariffs = tariffs.filter(t => t > 0.5 && t < 5);
-
-        // Passo 2: Coleta todos os valores negativos no texto inteiro
-        const allNegRaw = Array.from(text.matchAll(/([-\u2010-\u2015\u2212][\d\.]+,\d{2})/g))
-          .map(m => Math.abs(parseFloat(m[0].replace(/[^\d.,]/g, "").replace(".", "").replace(",", "."))));
-
-        // Passo 3: Encontra a tarifa que divide os maiores valores negativos num kWh inteiro
-        let gdiTariff = 0;
-        let maxMatches = -1;
-        for (const t of possibleTariffs) {
-          let matches = 0;
-          for (const v of allNegRaw) {
-            if (v < 1) continue;
-            const kwhEst = v / t;
-            if (Math.abs(Math.round(kwhEst) - kwhEst) <= 0.05) matches++;
-          }
-          if (matches > maxMatches) {
-            maxMatches = matches;
-            gdiTariff = t;
-          }
-        }
-
-        // Passo 3: Detecta se valores estão intercalados (main, cofins, main, cofins...)
-        // Sinal: segundo valor é ~9% do primeiro (PIS+COFINS ≈ 9%)
-        const isInterleaved = allNegRaw.length >= 4 &&
-          allNegRaw[0] > 1 &&
-          (allNegRaw[1] / allNegRaw[0]) < 0.20 &&
-          (allNegRaw[3] / allNegRaw[2]) < 0.20;
-
-        // Passo 4: Filtra apenas os valores "principais" (ignora os de imposto)
-        const mainNeg: number[] = [];
-        for (let i = 0; i < allNegRaw.length && mainNeg.length < expectedTotal; i++) {
-          if (isInterleaved && i % 2 !== 0) continue; // pula valores de imposto
-          const v = allNegRaw[i];
-          if (v < 0.5) continue; // ignora valores mínimos (ruído)
-          // Valida: se temos a tarifa, o kWh deve ser próximo de um inteiro
-          if (gdiTariff > 0) {
-            const kwhEst = v / gdiTariff;
-            if (Math.abs(Math.round(kwhEst) - kwhEst) > 0.05) continue;
-          }
-          mainNeg.push(-v);
-        }
-
-        // Passo 5: Distribui
-        let pIdx3 = 0;
-        for (let i = 0; i < oUcCount && pIdx3 < mainNeg.length; i++, pIdx3++) {
-          const rVal = mainNeg[pIdx3];
-          valorEnergiaAtvInjetadaGDIOUC += rVal;
-          energiaAtvInjetadaGDIOUC += gdiTariff > 0 ? Math.round((Math.abs(rVal) / gdiTariff) * 100) / 100 : 0;
-        }
-        for (let i = 0; i < mUcCount && pIdx3 < mainNeg.length; i++, pIdx3++) {
-          const rVal = mainNeg[pIdx3];
-          valorEnergiaAtvInjetadaGDIMUC += rVal;
-          energiaAtvInjetadaGDIMUC += gdiTariff > 0 ? Math.round((Math.abs(rVal) / gdiTariff) * 100) / 100 : 0;
-        }
+        energiaAtvInjetadaGDIOUC += item.kwh;
+        valorEnergiaAtvInjetadaGDIOUC += item.valor;
       }
     }
   }
+
+  // ── Extração de Saldo Acumulado GD e Totais de Energia Injetada/Compensada ──
+  let saldoAcumuladoGD = "";
+  let energiaInjetadaKwh = "";
+  let energiaCompensadaKwh = "";
+
+  // 1. Extração de Saldo Acumulado GD
+  const saldoPatterns = [
+    /(?:Saldo\s+(?:Acumulado\s+GD|GD\s+Acumulado|Acumulado|Atual|Restante|do\s+Ciclo|para\s+o\s+pr[óo]ximo\s+m[êe]s|para\s+o\s+m[êe]s\s+seguinte|p\/\s*pr[óo]x(?:imo)?\s*m[êe]s|p\/\s*m[êe]s\s*seg(?:uinte)?|a\s+expirar|Total\s+Acumulado|a\s+Compensar|Dispon[íi]vel|Remanescente)[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i,
+    /(?:SALDO\s+(?:ACUMULADO|ATUAL|RESTANTE|DE\s+ENERGIA|DO\s+CICLO|A\s+COMPENSAR|DISPON[ÍI]VEL|DO\s+M[ÊE]S\s+SEGUINTE)[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i,
+    /(?:Saldo\s+(?:acumulado|atual)\s+(?:do\s+)?ciclo\s+(?:anterior|atual)[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i,
+    /(?:Saldo\s+(?:Acumulado|Atual|a\s+Compensar|Dispon[íi]vel)\s*\(kWh\)[^\d:\n\r]{0,35}[:\s]*)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i,
+    /(?:Saldo\s+de\s+(?:Energia\s+Acumulada|Cr[ée]dito[s]?|GD)[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i,
+    /(?:Cr[ée]dito[s]?\s+Acumulado[s]?(?:\s+GD)?[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i,
+    /(?:SALDO\s+ACUMULADO\s*\(KWH\)[\s\S]{0,30}?)([\d\.]+(?:,\d{2})?)/i,
+    /(?:SALDO\s+ATUAL\s*\(KWH\)[\s\S]{0,30}?)([\d\.]+(?:,\d{2})?)/i,
+    /(?:SALDO\s+A\s+COMPENSAR\s*\(KWH\)[\s\S]{0,30}?)([\d\.]+(?:,\d{2})?)/i,
+  ];
+
+  for (const pattern of saldoPatterns) {
+    const m = text.match(pattern);
+    if (m && m[1] && m[1].trim() !== "") {
+      saldoAcumuladoGD = m[1].trim().replace(/\./g, "");
+      break;
+    }
+  }
+
+  // 2. Extração de Energia Injetada e Compensada
+  const injetadaMatch =
+    text.match(/(?:Energia\s+(?:Ativa\s+)?Injetada\s*(?:\(kWh\))?[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i) ||
+    text.match(/(?:Total\s+(?:de\s+)?Energia\s+Injetada[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i);
+  if (injetadaMatch && injetadaMatch[1]) {
+    energiaInjetadaKwh = injetadaMatch[1].trim();
+  } else if (energiaAtvInjetadaGDIOUC > 0 || energiaAtvInjetadaGDIMUC > 0) {
+    energiaInjetadaKwh = formatNumberToBR(energiaAtvInjetadaGDIOUC + energiaAtvInjetadaGDIMUC);
+  }
+
+  const compensadaMatch =
+    text.match(/(?:Energia\s+(?:Ativa\s+)?Compensada\s*(?:\(kWh\))?[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i) ||
+    text.match(/(?:Total\s+(?:de\s+)?Energia\s+Compensada[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i) ||
+    text.match(/(?:Energia\s+Compensada\s+GDI[^\d:\n\r]{0,35}[:\s]+)(?:KWH|kWh)?\s*([\d\.]+(?:,\d{2})?)/i);
+  if (compensadaMatch && compensadaMatch[1]) {
+    energiaCompensadaKwh = compensadaMatch[1].trim();
+  }
+
   // Set consumoKwh for Grupo B (B3, Convencional)
     if (isGrupoB) {
       const isCustoDisponibilidadeOnly = /Custo\s+de\s+Disponibilidade/i.test(text);
@@ -1191,7 +1321,9 @@ export function parseBillText(text: string): Record<string, string> {
           consumoKwhGrupoB = "0";
           valorConsumoKwhGrupoB = "0";
       } else {
-          let extractedConsumo = extract(/Energia ativa em kWh[\s\S]{0,30}?(?:\d[\d\.,]*)\s+([\d\.,]+)/i) || extract(/Consumo em kWh[\s\S]{0,30}?([\d\.,]+)/i) || "";
+          let extractedConsumo = extract(/Energia ativa em kWh[\s\S]{0,30}?(?:\d[\d\.,]*)\s+([\d\.,]+)/i) || 
+                                 extract(/Consumo\s+(?:em\s+)?kWh[\s\S]{0,80}?(?:KWH|kWh)?\s*([\d\.]+,\d{2})/i) ||
+                                 extract(/Consumo em kWh[\s\S]{0,30}?([\d\.,]+)/i) || "";
           
           // If regex failed or extracted a bad value like '1', prefer foraPonta (where Energisa B3 table extraction usually lands)
           if ((!extractedConsumo || extractedConsumo === "0" || extractedConsumo === "1" || extractedConsumo === "1,00") && consumoKwhForaPonta && consumoKwhForaPonta !== "0") {
@@ -1202,6 +1334,12 @@ export function parseBillText(text: string): Record<string, string> {
           if (!extractedConsumo || extractedConsumo === "0" || extractedConsumo === "1" || extractedConsumo === "1,00") {
               let kwhMatch = text.match(/KWH\s+(\d{1,5}(?:\.\d{3})*,\d{2})/i);
               if (kwhMatch) extractedConsumo = kwhMatch[1];
+          }
+
+          // If still nothing, check Base de Calc (R$) 3.551,00 or Consumo Faturado
+          if (!extractedConsumo || extractedConsumo === "0" || extractedConsumo === "1" || extractedConsumo === "1,00") {
+              let baseMatch = text.match(/Base\s+de\s+C[áa]lc\.\s*\(R\$\)\s*([\d\.]+,\d{2})/i);
+              if (baseMatch) extractedConsumo = baseMatch[1];
           }
 
           // If still nothing, fallback to ponta
@@ -1244,7 +1382,14 @@ export function parseBillText(text: string): Record<string, string> {
       valorConsumoKwhForaPonta = "";
   }
 
+  if (uc && UC_MIGRATION_MAP[uc]) {
+    uc = UC_MIGRATION_MAP[uc];
+  }
 
+  const isFinalVerde = (modalidadeTarifaria || "").toUpperCase().includes("VERDE") || isVerdeGlobal;
+  if (isFinalVerde) {
+    demandaPontaKW = "0";
+  }
 
   return {
     uc,
@@ -1259,6 +1404,7 @@ export function parseBillText(text: string): Record<string, string> {
     valorTotal: cleanNumber(valorTotal),
     consumoKwh: cleanNumber(consumoKwh),
     consumoKwhPonta: cleanNumber(consumoKwhPonta),
+    consumoKwhIntermediaria: cleanNumber(consumoKwhIntermediaria),
     consumoKwhForaPonta: cleanNumber(consumoKwhForaPonta),
     consumoKwhGrupoB: cleanNumber(consumoKwhGrupoB),
     valorConsumoKwhPonta: cleanNumber(valorConsumoKwhPonta),
@@ -1287,6 +1433,9 @@ export function parseBillText(text: string): Record<string, string> {
     valorEnergiaAtvInjetadaGDIOUC: formatNumberToBR(valorEnergiaAtvInjetadaGDIOUC),
     energiaAtvInjetadaGDIMUC: formatNumberToBR(energiaAtvInjetadaGDIMUC),
     valorEnergiaAtvInjetadaGDIMUC: formatNumberToBR(valorEnergiaAtvInjetadaGDIMUC),
+    energiaInjetadaKwh: cleanNumber(energiaInjetadaKwh),
+    energiaCompensadaKwh: cleanNumber(energiaCompensadaKwh),
+    saldoAcumuladoGD: cleanNumber(saldoAcumuladoGD).replace(/\./g, ""),
     cip: cleanNumber(cip),
     pis: cleanNumber(pis),
     cofins: cleanNumber(cofins),

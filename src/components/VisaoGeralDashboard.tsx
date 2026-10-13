@@ -51,7 +51,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   const calc = (filterFn: (d: any) => boolean) => {
     const filtered = filteredData.filter(filterFn);
     const custo = filtered.reduce((acc, curr) => acc + curr.valorTotal, 0);
-    const consumo = filtered.reduce((acc, curr) => acc + (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0), 0);
+    const consumo = filtered.reduce((acc, curr) => acc + (curr.consumoPonta || 0) + (curr.consumoIntermediaria || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0), 0);
     return { custo, consumo, tarifa: consumo > 0 ? custo / consumo : 0 };
   };
 
@@ -66,7 +66,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
   
   const hasCompensacao = (d: any) => d.solarInjetadaOUC > 0 || d.solarInjetadaMUC > 0;
   
-  const isConsumoMinimo = (d: any) => isGrupoB(d) && ((d.consumoPonta || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0) + (d.consumoKwh || 0)) <= 100 && d.valorTotal < 150;
+  const isConsumoMinimo = (d: any) => isGrupoB(d) && ((d.consumoPonta || 0) + (d.consumoIntermediaria || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0) + (d.consumoKwh || 0)) <= 100 && d.valorTotal < 150;
   const isPPP = (d: any) => isGrupoB(d) && UCS_PPP.has(String(d.uc));
   const isUsina = (d: any) => isGrupoB(d) && UCS_USINA.has(String(d.uc));
   const isOptanteB = (d: any) => isGrupoB(d) && (d.modalidadeTarifaria || '').toUpperCase().includes('OPTANTE');
@@ -118,7 +118,7 @@ const VisaoGeralDashboard = ({ data, setCurrentPage, handleLogout }: VisaoGeralD
           custo: 0 
         };
       }
-      acc[name].consumo += (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0);
+      acc[name].consumo += (curr.consumoPonta || 0) + (curr.consumoIntermediaria || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0);
       acc[name].custo += curr.valorTotal;
       return acc;
     }, {} as Record<string, GroupedItem>);

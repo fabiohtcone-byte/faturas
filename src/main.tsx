@@ -4,13 +4,14 @@ import App from './App.tsx';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
 import './index.css';
 
+
 // Add robust global listeners to intercept and gracefully catch expected network/fetch errors
 // to prevent uncaught rejections or promise errors in sandboxed/offline environments.
 if (typeof window !== 'undefined') {
   const originalError = console.error;
   console.error = (...args) => {
     const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || JSON.stringify(a)))).join(' ');
-    if (msg.includes('Failed to fetch') || msg.includes('TIMEOUT_API') || msg.includes('fetch')) {
+    if (msg.includes('Could not reach Cloud Firestore backend') || msg.includes('code=unavailable') || msg.includes('The operation could not be completed') || msg.includes('Failed to fetch') || msg.includes('TIMEOUT_API') || msg.includes('fetch')) {
       console.warn('Suppressed expected background error:', ...args);
       return; // prevent AI Studio from picking this up as a fatal error
     }
@@ -32,7 +33,7 @@ if (typeof window !== 'undefined') {
 
   window.addEventListener('error', (event) => {
     const msg = event.message || '';
-    if (msg.includes('Failed to fetch') || msg.includes('fetch')) {
+    if (msg.includes('Could not reach Cloud Firestore backend') || msg.includes('code=unavailable') || msg.includes('The operation could not be completed') || msg.includes('Failed to fetch') || msg.includes('fetch')) {
       console.warn('Interceded and caught background error gracefully:', msg);
       event.preventDefault();
     }

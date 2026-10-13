@@ -37,9 +37,10 @@ import {
   ThinkingLevel,
 } from "@google/genai";
 import * as XLSX from "xlsx";
-import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import { cloudDb as supabase, isCloudConfigured as isSupabaseConfigured, isQuotaExhausted, resetQuotaCircuitBreaker } from "./lib/cloudDb";
 import { UC_MIGRATION_MAP } from "./uc_migration";
 import { REQUESTED_ADJUSTMENTS, ORIGINAL_CONTRATADAS } from "./requested_adjustments";
+import { AssistentePortal } from "./components/AssistentePortal";
 import {
   Upload,
   FileText,
@@ -58,6 +59,7 @@ import {
   FileSpreadsheet,
   DollarSign,
   Zap,
+  Bot,
   RotateCcw,
   CheckSquare,
   ChevronRight,
@@ -91,6 +93,7 @@ import {
   CalendarX2,
   ListX,
   Cloud,
+  CloudUpload,
   FolderPlus,
   FolderUp,
   Sparkles,
@@ -182,11 +185,15 @@ interface BillData {
   consumoKwh?: string;
   demandaTodosPeriodos?: string;
   consumoKwhPonta: string;
+  consumoKwhIntermediaria?: string;
   consumoKwhForaPonta: string;
+  consumoKwhGrupoB?: string;
   valorConsumoKwhPonta: string;
   valorConsumoKwhForaPonta: string;
+  valorConsumoKwhGrupoB?: string;
   valorTotal: string;
   cidade: string;
+  endereco?: string;
   demandaPotenciaNaoConsumidaPonta: string;
   demandaPotenciaNaoConsumidaFPonta: string;
   demandaPotenciaAtivaUltrapPonta: string;
@@ -205,6 +212,9 @@ interface BillData {
   valorEnergiaAtvInjetadaGDIOUC: string;
   energiaAtvInjetadaGDIMUC: string;
   valorEnergiaAtvInjetadaGDIMUC: string;
+  energiaInjetadaKwh?: string;
+  energiaCompensadaKwh?: string;
+  saldoAcumuladoGD?: string;
   cip: string;
   outrosEncargos: string;
   pis?: string;
@@ -232,6 +242,7 @@ export interface UCLocinMapping {
   gerencia: string;
   locin: string;
   cidade: string;
+  endereco?: string;
 }
 
 // --- Constants ---
@@ -243,7 +254,7 @@ try {
   const savedML = localStorage.getItem("sanesul_mercado_livre_ucs");
   if (savedML) {
     const list = JSON.parse(savedML);
-    UCS_LIVRE_MERCADO_LIVRE = new Set(list.map((uc: any) => String(uc).trim()));
+    UCS_LIVRE_MERCADO_LIVRE = new Set(list.map((uc: any) => String(uc).replace(/[\.\-]/g, "").trim()));
   } else {
     // Lista padrão inicial
     const defaultList = [
@@ -980,7 +991,7 @@ const UCS_ADM = new Set([
   "826505123",
   "565605136",
   "65714305194",
-  "3242",
+  "92128305181",
   "96842605179",
   "148089205185",
   "16167605114",
@@ -988,20 +999,40 @@ const UCS_ADM = new Set([
 ]);
 
 const extractUcFromFileName = (fileName: string, extractedUc: string): string => {
-  if (!fileName) return extractedUc || "";
+  if (!fileName) {
+    const raw = extractedUc || "";
+    return UC_MIGRATION_MAP[raw] || raw;
+  }
   const cleanName = fileName.replace(/\.[^/.]+$/, "");
   
   const knownUcs = new Set<string>();
   
   if (typeof UCS_LIVRE_MERCADO_LIVRE !== "undefined") {
-    UCS_LIVRE_MERCADO_LIVRE.forEach((uc) => knownUcs.add(String(uc)));
+    UCS_LIVRE_MERCADO_LIVRE.forEach((uc) => {
+      const u = String(uc);
+      knownUcs.add(UC_MIGRATION_MAP[u] || u);
+      knownUcs.add(u);
+    });
   }
   if (typeof UCS_OPER !== "undefined") {
-    UCS_OPER.forEach((uc) => knownUcs.add(String(uc)));
+    UCS_OPER.forEach((uc) => {
+      const u = String(uc);
+      knownUcs.add(UC_MIGRATION_MAP[u] || u);
+      knownUcs.add(u);
+    });
   }
   if (typeof UCS_ADM !== "undefined") {
-    UCS_ADM.forEach((uc) => knownUcs.add(String(uc)));
+    UCS_ADM.forEach((uc) => {
+      const u = String(uc);
+      knownUcs.add(UC_MIGRATION_MAP[u] || u);
+      knownUcs.add(u);
+    });
   }
+  
+  Object.keys(UC_MIGRATION_MAP).forEach((oldUc) => {
+    knownUcs.add(String(oldUc));
+    knownUcs.add(String(UC_MIGRATION_MAP[oldUc]));
+  });
   
   try {
     const saved = localStorage.getItem("sanesul_uc_mappings");
@@ -1010,7 +1041,9 @@ const extractUcFromFileName = (fileName: string, extractedUc: string): string =>
       if (Array.isArray(parsed)) {
         parsed.forEach((m) => {
           if (m && m.uc) {
-            knownUcs.add(String(m.uc));
+            const u = String(m.uc).replace(/[\.\-]/g, "");
+            knownUcs.add(UC_MIGRATION_MAP[u] || u);
+            knownUcs.add(u);
           }
         });
       }
@@ -1021,114 +1054,140 @@ const extractUcFromFileName = (fileName: string, extractedUc: string): string =>
   
   for (const uc of sortedKnownUcs) {
     if (uc.length >= 4 && cleanName.includes(uc)) {
-      return uc;
+      return UC_MIGRATION_MAP[uc] || uc;
     }
   }
   
   const fileNameNumbers = cleanName.replace(/\D/g, "");
   for (const uc of sortedKnownUcs) {
     if (uc.length >= 4 && fileNameNumbers.includes(uc)) {
-      return uc;
+      return UC_MIGRATION_MAP[uc] || uc;
     }
   }
   
   if (fileNameNumbers.length >= 5) {
-    return fileNameNumbers;
+    return UC_MIGRATION_MAP[fileNameNumbers] || fileNameNumbers;
   }
   
-  return extractedUc || fileNameNumbers;
+  const res = extractedUc || fileNameNumbers;
+  return UC_MIGRATION_MAP[res] || res;
 };
 
 const EXCEL_COLUMNS = [
-  { header: "UC", key: "uc" },
-  { header: "Tipo", key: "tipo" },
-  { header: "Concessionária", key: "concessionaria" },
-  { header: "Cidade", key: "cidade" },
-  { header: "Gerência", key: "gerencia" },
-  { header: "LOCINS", key: "locin" },
-  { header: "Mês Referência", key: "mesReferencia" },
-  { header: "Ano Leitura", key: "anoLeitura" },
-  { header: "Vencimento", key: "dataVencimento" },
-  { header: "Nota Fiscal", key: "numeroNotaFiscal" },
-  { header: "Modalidade Tarifária", key: "modalidadeTarifaria" },
-  { header: "Subgrupo", key: "subgrupo" },
-  { header: "Valor Total (R$)", key: "valorTotal" },
-  { header: "Demanda Contratada Ponta (kW)", key: "demandaPontaKW" },
-  { header: "Demanda Contratada Fora Ponta (kW)", key: "demandaForaPontaKW" },
-  { header: "Demanda Medida Ponta (kW)", key: "demandaPotenciaMedidaPonta" },
+  { header: "Nome do Arquivo", key: "fileName", example: "Fatura_01_2026.pdf" },
+  { header: "UC", key: "uc", example: "10/1069-4" },
+  { header: "Gerência", key: "gerencia", example: "GRPO" },
+  { header: "LOCINS", key: "locin", example: "PO01" },
+  { header: "Cidade", key: "cidade", example: "PONTA PORÃ" },
+  { header: "Endereço", key: "endereco", example: "Rua das Flores, 123" },
+  { header: "Tipo", key: "tipo", example: "OPERACIONAL" },
+  { header: "Mercado", key: "mercado", example: "CATIVO" },
+  { header: "Concessionária", key: "concessionaria", example: "ENERGISA" },
+  { header: "Mês Referência", key: "mesReferencia", example: "01/2026" },
+  { header: "Ano Leitura", key: "anoLeitura", example: "2026" },
+  { header: "Vencimento", key: "dataVencimento", example: "15/02/2026" },
+  { header: "Nota Fiscal", key: "numeroNotaFiscal", example: "000123456" },
+  { header: "Modalidade Tarifária", key: "modalidadeTarifaria", example: "VERDE" },
+  { header: "Subgrupo", key: "subgrupo", example: "A4" },
+  { header: "Valor Total (R$)", key: "valorTotal", example: "12540,85" },
+  { header: "Consumo em kWh (Grupo B)", key: "consumoKwhGrupoB", example: "0,00" },
+  { header: "Valor Consumo Grupo B (R$)", key: "valorConsumoKwhGrupoB", example: "0,00" },
+  { header: "Consumo em kWh - Intermediária", key: "consumoKwhIntermediaria", example: "0,00" },
+  { header: "Demanda Contratada Ponta (kW)", key: "demandaPontaKW", example: "0,00" },
+  { header: "Demanda Contratada Fora Ponta (kW)", key: "demandaForaPontaKW", example: "120,00" },
+  { header: "Demanda Todos os Períodos (kW)", key: "demandaTodosPeriodosKW", example: "120,00" },
+  { header: "Demanda Medida Ponta (kW)", key: "demandaPotenciaMedidaPonta", example: "0,00" },
   {
     header: "Valor Demanda Medida Ponta (R$)",
     key: "valorDemandaPotenciaMedidaPonta",
+    example: "0,00",
   },
   {
     header: "Demanda Medida Fora Ponta (kW)",
     key: "demandaPotenciaMedidaForaPonta",
+    example: "115,00",
   },
   {
     header: "Valor Demanda Medida Fora Ponta (R$)",
     key: "valorDemandaPotenciaMedidaForaPonta",
+    example: "2850,00",
   },
-  { header: "Consumo Ponta (kWh)", key: "consumoKwhPonta" },
-  { header: "Valor Consumo Ponta (R$)", key: "valorConsumoKwhPonta" },
-  { header: "Consumo Fora Ponta (kWh)", key: "consumoKwhForaPonta" },
-  { header: "Valor Consumo Fora Ponta (R$)", key: "valorConsumoKwhForaPonta" },
+  { header: "Consumo Ponta (kWh)", key: "consumoKwhPonta", example: "8500,00" },
+  { header: "Valor Consumo Ponta (R$)", key: "valorConsumoKwhPonta", example: "5200,00" },
+  { header: "Consumo Fora Ponta (kWh)", key: "consumoKwhForaPonta", example: "24500,00" },
+  { header: "Valor Consumo Fora Ponta (R$)", key: "valorConsumoKwhForaPonta", example: "11200,00" },
   {
     header: "Demanda Não Consumida Ponta (kW)",
     key: "demandaPotenciaNaoConsumidaPonta",
+    example: "0,00",
   },
   {
     header: "Valor Demanda Não Consumida Ponta (R$)",
     key: "valorDemandaPotenciaNaoConsumidaPonta",
+    example: "0,00",
   },
   {
     header: "Demanda Não Consumida Fora Ponta (kW)",
     key: "demandaPotenciaNaoConsumidaFPonta",
+    example: "5,00",
   },
   {
     header: "Valor Demanda Não Consumida Fora Ponta (R$)",
     key: "valorDemandaPotenciaNaoConsumidaFPonta",
+    example: "124,00",
   },
   {
     header: "Ultrapassagem Ponta (kW)",
     key: "demandaPotenciaAtivaUltrapPonta",
+    example: "0,00",
   },
   {
     header: "Valor Ultrapassagem Ponta (R$)",
     key: "valorDemandaPotenciaAtivaUltrapPonta",
+    example: "0,00",
   },
   {
     header: "Ultrapassagem Fora Ponta (kW)",
     key: "demandaPotenciaAtivaUltrapFPonta",
+    example: "0,00",
   },
   {
     header: "Valor Ultrapassagem Fora Ponta (R$)",
     key: "valorDemandaPotenciaAtivaUltrapFPonta",
+    example: "0,00",
   },
   {
     header: "Reativa Excedente Ponta (kVArh)",
     key: "energiaReativaExcedPonta",
+    example: "0,00",
   },
   {
     header: "Valor Reativa Excedente Ponta (R$)",
     key: "valorEnergiaReativaExcedPonta",
+    example: "0,00",
   },
   {
     header: "Reativa Excedente Fora Ponta (kVArh)",
     key: "energiaReativaExcedFPonta",
+    example: "0,00",
   },
   {
     header: "Valor Reativa Excedente Fora Ponta (R$)",
     key: "valorEnergiaReativaExcedFPonta",
+    example: "0,00",
   },
-  { header: "GDI oUC (kWh)", key: "energiaAtvInjetadaGDIOUC" },
-  { header: "Valor GDI oUC (R$)", key: "valorEnergiaAtvInjetadaGDIOUC" },
-  { header: "GDI mUC (kWh)", key: "energiaAtvInjetadaGDIMUC" },
-  { header: "Valor GDI mUC (R$)", key: "valorEnergiaAtvInjetadaGDIMUC" },
-  { header: "CIP (R$)", key: "cip" },
-  { header: "Outros Encargos (R$)", key: "outrosEncargos" },
-  { header: "PIS (R$)", key: "pis" },
-  { header: "COFINS (R$)", key: "cofins" },
-  { header: "ICMS (R$)", key: "icms" },
+  { header: "GDI oUC (kWh)", key: "energiaAtvInjetadaGDIOUC", example: "0,00" },
+  { header: "Valor GDI oUC (R$)", key: "valorEnergiaAtvInjetadaGDIOUC", example: "0,00" },
+  { header: "GDI mUC (kWh)", key: "energiaAtvInjetadaGDIMUC", example: "0,00" },
+  { header: "Valor GDI mUC (R$)", key: "valorEnergiaAtvInjetadaGDIMUC", example: "0,00" },
+  { header: "Energia Injetada (kWh)", key: "energiaInjetadaKwh", example: "0,00" },
+  { header: "Energia Compensada (kWh)", key: "energiaCompensadaKwh", example: "0,00" },
+  { header: "Saldo Acumulado GD", key: "saldoAcumuladoGD", example: "0,00" },
+  { header: "CIP (R$)", key: "cip", example: "150,00" },
+  { header: "Outros Encargos (R$)", key: "outrosEncargos", example: "0,00" },
+  { header: "PIS (R$)", key: "pis", example: "115,20" },
+  { header: "COFINS (R$)", key: "cofins", example: "530,40" },
+  { header: "ICMS (R$)", key: "icms", example: "2130,50" },
 ];
 
 const EXTRACTION_SCHEMA = {
@@ -1185,6 +1244,10 @@ const EXTRACTION_SCHEMA = {
     valorConsumoKwhPonta: {
       type: Type.STRING,
       description: "Valor total em R$ do consumo no horário de Ponta.",
+    },
+    consumoKwhIntermediaria: {
+      type: Type.STRING,
+      description: "Quantidade de consumo em kWh no horário Intermediário, se houver. Procure por 'Consumo Intermediária' ou 'Consumo Intermediário'.",
     },
     consumoKwhForaPonta: {
       type: Type.STRING,
@@ -1267,22 +1330,27 @@ const EXTRACTION_SCHEMA = {
     energiaAtvInjetadaGDIOUC: {
       type: Type.STRING,
       description:
-        "Energia Ativa Injetada GDI oUC (kWh). IMPORTANTE: Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor.",
+        "Energia Ativa Injetada GDI oUC (kWh). CRÍTICO: Se houver mais de um valor ou lançamento para este item na fatura, SOME TODOS OS VALORES em um único total e informe no campo correspondente.",
     },
     valorEnergiaAtvInjetadaGDIOUC: {
       type: Type.STRING,
       description:
-        "Valor em R$ da Energia Ativa Injetada GDI oUC. IMPORTANTE: Este valor é frequentemente negativo na fatura (ex: -3.822,92). Extraia EXATAMENTE como aparece, incluindo o sinal negativo. Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor.",
+        "Valor em R$ da Energia Ativa Injetada GDI oUC. CRÍTICO: Este valor é frequentemente negativo na fatura (ex: -3.822,92). Se houver mais de um valor para este item na fatura, SOME TODOS OS VALORES em um único total com sinal negativo e informe no campo correspondente.",
     },
     energiaAtvInjetadaGDIMUC: {
       type: Type.STRING,
       description:
-        "Energia Ativa Injetada GDI mUC (kWh). IMPORTANTE: Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor.",
+        "Energia Ativa Injetada GDI mUC (kWh). CRÍTICO / OBRIGATÓRIO: SOME TODOS OS VALORES de 'Energia Atv Injetada GDI mUC' (kWh) da fatura (incluindo compensação de meses anteriores, diferentes postos tarifários ou UCs geradoras) e informe o resultado final consolidado neste campo correspondente.",
     },
     valorEnergiaAtvInjetadaGDIMUC: {
       type: Type.STRING,
       description:
-        "Valor em R$ da Energia Ativa Injetada GDI mUC. IMPORTANTE: Este valor é frequentemente negativo na fatura (ex: -124,39). Extraia EXATAMENTE como aparece, incluindo o sinal negativo. Se houver mais de um valor para este item na fatura, SOME todos os valores em um único valor.",
+        "Valor em R$ da Energia Ativa Injetada GDI mUC. CRÍTICO / OBRIGATÓRIO: SOME TODOS OS VALORES em R$ de 'Energia Atv Injetada GDI mUC' da fatura (mantendo o sinal negativo, ex: -124,39) e informe o resultado final consolidado neste campo correspondente.",
+    },
+    saldoAcumuladoGD: {
+      type: Type.STRING,
+      description:
+        "Saldo Acumulado de Geração Distribuída (GD) em kWh ou valor acumulado.",
     },
     cip: {
       type: Type.STRING,
@@ -1418,14 +1486,14 @@ const Logo = ({
 };
 
 const deduplicateBills = (bills: BillData[]) => {
-  const seenIds = new Set();
-  const uniqueBills = [];
-  const seenKeys = new Set();
+  const seenIds = new Set<string>();
+  const uniqueBills: BillData[] = [];
+  const seenKeys = new Set<string>();
 
   // Iterate backwards to keep the latest processed bill for a given UC + Mes + Ano
   for (let i = bills.length - 1; i >= 0; i--) {
     const bill = bills[i];
-    if (!bill.id || seenIds.has(bill.id)) continue;
+    if (!bill || !bill.id || seenIds.has(bill.id)) continue;
 
     // Deduplicate completed bills based on content
     if (
@@ -1442,10 +1510,10 @@ const deduplicateBills = (bills: BillData[]) => {
     }
 
     seenIds.add(bill.id);
-    uniqueBills.unshift(bill); // Add to front to maintain original order
+    uniqueBills.push(bill); // O(1) push em vez de O(N) unshift
   }
 
-  return uniqueBills;
+  return uniqueBills.reverse();
 };
 
 const ensureApiKey = async () => {
@@ -1638,7 +1706,7 @@ const formatMonth = (month: string | number) => {
 
   // Se vier no formato MM/YYYY, pega apenas o mês
   if (normalized.includes("/")) {
-    normalized = normalized.split("/")[0];
+    normalized = normalized.split("/")[0].trim();
   }
 
   const monthMap: Record<string, string> = {
@@ -1739,20 +1807,22 @@ const formatReference = (ref: string) => {
   if (ref.includes("/")) {
     const parts = ref.split("/");
     if (parts.length === 2) {
-      return `${formatMonth(parts[0])}/${parts[1]}`;
+      return `${formatMonth(parts[0])} / ${parts[1]}`;
     }
   }
   return formatMonth(ref);
 };
 
 const mapDbToBillData = (dbBill: any): BillData => {
+  const rawUc = String(dbBill.uc || "").replace(/[\.\-]/g, "").trim();
+  const normalizedUc = (rawUc && UC_MIGRATION_MAP[rawUc]) ? UC_MIGRATION_MAP[rawUc] : rawUc;
   let mod = dbBill.modalidade_tarifaria || "";
   let tipo = dbBill.tipo || "";
-  if (UCS_OPER.has(String(dbBill.uc))) {
+  if (UCS_OPER.has(normalizedUc) || UCS_OPER.has(rawUc)) {
     tipo = "OPER";
-  } else if (UCS_ADM.has(String(dbBill.uc))) {
+  } else if (UCS_ADM.has(normalizedUc) || UCS_ADM.has(rawUc)) {
     tipo = "ADM";
-  } else if (UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc))) {
+  } else if (UCS_LIVRE_MERCADO_LIVRE.has(normalizedUc) || UCS_LIVRE_MERCADO_LIVRE.has(rawUc)) {
     tipo = "LIVRE";
     if (!mod.toUpperCase().includes("LIVRE")) {
       mod = mod ? `${mod} - LIVRE` : "LIVRE";
@@ -1762,8 +1832,8 @@ const mapDbToBillData = (dbBill: any): BillData => {
   return {
     id: dbBill.id,
     fileName: dbBill.file_name,
-    uc: dbBill.uc || "",
-    demandaPontaKW: dbBill.demanda_ponta_kw || "",
+    uc: normalizedUc,
+    demandaPontaKW: ((mod || "").toUpperCase().includes("VERDE")) ? "0" : (dbBill.demanda_ponta_kw || ""),
     demandaForaPontaKW: dbBill.demanda_fora_ponta_kw || "",
     demandaPotenciaMedidaPonta: dbBill.demanda_potencia_medida_ponta || "",
     demandaPotenciaMedidaForaPonta:
@@ -1773,6 +1843,7 @@ const mapDbToBillData = (dbBill: any): BillData => {
     consumoGrupoB: dbBill.consumo_grupo_b || "",
     demandaTodosPeriodosKW: dbBill.demanda_todos_periodos_kw || "",
     consumoKwhPonta: dbBill.consumo_kwh_ponta || "",
+    consumoKwhIntermediaria: dbBill.consumo_kwh_intermediaria || "",
     consumoKwhForaPonta: dbBill.consumo_kwh_fora_ponta || "",
     consumoKwhGrupoB: dbBill.consumo_kwh_grupo_b || dbBill.consumo_grupo_b || "",
     valorConsumoKwhPonta: dbBill.valor_consumo_kwh_ponta || "",
@@ -1780,6 +1851,7 @@ const mapDbToBillData = (dbBill: any): BillData => {
     valorConsumoKwhGrupoB: dbBill.valor_consumo_kwh_grupo_b || "",
     valorTotal: dbBill.valor_total || "",
     cidade: dbBill.cidade || "",
+    endereco: dbBill.endereco || "",
     demandaPotenciaNaoConsumidaPonta:
       dbBill.demanda_potencia_nao_consumida_ponta || "",
     demandaPotenciaNaoConsumidaFPonta:
@@ -1812,6 +1884,7 @@ const mapDbToBillData = (dbBill: any): BillData => {
     energiaAtvInjetadaGDIMUC: dbBill.energia_atv_injetada_gdi_muc || "",
     valorEnergiaAtvInjetadaGDIMUC:
       dbBill.valor_energia_atv_injetada_gdi_muc || "",
+    saldoAcumuladoGD: dbBill.saldo_acumulado_gd || "",
     cip: dbBill.cip || "",
     outrosEncargos: dbBill.outros_encargos || "",
     pis: dbBill.pis || "",
@@ -1824,7 +1897,7 @@ const mapDbToBillData = (dbBill: any): BillData => {
     tipo: tipo,
     mercado:
       dbBill.mercado ||
-      (UCS_LIVRE_MERCADO_LIVRE.has(String(dbBill.uc)) ? "LIVRE" : "CATIVO"),
+      (UCS_LIVRE_MERCADO_LIVRE.has(normalizedUc) || UCS_LIVRE_MERCADO_LIVRE.has(rawUc) ? "LIVRE" : "CATIVO"),
     gerencia: dbBill.gerencia || "",
     locin: dbBill.locin || dbBill.locins || "",
     dataVencimento: dbBill.data_vencimento || "",
@@ -1836,67 +1909,107 @@ const mapDbToBillData = (dbBill: any): BillData => {
   };
 };
 
-const mapBillDataToDb = (bill: BillData, userId: string) => ({
-  file_name: bill.fileName,
-  uc: bill.uc,
-  demanda_ponta_kw: bill.demandaPontaKW,
-  demanda_fora_ponta_kw: bill.demandaForaPontaKW,
-  demanda_potencia_medida_ponta: bill.demandaPotenciaMedidaPonta,
-  demanda_potencia_medida_fora_ponta: bill.demandaPotenciaMedidaForaPonta,
-  ano_leitura: bill.anoLeitura,
-  mes_referencia: bill.mesReferencia,
-  consumo_grupo_b: bill.consumoGrupoB,
-  demanda_todos_periodos_kw: bill.demandaTodosPeriodosKW,
-  consumo_kwh_ponta: bill.consumoKwhPonta,
-  consumo_kwh_fora_ponta: bill.consumoKwhForaPonta,
-  consumo_kwh_grupo_b: bill.consumoKwhGrupoB,
-  valor_consumo_kwh_ponta: bill.valorConsumoKwhPonta,
-  valor_consumo_kwh_fora_ponta: bill.valorConsumoKwhForaPonta,
-  valor_consumo_kwh_grupo_b: bill.valorConsumoKwhGrupoB,
-  valor_total: bill.valorTotal,
-  cidade: bill.cidade,
-  demanda_potencia_nao_consumida_ponta: bill.demandaPotenciaNaoConsumidaPonta,
-  demanda_potencia_nao_consumida_f_ponta:
-    bill.demandaPotenciaNaoConsumidaFPonta,
-  demanda_potencia_ativa_ultrap_ponta: bill.demandaPotenciaAtivaUltrapPonta,
-  demanda_potencia_ativa_ultrap_f_ponta: bill.demandaPotenciaAtivaUltrapFPonta,
-  energia_reativa_exced_ponta: bill.energiaReativaExcedPonta,
-  energia_reativa_exced_f_ponta: bill.energiaReativaExcedFPonta,
-  valor_demanda_potencia_medida_ponta: bill.valorDemandaPotenciaMedidaPonta,
-  valor_demanda_potencia_medida_fora_ponta:
-    bill.valorDemandaPotenciaMedidaForaPonta,
-  valor_demanda_potencia_nao_consumida_ponta:
-    bill.valorDemandaPotenciaNaoConsumidaPonta,
-  valor_demanda_potencia_nao_consumida_f_ponta:
-    bill.valorDemandaPotenciaNaoConsumidaFPonta,
-  valor_demanda_potencia_ativa_ultrap_ponta:
-    bill.valorDemandaPotenciaAtivaUltrapPonta,
-  valor_demanda_potencia_ativa_ultrap_f_ponta:
-    bill.valorDemandaPotenciaAtivaUltrapFPonta,
-  valor_energia_reativa_exced_ponta: bill.valorEnergiaReativaExcedPonta,
-  valor_energia_reativa_exced_f_ponta: bill.valorEnergiaReativaExcedFPonta,
-  energia_atv_injetada_gdi_ouc: bill.energiaAtvInjetadaGDIOUC,
-  valor_energia_atv_injetada_gdi_ouc: bill.valorEnergiaAtvInjetadaGDIOUC,
-  energia_atv_injetada_gdi_muc: bill.energiaAtvInjetadaGDIMUC,
-  valor_energia_atv_injetada_gdi_muc: bill.valorEnergiaAtvInjetadaGDIMUC,
-  cip: bill.cip,
-  outros_encargos: bill.outrosEncargos,
-  pis: bill.pis || "",
-  cofins: bill.cofins || "",
-  icms: bill.icms || "",
-  concessionaria: bill.concessionaria || "",
-  numero_nota_fiscal: bill.numeroNotaFiscal || "",
-  modalidade_tarifaria: bill.modalidadeTarifaria || "",
-  subgrupo: bill.subgrupo || "",
-  tipo: bill.tipo || "",
-  mercado: bill.mercado || "",
-  gerencia: bill.gerencia || "",
-  locins: bill.locin || "",
-  data_vencimento: bill.dataVencimento || "",
-  status: bill.status,
-  error: bill.error || null,
-  user_id: userId,
-});
+const ALLOWED_DB_COLUMNS = new Set([
+  'id', 'created_at', 'file_name', 'uc', 'demanda_ponta_kw', 'demanda_fora_ponta_kw',
+  'demanda_potencia_medida_ponta', 'demanda_potencia_medida_fora_ponta', 'ano_leitura',
+  'mes_referencia', 'data_vencimento', 'consumo_kwh_ponta', 'consumo_kwh_fora_ponta',
+  'consumo_grupo_b', 'valor_consumo_kwh_ponta', 'valor_consumo_kwh_fora_ponta',
+  'valor_total', 'cidade', 'gerencia', 'locin', 'mercado', 'demanda_todos_periodos_kw',
+  'demanda_potencia_nao_consumida_ponta', 'demanda_potencia_nao_consumida_f_ponta',
+  'demanda_potencia_ativa_ultrap_ponta', 'demanda_potencia_ativa_ultrap_f_ponta',
+  'energia_reativa_exced_ponta', 'energia_reativa_exced_f_ponta', 'energia_injetada_kwh',
+  'energia_compensada_kwh', 'valor_demanda_potencia_medida_ponta',
+  'valor_demanda_potencia_medida_fora_ponta', 'valor_demanda_potencia_nao_consumida_ponta',
+  'valor_demanda_potencia_nao_consumida_f_ponta', 'valor_demanda_potencia_ativa_ultrap_ponta',
+  'valor_demanda_potencia_ativa_ultrap_f_ponta', 'valor_energia_reativa_exced_ponta',
+  'valor_energia_reativa_exced_f_ponta', 'energia_atv_injetada_gdi_ouc',
+  'valor_energia_atv_injetada_gdi_ouc', 'energia_atv_injetada_gdi_muc',
+  'valor_energia_atv_injetada_gdi_muc', 'cip', 'outros_encargos', 'pis', 'cofins',
+  'icms', 'concessionaria', 'numero_nota_fiscal', 'modalidade_tarifaria',
+  'subgrupo', 'tipo', 'status', 'consumo_kwh_intermediaria', 'saldo_acumulado_gd'
+]);
+
+export const sanitizeBillForDb = (raw: Record<string, any>) => {
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === 'locins' && !raw.locin) {
+      clean.locin = v;
+    } else if (k === 'consumo_kwh_grupo_b' && !raw.consumo_grupo_b) {
+      clean.consumo_grupo_b = v;
+    } else if (ALLOWED_DB_COLUMNS.has(k)) {
+      clean[k] = v;
+    }
+  }
+  return clean;
+};
+
+const mapBillDataToDb = (bill: BillData, userId?: string) => {
+  const rawUc = String(bill.uc || "").replace(/[\.\-]/g, "").trim();
+  const normalizedUc = (rawUc && UC_MIGRATION_MAP[rawUc]) ? UC_MIGRATION_MAP[rawUc] : rawUc;
+  const isVerde = (bill.modalidadeTarifaria || "").toUpperCase().includes("VERDE");
+  const rawData: Record<string, any> = {
+    id: bill.id || undefined,
+    file_name: bill.fileName || "",
+    uc: normalizedUc,
+    demanda_ponta_kw: isVerde ? "0" : (bill.demandaPontaKW || ""),
+    demanda_fora_ponta_kw: bill.demandaForaPontaKW || "",
+    demanda_potencia_medida_ponta: bill.demandaPotenciaMedidaPonta || "",
+    demanda_potencia_medida_fora_ponta: bill.demandaPotenciaMedidaForaPonta || "",
+    ano_leitura: bill.anoLeitura || "",
+    mes_referencia: bill.mesReferencia || "",
+    consumo_grupo_b: bill.consumoGrupoB || bill.consumoKwhGrupoB || "",
+    demanda_todos_periodos_kw: bill.demandaTodosPeriodosKW || "",
+    consumo_kwh_ponta: bill.consumoKwhPonta || "",
+    consumo_kwh_intermediaria: bill.consumoKwhIntermediaria || "",
+    consumo_kwh_fora_ponta: bill.consumoKwhForaPonta || "",
+    valor_consumo_kwh_ponta: bill.valorConsumoKwhPonta || "",
+    valor_consumo_kwh_fora_ponta: bill.valorConsumoKwhForaPonta || "",
+    valor_total: bill.valorTotal || "",
+    cidade: bill.cidade || "",
+    demanda_potencia_nao_consumida_ponta: bill.demandaPotenciaNaoConsumidaPonta || "",
+    demanda_potencia_nao_consumida_f_ponta:
+      bill.demandaPotenciaNaoConsumidaFPonta || "",
+    demanda_potencia_ativa_ultrap_ponta: bill.demandaPotenciaAtivaUltrapPonta || "",
+    demanda_potencia_ativa_ultrap_f_ponta: bill.demandaPotenciaAtivaUltrapFPonta || "",
+    energia_reativa_exced_ponta: bill.energiaReativaExcedPonta || "",
+    energia_reativa_exced_f_ponta: bill.energiaReativaExcedFPonta || "",
+    valor_demanda_potencia_medida_ponta: bill.valorDemandaPotenciaMedidaPonta || "",
+    valor_demanda_potencia_medida_fora_ponta:
+      bill.valorDemandaPotenciaMedidaForaPonta || "",
+    valor_demanda_potencia_nao_consumida_ponta:
+      bill.valorDemandaPotenciaNaoConsumidaPonta || "",
+    valor_demanda_potencia_nao_consumida_f_ponta:
+      bill.valorDemandaPotenciaNaoConsumidaFPonta || "",
+    valor_demanda_potencia_ativa_ultrap_ponta:
+      bill.valorDemandaPotenciaAtivaUltrapPonta || "",
+    valor_demanda_potencia_ativa_ultrap_f_ponta:
+      bill.valorDemandaPotenciaAtivaUltrapFPonta || "",
+    valor_energia_reativa_exced_ponta: bill.valorEnergiaReativaExcedPonta || "",
+    valor_energia_reativa_exced_f_ponta: bill.valorEnergiaReativaExcedFPonta || "",
+    energia_atv_injetada_gdi_ouc: bill.energiaAtvInjetadaGDIOUC || "",
+    valor_energia_atv_injetada_gdi_ouc: bill.valorEnergiaAtvInjetadaGDIOUC || "",
+    energia_atv_injetada_gdi_muc: bill.energiaAtvInjetadaGDIMUC || "",
+    valor_energia_atv_injetada_gdi_muc: bill.valorEnergiaAtvInjetadaGDIMUC || "",
+    saldo_acumulado_gd: bill.saldoAcumuladoGD || "",
+    cip: bill.cip || "",
+    outros_encargos: bill.outrosEncargos || "",
+    pis: bill.pis || "",
+    cofins: bill.cofins || "",
+    icms: bill.icms || "",
+    concessionaria: bill.concessionaria || "",
+    numero_nota_fiscal: bill.numeroNotaFiscal || "",
+    modalidade_tarifaria: bill.modalidadeTarifaria || "",
+    subgrupo: bill.subgrupo || "",
+    tipo: bill.tipo || "",
+    mercado: bill.mercado || "",
+    gerencia: bill.gerencia || "",
+    locin: bill.locin || "",
+    data_vencimento: bill.dataVencimento || "",
+    status: bill.status || "completed",
+    error: bill.error || null,
+  };
+  return sanitizeBillForDb(rawData);
+};
 
 // --- Components ---
 
@@ -2301,10 +2414,33 @@ if (typeof window !== "undefined") {
   } catch (e) {}
 }
 
+let cachedPppMonthlyOverrides: Record<string, string[]> | null = null;
+const getPppMonthlyOverrides = () => {
+  if (cachedPppMonthlyOverrides !== null) return cachedPppMonthlyOverrides;
+  try {
+    const overridesStr = localStorage.getItem("PPP_UCS_MONTHLY_OVERRIDE");
+    cachedPppMonthlyOverrides = overridesStr ? JSON.parse(overridesStr) : {};
+  } catch (e) {
+    cachedPppMonthlyOverrides = {};
+  }
+  return cachedPppMonthlyOverrides || {};
+};
+
+const isUcPPP = (uc: string, monthYear?: string) => {
+  const ucStr = String(uc).trim();
+  if (monthYear && typeof window !== "undefined") {
+    const overrides = getPppMonthlyOverrides();
+    if (Array.isArray(overrides[monthYear])) {
+      return overrides[monthYear].includes(ucStr);
+    }
+  }
+  return UCS_PPP.has(ucStr);
+};
+
 const hasCompensacao = (d: any) =>
   d.solarInjetadaOUC > 0 ||
   d.solarInjetadaMUC > 0 ||
-  UCS_PPP.has(String(d.uc)) ||
+  isUcPPP(String(d.uc), d.name) ||
   UCS_USINA.has(String(d.uc));
 
 const VisaoGeralDashboard = ({
@@ -2334,79 +2470,129 @@ const VisaoGeralDashboard = ({
       return getMonthNumber(mB) - getMonthNumber(mA);
     });
 
-  const filteredData =
-    selectedMonth === "all"
+  const filteredData = useMemo(() => {
+    return selectedMonth === "all"
       ? data
       : data.filter((d) => d.name === selectedMonth);
+  }, [data, selectedMonth]);
 
-  const calc = (filterFn: (d: any) => boolean) => {
-    const filtered = filteredData.filter(filterFn);
-    const custo = filtered.reduce((acc, curr) => acc + curr.valorTotal, 0);
-    const consumo = filtered.reduce(
-      (acc, curr) =>
-        acc + (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0),
-      0,
-    );
-    return { custo, consumo, tarifa: consumo > 0 ? custo / consumo : 0 };
-  };
+  const {
+    totalGeral,
+    grupoA,
+    grupoB,
+    livre,
+    livreAzul,
+    livreVerde,
+    cativo,
+    cativoAzul,
+    cativoVerde,
+    cativoOutras,
+    semCompensacao,
+    geral,
+    consumosMinimos,
+    optanteB,
+    comCompensacao,
+    ppp,
+    usinas,
+    totalSolarInjetada,
+    emissoesEvitadas,
+  } = useMemo(() => {
+    let custoTotal = 0, consumoTotal = 0;
+    let custoGrupoA = 0, consumoGrupoA = 0;
+    let custoGrupoB = 0, consumoGrupoB = 0;
+    let custoLivre = 0, consumoLivre = 0;
+    let custoLivreAzul = 0, consumoLivreAzul = 0;
+    let custoLivreVerde = 0, consumoLivreVerde = 0;
+    let custoCativo = 0, consumoCativo = 0;
+    let custoCativoAzul = 0, consumoCativoAzul = 0;
+    let custoCativoVerde = 0, consumoCativoVerde = 0;
+    let custoCativoOutras = 0, consumoCativoOutras = 0;
+    let custoSemComp = 0, consumoSemComp = 0;
+    let custoGeral = 0, consumoGeral = 0;
+    let custoMinimos = 0, consumoMinimos = 0;
+    let custoOptanteB = 0, consumoOptanteB = 0;
+    let custoComComp = 0, consumoComComp = 0;
+    let custoPpp = 0, consumoPpp = 0;
+    let custoUsinas = 0, consumoUsinas = 0;
+    let solarInj = 0;
 
-  const isGrupoA = (d: any) =>
-    d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
-  const isGrupoB = (d: any) => !isGrupoA(d);
-  const isLivre = (d: any) =>
-    d.modalidadeTarifaria.includes("LIVRE") || d.tipo === "LIVRE";
-  const isCativo = (d: any) => !isLivre(d);
+    for (let i = 0; i < filteredData.length; i++) {
+      const d = filteredData[i];
+      const custo = d.valorTotal || 0;
+      const consumo = (d.consumoPonta || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0);
 
-  const isAzul = (d: any) => d.modalidadeTarifaria.includes("AZUL");
-  const isVerde = (d: any) => d.modalidadeTarifaria.includes("VERDE");
-  const isOutrosGrupoA = (d: any) => isGrupoA(d) && !isAzul(d) && !isVerde(d);
+      custoTotal += custo;
+      consumoTotal += consumo;
 
-  const isConsumoMinimo = (d: any) =>
-    isGrupoB(d) &&
-    (d.consumoPonta || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0) + (d.consumoKwh || 0) <= 100 &&
-    d.valorTotal < 150;
-  const isPPP = (d: any) => UCS_PPP.has(String(d.uc));
-  const isUsina = (d: any) => UCS_USINA.has(String(d.uc));
-  const isOptanteB = (d: any) =>
-    isGrupoB(d) &&
-    (d.modalidadeTarifaria || "").toUpperCase().includes("OPTANTE");
-  const isGeral = (d: any) =>
-    isGrupoB(d) &&
-    !isConsumoMinimo(d) &&
-    !isPPP(d) &&
-    !isUsina(d) &&
-    !isOptanteB(d);
+      const solarItem = (d.solarInjetadaOUC || 0) + (d.solarInjetadaMUC || 0);
+      solarInj += solarItem;
 
-  const totalGeral = calc(() => true);
-  const grupoA = calc(isGrupoA);
-  const grupoB = calc(isGrupoB);
+      const gA = d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
+      if (gA) {
+        custoGrupoA += custo;
+        consumoGrupoA += consumo;
+        const mod = (d.modalidadeTarifaria || "").toUpperCase();
+        const isLiv = mod.includes("LIVRE") || d.tipo === "LIVRE";
+        const isAz = mod.includes("AZUL");
+        const isVer = mod.includes("VERDE");
 
-  const livre = calc((d) => isGrupoA(d) && isLivre(d));
-  const livreAzul = calc((d) => isGrupoA(d) && isLivre(d) && isAzul(d));
-  const livreVerde = calc((d) => isGrupoA(d) && isLivre(d) && isVerde(d));
+        if (isLiv) {
+          custoLivre += custo;
+          consumoLivre += consumo;
+          if (isAz) { custoLivreAzul += custo; consumoLivreAzul += consumo; }
+          if (isVer) { custoLivreVerde += custo; consumoLivreVerde += consumo; }
+        } else {
+          custoCativo += custo;
+          consumoCativo += consumo;
+          if (isAz) { custoCativoAzul += custo; consumoCativoAzul += consumo; }
+          else if (isVer) { custoCativoVerde += custo; consumoCativoVerde += consumo; }
+          else { custoCativoOutras += custo; consumoCativoOutras += consumo; }
+        }
+      } else {
+        custoGrupoB += custo;
+        consumoGrupoB += consumo;
+        const hasComp = solarItem > 0 || isUcPPP(String(d.uc), d.name) || UCS_USINA.has(String(d.uc));
+        if (hasComp) {
+          custoComComp += custo;
+          consumoComComp += consumo;
+          if (isUcPPP(String(d.uc), d.name)) { custoPpp += custo; consumoPpp += consumo; }
+          if (UCS_USINA.has(String(d.uc))) { custoUsinas += custo; consumoUsinas += consumo; }
+        } else {
+          custoSemComp += custo;
+          consumoSemComp += consumo;
+          const isMin = consumo <= 100 && custo < 150;
+          const isOpt = (d.modalidadeTarifaria || "").toUpperCase().includes("OPTANTE");
+          if (isMin) { custoMinimos += custo; consumoMinimos += consumo; }
+          else if (isOpt) { custoOptanteB += custo; consumoOptanteB += consumo; }
+          else { custoGeral += custo; consumoGeral += consumo; }
+        }
+      }
+    }
 
-  const cativo = calc((d) => isGrupoA(d) && isCativo(d));
-  const cativoAzul = calc((d) => isGrupoA(d) && isCativo(d) && isAzul(d));
-  const cativoVerde = calc((d) => isGrupoA(d) && isCativo(d) && isVerde(d));
-  const cativoOutras = calc(
-    (d) => isGrupoA(d) && isCativo(d) && isOutrosGrupoA(d),
-  );
+    const mk = (c: number, k: number) => ({ custo: c, consumo: k, tarifa: k > 0 ? c / k : 0 });
 
-  const semCompensacao = calc((d) => isGrupoB(d) && !hasCompensacao(d));
-  const geral = calc(isGeral);
-  const consumosMinimos = calc(isConsumoMinimo);
-  const optanteB = calc(isOptanteB);
-
-  const comCompensacao = calc((d) => isGrupoB(d) && hasCompensacao(d));
-  const ppp = calc(isPPP);
-  const usinas = calc(isUsina);
-
-  const totalSolarInjetada = filteredData.reduce(
-    (acc, curr) =>
-      acc + (curr.solarInjetadaOUC || 0) + (curr.solarInjetadaMUC || 0),
-    0,
-  );
-  const emissoesEvitadas = totalSolarInjetada * 0.0426; // Fator médio do SIN
+    return {
+      totalGeral: mk(custoTotal, consumoTotal),
+      grupoA: mk(custoGrupoA, consumoGrupoA),
+      grupoB: mk(custoGrupoB, consumoGrupoB),
+      livre: mk(custoLivre, consumoLivre),
+      livreAzul: mk(custoLivreAzul, consumoLivreAzul),
+      livreVerde: mk(custoLivreVerde, consumoLivreVerde),
+      cativo: mk(custoCativo, consumoCativo),
+      cativoAzul: mk(custoCativoAzul, consumoCativoAzul),
+      cativoVerde: mk(custoCativoVerde, consumoCativoVerde),
+      cativoOutras: mk(custoCativoOutras, consumoCativoOutras),
+      semCompensacao: mk(custoSemComp, consumoSemComp),
+      geral: mk(custoGeral, consumoGeral),
+      consumosMinimos: mk(custoMinimos, consumoMinimos),
+      optanteB: mk(custoOptanteB, consumoOptanteB),
+      comCompensacao: mk(custoComComp, consumoComComp),
+      ppp: mk(custoPpp, consumoPpp),
+      usinas: mk(custoUsinas, consumoUsinas),
+      totalSolarInjetada: solarInj,
+      emissoesEvitadas: solarInj * 0.0426,
+    };
+  }, [filteredData]);
 
   const getMonthlyData = (
     sourceData: any[],
@@ -2424,19 +2610,22 @@ const VisaoGeralDashboard = ({
 
     const grouped = filtered.reduce(
       (acc, curr) => {
-        const name = curr.name; // e.g. "Janeiro/2026"
+        const name = curr.name || "";
+        if (!name) return acc;
         if (!acc[name]) {
-          const [month, year] = name.split("/");
+          const parts = name.split("/");
+          const monthStr = (parts[0] || "").trim();
+          const yearStr = (parts[1] || "2026").trim();
           acc[name] = {
             name,
-            month: getMonthNumber(month),
-            year: parseInt(year),
+            month: getMonthNumber(monthStr),
+            year: parseInt(yearStr, 10) || 2026,
             consumo: 0,
             custo: 0,
           };
         }
-        acc[name].consumo += (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0);
-        acc[name].custo += curr.valorTotal;
+        acc[name].consumo += (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0);
+        acc[name].custo += curr.valorTotal || 0;
         return acc;
       },
       {} as Record<string, GroupedItem>,
@@ -2477,12 +2666,22 @@ const VisaoGeralDashboard = ({
     });
   };
 
+  const isGrupoA = (d: any) =>
+    d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
+  const isLivre = (d: any) =>
+    (d.modalidadeTarifaria || "").includes("LIVRE") || d.tipo === "LIVRE";
+  const isAzul = (d: any) => (d.modalidadeTarifaria || "").includes("AZUL");
+  const isVerde = (d: any) => (d.modalidadeTarifaria || "").includes("VERDE");
+
   const monthlyData = useMemo(() => getMonthlyData(data), [data]);
 
   const unifiedMax = useMemo(() => {
-    const maxConsumo = Math.max(...monthlyData.map((d) => d.consumo), 0);
-    const maxCusto = Math.max(...monthlyData.map((d) => d.custo), 0);
-    return Math.max(maxConsumo, maxCusto);
+    let max = 0;
+    for (let i = 0; i < monthlyData.length; i++) {
+      if (monthlyData[i].consumo > max) max = monthlyData[i].consumo;
+      if (monthlyData[i].custo > max) max = monthlyData[i].custo;
+    }
+    return max;
   }, [monthlyData]);
 
   const chartDomainConsumo = useMemo(() => {
@@ -2502,19 +2701,25 @@ const VisaoGeralDashboard = ({
     [data],
   );
 
-  const sparklineDataAzul = monthlyDataAzul.map((m) => ({ value: m.custo }));
-  const sparklineDataVerde = monthlyDataVerde.map((m) => ({ value: m.custo }));
+  const sparklineDataAzul = useMemo(() => monthlyDataAzul.map((m) => ({ value: m.custo })), [monthlyDataAzul]);
+  const sparklineDataVerde = useMemo(() => monthlyDataVerde.map((m) => ({ value: m.custo })), [monthlyDataVerde]);
 
   const unifiedMaxAzul = useMemo(() => {
-    const maxConsumo = Math.max(...monthlyDataAzul.map((d) => d.consumo), 0);
-    const maxCusto = Math.max(...monthlyDataAzul.map((d) => d.custo), 0);
-    return Math.max(maxConsumo, maxCusto);
+    let max = 0;
+    for (let i = 0; i < monthlyDataAzul.length; i++) {
+      if (monthlyDataAzul[i].consumo > max) max = monthlyDataAzul[i].consumo;
+      if (monthlyDataAzul[i].custo > max) max = monthlyDataAzul[i].custo;
+    }
+    return max;
   }, [monthlyDataAzul]);
 
   const unifiedMaxVerde = useMemo(() => {
-    const maxConsumo = Math.max(...monthlyDataVerde.map((d) => d.consumo), 0);
-    const maxCusto = Math.max(...monthlyDataVerde.map((d) => d.custo), 0);
-    return Math.max(maxConsumo, maxCusto);
+    let max = 0;
+    for (let i = 0; i < monthlyDataVerde.length; i++) {
+      if (monthlyDataVerde[i].consumo > max) max = monthlyDataVerde[i].consumo;
+      if (monthlyDataVerde[i].custo > max) max = monthlyDataVerde[i].custo;
+    }
+    return max;
   }, [monthlyDataVerde]);
 
   const projDomain = useMemo(() => {
@@ -2911,11 +3116,11 @@ const VisaoGeralDashboard = ({
         <div className="flex items-center gap-4">
           <div
             className="flex items-center gap-2 px-3 py-2 border rounded-xl text-xs font-semibold shadow-sm bg-sky-50 text-sky-800 border-sky-200"
-            title={`Banco de Dados Supabase Cloud: ${data.length.toLocaleString()} faturas carregadas`}
+            title={`Banco de Dados Nuvem Google: ${data.length.toLocaleString()} faturas carregadas`}
           >
             <Cloud size={14} className="text-sky-600" />
             <span>
-              {`Supabase: ${data.length.toLocaleString()} faturas`}
+              {`Nuvem Google: ${data.length.toLocaleString()} faturas`}
             </span>
           </div>
           <button
@@ -2924,16 +3129,6 @@ const VisaoGeralDashboard = ({
           >
             <LayoutDashboard size={16} />
             Acessar Sistema
-          </button>
-          <button
-            onClick={handleSelectKey}
-            className={`flex items-center gap-2 px-4 py-2 ${hasApiKey ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"} border hover:opacity-80 transition-all rounded-xl text-xs font-bold tracking-wider shadow-sm active:scale-95`}
-            title={
-              hasApiKey ? "Trocar Chave de API" : "Selecionar Chave de API"
-            }
-          >
-            <Key size={16} />
-            {hasApiKey ? "Trocar Conta" : "Configurar API"}
           </button>
           <button
             onClick={handleLogout}
@@ -3700,7 +3895,7 @@ export default function App() {
   React.useEffect(() => {
     if (!isSupabaseConfigured) {
       console.warn(
-        "Supabase não configurado. Ignorando verificação de sessão.",
+        "Firebase não configurado. Ignorando verificação de sessão.",
       );
       return;
     }
@@ -3714,7 +3909,7 @@ export default function App() {
         }
       })
       .catch((err) => {
-        console.warn("Aviso ao recuperar sessão do Supabase:", err);
+        console.warn("Aviso ao recuperar sessão do Firebase:", err);
       });
 
     const {
@@ -3723,7 +3918,7 @@ export default function App() {
       if (session) {
         localStorage.setItem("sanesul_auth", "true");
       }
-      // Never force logout from the dashboard - data is always accessible via RLS anon policy
+      // Never force logout from the dashboard - data is always accessible
     });
 
     return () => subscription.unsubscribe();
@@ -3757,9 +3952,9 @@ export default function App() {
       
       if (error) {
         if (error.message?.includes("Failed to fetch") || error.message?.includes("fetch failed")) {
-          setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
-        } else if (error.message?.toLowerCase().includes("rate limit")) {
-          setLoginError("Limite de envio de e-mails do Supabase atingido. Tente fazer login direto na aba 'Entrar' (caso já tenha cadastrado) ou desative 'Confirm email' em Authentication -> Providers -> Email no Supabase.");
+          setLoginError("Erro de conexão com o Firebase. Verifique a sua conexão com a internet ou clique em 'Acessar Modo Local / Offline' abaixo.");
+        } else if (error.message?.toLowerCase().includes("rate limit") || error.message?.toLowerCase().includes("quota")) {
+          setLoginError("Limite de requisições de autenticação atingido. Tente novamente mais tarde ou acesse em Modo Local.");
         } else {
           setLoginError(`Erro ao cadastrar: ${error.message}`);
         }
@@ -3777,9 +3972,9 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       if (err.message?.includes("Failed to fetch") || err.message?.includes("fetch failed")) {
-        setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
-      } else if (err.message?.toLowerCase().includes("rate limit")) {
-        setLoginError("Limite de envio de e-mails do Supabase atingido. Tente fazer login direto na aba 'Entrar' ou desative 'Confirm email' em Authentication -> Providers -> Email no Supabase.");
+        setLoginError("Erro de conexão com o Firebase. Verifique a sua conexão com a internet ou clique em 'Acessar Modo Local / Offline' abaixo.");
+      } else if (err.message?.toLowerCase().includes("rate limit") || err.message?.toLowerCase().includes("quota")) {
+        setLoginError("Limite de requisições de autenticação atingido. Tente novamente mais tarde ou acesse em Modo Local.");
       } else {
         setLoginError(`Erro inesperado: ${err.message || err}`);
       }
@@ -3808,9 +4003,9 @@ export default function App() {
       });
 
       if (error) {
-        console.error("Erro no Supabase Auth:", error);
+        console.error("Erro no Firebase Auth:", error);
         if (error.message?.includes("Failed to fetch") || error.message?.includes("fetch failed")) {
-          setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+          setLoginError("Erro de conexão com o Firebase. Verifique a sua conexão com a internet ou clique em 'Acessar Modo Local / Offline' abaixo.");
         } else {
           setLoginError(`Erro de autenticação: ${error.message}`);
         }
@@ -3823,7 +4018,7 @@ export default function App() {
     } catch (err: any) {
       console.error("Erro inesperado no handleLogin:", err);
       if (err.message?.includes("Failed to fetch") || err.message?.includes("fetch failed")) {
-        setLoginError("Erro de conexão com o Supabase (Failed to fetch). Verifique se o projeto no Supabase está ativo ou clique em 'Acessar Modo Local / Offline' abaixo.");
+        setLoginError("Erro de conexão com o Firebase. Verifique a sua conexão com a internet ou clique em 'Acessar Modo Local / Offline' abaixo.");
       } else {
         setLoginError("Erro inesperado ao tentar logar. Verifique a conexão.");
       }
@@ -3864,36 +4059,56 @@ export default function App() {
     showAlert("Sessão Encerrada", "Sua sessão foi encerrada. O painel permanece acessível em modo de visualização.");
   };
 
-  const [bills, setBills] = useState<BillData[]>(() => {
-    const saved = localStorage.getItem("sanesul_bills");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Deduplicate on load
-        const deduplicated = deduplicateBills(
-          Array.isArray(parsed) ? parsed : [],
-        );
+  const [bills, setBills] = useState<BillData[]>([]);
 
-        // One-time fix for Elektro/Energisa UC from localStorage & UC 12031 replacement
-        return deduplicated.map((b) => {
+  React.useEffect(() => {
+    const loadLocalBills = async () => {
+      let initialBills: any[] = [];
+      try {
+        const forageBills = await localforage.getItem("sanesul_bills_data");
+        if (forageBills && Array.isArray(forageBills) && forageBills.length > 0) {
+          initialBills = forageBills;
+        } else {
+          const saved = localStorage.getItem("sanesul_bills");
+          if (saved) {
+            initialBills = JSON.parse(saved);
+          }
+        }
+      } catch(e) {}
+      
+      if (initialBills && initialBills.length > 0) {
+        const deduplicated = deduplicateBills(initialBills);
+        const mappedBills = deduplicated.map((b: any) => {
           let currentUc = b.uc === "179291005130" ? "179291005130" : b.uc;
+          
+          if (currentUc && UC_MIGRATION_MAP[currentUc]) {
+            currentUc = UC_MIGRATION_MAP[currentUc];
+          }
+
           const upperConc = (b.concessionaria || "").toUpperCase();
           const isElektro = upperConc.includes("ELEKTRO");
           const isEnergisa = upperConc.includes("ENERGISA");
+
           if ((isElektro || isEnergisa) && b.status === "completed") {
             const solvedUc = extractUcFromFileName(b.fileName, currentUc);
             if (solvedUc && currentUc !== solvedUc) {
-              return { ...b, uc: solvedUc === "179291005130" ? "179291005130" : solvedUc };
+              let finalUc = solvedUc === "179291005130" ? "179291005130" : solvedUc;
+              if (finalUc && UC_MIGRATION_MAP[finalUc]) {
+                finalUc = UC_MIGRATION_MAP[finalUc];
+              }
+              const isVerde = (b.modalidadeTarifaria || "").toUpperCase().includes("VERDE");
+              return { ...b, uc: finalUc, demandaPontaKW: isVerde ? "0" : (b.demandaPontaKW || "") };
             }
           }
-          return { ...b, uc: currentUc };
+
+          const isVerde = (b.modalidadeTarifaria || "").toUpperCase().includes("VERDE");
+          return { ...b, uc: currentUc, demandaPontaKW: isVerde ? "0" : (b.demandaPontaKW || "") };
         });
-      } catch (e) {
-        return [];
+        setBills(mappedBills);
       }
-    }
-    return [];
-  });
+    };
+    loadLocalBills();
+  }, []);
 
 
   const [customRequestedAdjustments, setCustomRequestedAdjustments] = useState<Record<string, { p: number; fp: number }>>(() => {
@@ -3978,33 +4193,125 @@ export default function App() {
     }
   });
 
-  // Estado de sincronização com o Supabase Cloud
-  const [supabaseHealth, setSupabaseHealth] = useState({
+  // Estado para Saldo Acumulado GD por UC e mês (persistência dedicada para usinas)
+  const [customUsinaSaldoGD, setCustomUsinaSaldoGD] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem("sanesul_usinas_saldo_gd");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [editingSaldoGDItem, setEditingSaldoGDItem] = useState<{
+    uc: string;
+    locin: string;
+    gerencia: string;
+    cidade: string;
+    month: string;
+    currentValue: number;
+  } | null>(null);
+  const [tempSaldoGDInput, setTempSaldoGDInput] = useState<string>("");
+  const [isSavingSaldoGD, setIsSavingSaldoGD] = useState<boolean>(false);
+
+  // Estado de sincronização com o Firebase Cloud
+  const [cloudHealth, setCloudHealth] = useState({
     connected: isSupabaseConfigured,
     totalBills: 0,
     totalUcs: 0,
     lastSync: new Date(),
   });
+  const setSupabaseHealth = setCloudHealth;
 
-  // Limpeza e sanitização inicial de UCs no armazenamento
+
+  // One-off migration for UCs
+  React.useEffect(() => {
+    const runMigration = async () => {
+      const migrationFlag = "uc_migration_2026_08_20_v4_full";
+      if (localStorage.getItem(migrationFlag) === "true") return;
+
+      console.log("Running comprehensive UC migration for LocalStorage, Firebase & SQLite...");
+      const savedBills = localStorage.getItem("sanesul_bills");
+      if (savedBills) {
+        try {
+          const parsed = JSON.parse(savedBills);
+          let changed = false;
+          const updatedBills = (Array.isArray(parsed) ? parsed : []).map((bill) => {
+            const rawUc = String(bill.uc || "").replace(/[\.\-]/g, "").trim();
+            if (rawUc && UC_MIGRATION_MAP[rawUc]) {
+              changed = true;
+              return { ...bill, uc: UC_MIGRATION_MAP[rawUc] };
+            }
+            return bill;
+          });
+          if (changed) {
+            try { await localforage.setItem("sanesul_bills_data", updatedBills); } catch(e) {}
+            if (updatedBills.length <= 250) {
+              try { localStorage.setItem("sanesul_bills", JSON.stringify(updatedBills)); } catch(e) {}
+            }
+            setBills(updatedBills);
+          }
+        } catch (e) {
+          console.error("Error migrating localStorage bills:", e);
+        }
+      }
+
+      const savedMappings = localStorage.getItem("sanesul_uc_mappings");
+      if (savedMappings) {
+        try {
+          const parsed = JSON.parse(savedMappings);
+          if (Array.isArray(parsed)) {
+            const map = new Map<string, UCLocinMapping>();
+            parsed.forEach((m: any) => {
+              if (m && m.uc) {
+                const u = String(m.uc).replace(/[\.\-]/g, "").trim();
+                const finalUc = UC_MIGRATION_MAP[u] || u;
+                map.set(finalUc, { ...m, uc: finalUc });
+              }
+            });
+            const updated = Array.from(map.values());
+            localStorage.setItem("sanesul_uc_mappings", JSON.stringify(updated));
+            setUcMappings(updated);
+          }
+        } catch (e) {}
+      }
+
+      console.log("Running UC migration for local data...");
+      localStorage.setItem(migrationFlag, "true");
+      console.log("UC Migration completed!");
+    };
+    runMigration();
+  }, []);
+
+  // Limpeza e sanitização contínua de UCs no armazenamento
   useEffect(() => {
     try {
-      ["PPP_UCS_OVERRIDE", "USINA_UCS_OVERRIDE"].forEach((key) => {
+      ["PPP_UCS_OVERRIDE", "USINA_UCS_OVERRIDE", "UCS_LIVRE_OVERRIDE"].forEach((key) => {
         const val = localStorage.getItem(key);
-        if (val && val.includes("179291005130")) {
+        if (val) {
           const arr = JSON.parse(val);
           if (Array.isArray(arr)) {
-            const replaced = arr.map((x) => (x === "179291005130" ? "179291005130" : x));
+            const replaced = Array.from(new Set(arr.map((x) => {
+              const u = String(x).trim();
+              return UC_MIGRATION_MAP[u] || u;
+            })));
             localStorage.setItem(key, JSON.stringify(replaced));
           }
         }
       });
       const valMappings = localStorage.getItem("sanesul_uc_mappings");
-      if (valMappings && valMappings.includes("179291005130")) {
+      if (valMappings) {
         const arr = JSON.parse(valMappings);
         if (Array.isArray(arr)) {
-          const replaced = arr.map((m: any) => (m.uc === "179291005130" ? { ...m, uc: "179291005130" } : m));
-          localStorage.setItem("sanesul_uc_mappings", JSON.stringify(replaced));
+          const map = new Map();
+          arr.forEach((m: any) => {
+            if (m && m.uc) {
+              const u = String(m.uc).replace(/[\.\-]/g, "").trim();
+              const finalUc = UC_MIGRATION_MAP[u] || u;
+              map.set(finalUc, { ...m, uc: finalUc });
+            }
+          });
+          localStorage.setItem("sanesul_uc_mappings", JSON.stringify(Array.from(map.values())));
         }
       }
     } catch (e) {}
@@ -4038,6 +4345,61 @@ export default function App() {
   React.useEffect(() => {
     localStorage.setItem("custom_adjustments_metadata", JSON.stringify(customAdjustmentsMetadata));
   }, [customAdjustmentsMetadata]);
+
+  const handleSaveSaldoGD = async (uc: string, month: string, newValue: number) => {
+    setIsSavingSaldoGD(true);
+    try {
+      const monthKey = month !== "all" ? `${uc}_${month}` : `${uc}_all`;
+      const updatedCustom = { ...customUsinaSaldoGD, [monthKey]: newValue };
+      if (month !== "all") {
+        updatedCustom[`${uc}_all`] = newValue;
+      }
+      setCustomUsinaSaldoGD(updatedCustom);
+      try {
+        localStorage.setItem("sanesul_usinas_saldo_gd", JSON.stringify(updatedCustom));
+      } catch (e) {}
+
+      // Atualiza o saldo nas faturas locais correspondentes
+      const updatedBills = bills.map((b) => {
+        const mYear = `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`;
+        if (String(b.uc) === String(uc) && (month === "all" || mYear === month)) {
+          return { ...b, saldoAcumuladoGD: String(newValue) };
+        }
+        return b;
+      });
+      setBills(updatedBills);
+      try {
+        localStorage.setItem("sanesul_bills", JSON.stringify(updatedBills));
+        localforage.setItem("sanesul_bills_data", JSON.parse(JSON.stringify(updatedBills)));
+      } catch (e) {}
+
+      // Sincroniza faturas no Supabase se houver faturas existentes
+      const matchingBills = updatedBills.filter((b) => {
+        const mYear = `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`;
+        return String(b.uc) === String(uc) && (month === "all" || mYear === month);
+      });
+
+      if (matchingBills.length > 0 && isSupabaseConfigured) {
+        for (const mb of matchingBills) {
+          try {
+            await supabase.from("bills").update({ saldo_acumulado_gd: String(newValue) }).eq("id", mb.id);
+          } catch (err) {
+            console.warn("Aviso ao sincronizar saldo_acumulado_gd na nuvem:", err);
+          }
+        }
+      }
+
+      showAlert(
+        "Saldo Gravado com Sucesso",
+        `O Saldo Acumulado GD de ${newValue.toLocaleString("pt-BR")} kWh foi gravado no app para a UC ${uc}${month !== "all" ? ` (${month})` : ""}!`
+      );
+      setEditingSaldoGDItem(null);
+    } catch (err: any) {
+      showAlert("Erro", "Erro ao gravar o saldo acumulado: " + (err.message || err));
+    } finally {
+      setIsSavingSaldoGD(false);
+    }
+  };
 
   const [monitoringResults, setMonitoringResults] = useState<any>(null);
   const [selectedMonitoramentoMes, setSelectedMonitoramentoMes] = useState<string>("Todos");
@@ -4098,38 +4460,26 @@ export default function App() {
   React.useEffect(() => {
     let isCancelled = false;
 
-    const SUPA_URL = 'https://yydvjgbfaapldtkhlqrh.supabase.co';
-    const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5ZHZqZ2JmYWFwbGR0a2hscXJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMjQ1NTMsImV4cCI6MjA4ODkwMDU1M30.GqUoGviAYXveiEs7YmtN6SE5eZ3ZbiENaZtPUfy8blU';
-
-    const supaFetch = async (table: string, params: string) => {
-      const res = await fetch(`${SUPA_URL}/rest/v1/${table}?${params}`, {
-        method: 'GET',
-        headers: {
-          'apikey': SUPA_KEY,
-          'Authorization': `Bearer ${SUPA_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation',
-        },
-      });
-      if (!res.ok) throw new Error(`Supabase REST error: ${res.status} ${await res.text()}`);
-      return res.json();
-    };
-
     const fetchBills = async () => {
+      if (!isSupabaseConfigured) return;
       try {
         setIsSyncing(true);
-        console.log('[Supabase REST] Carregando dados da nuvem...');
+        console.log('[Firebase] Carregando dados da nuvem...');
 
         // 1. Carrega mapeamentos de UCs
         try {
-          const cloudMappings = await supaFetch('uc_mappings', 'select=*');
+          const { data: cloudMappings, error: mappingsErr } = await supabase.from('uc_mappings').select('*');
           if (cloudMappings && cloudMappings.length > 0 && !isCancelled) {
-            const sanitizedCloud = cloudMappings.map((m: any) => ({
-              uc: String(m.uc),
-              gerencia: m.gerencia || '',
-              locin: m.locin || '',
-              cidade: m.cidade || ''
-            }));
+            const sanitizedCloud = cloudMappings.map((m: any) => {
+              const rawUc = String(m.uc || '').trim();
+              const finalUc = (rawUc && UC_MIGRATION_MAP[rawUc]) ? UC_MIGRATION_MAP[rawUc] : rawUc;
+              return {
+                uc: finalUc,
+                gerencia: m.gerencia || '',
+                locin: m.locin || '',
+                cidade: m.cidade || ''
+              };
+            });
             setUcMappings((prev) => {
               const map = new Map(prev.map((m) => [m.uc, m]));
               sanitizedCloud.forEach((m: any) => map.set(m.uc, m));
@@ -4137,35 +4487,58 @@ export default function App() {
             });
           }
         } catch (err) {
-          console.warn('[Supabase REST] Erro ao carregar uc_mappings:', err);
+          console.warn('[Firebase] Erro ao carregar uc_mappings:', err);
         }
 
-        // 2. Carrega todas as faturas paginadas com fetch nativo
+        // 2. Carrega todas as faturas
         let allData: any[] = [];
-        let from = 0;
-        let finished = false;
-
-        while (!finished && !isCancelled) {
-          const chunk = await supaFetch(
-            'bills',
-            `select=*&order=created_at.desc,id.desc&offset=${from}&limit=1000`
-          );
-
-          if (chunk && chunk.length > 0) {
-            allData = [...allData, ...chunk];
-            if (chunk.length < 1000) {
-              finished = true;
-            } else {
-              from += 1000;
-            }
-          } else {
-            finished = true;
+        let queryError: any = null;
+        try {
+          if (isQuotaExhausted()) {
+            console.log('[Firebase] Modo offline ativo por cota excedida. Usando apenas dados locais.');
+            return;
           }
+          
+          let from = 0;
+          const limit = 1000;
+          let hasMore = true;
+
+          while (hasMore) {
+            const { data: billsData, error: billsErr } = await supabase
+              .from('bills')
+              .select('*')
+              .range(from, from + limit - 1);
+
+            queryError = billsErr;
+            if (billsErr) {
+              console.error('[Firebase] Erro retornado:', billsErr);
+              if (billsErr.code === 'resource-exhausted' || billsErr.message?.includes('quota')) {
+                console.warn("⚠️ AVISO: Limite diário da nuvem atingido. Operando em modo offline.");
+              } else {
+                console.warn("Nuvem indisponível ou erro ao carregar faturas: " + billsErr.message);
+              }
+              break;
+            }
+
+            if (billsData && billsData.length > 0 && !isCancelled) {
+               allData = [...allData, ...billsData];
+               if (billsData.length < limit) {
+                 hasMore = false;
+               } else {
+                 from += limit;
+               }
+            } else {
+               hasMore = false;
+            }
+          }
+        } catch (err: any) {
+          console.warn('[Firebase] Erro inesperado ao carregar bills:', err);
+          queryError = err;
         }
 
         if (isCancelled) return;
 
-        console.log(`[Supabase REST] Total de faturas recebidas: ${allData.length}`);
+        console.log(`[Firebase] Total de faturas recebidas: ${allData.length}`);
 
         if (allData.length > 0) {
           const mappedBills = allData.map(mapDbToBillData);
@@ -4173,9 +4546,11 @@ export default function App() {
           // Extract unique mappings from the database
           const dbMappings: Record<string, UCLocinMapping> = {};
           mappedBills.forEach((b) => {
-            if (b.uc && b.gerencia && b.locin) {
-              dbMappings[b.uc] = {
-                uc: b.uc,
+            const rawUc = String(b.uc || '').trim();
+            const finalUc = (rawUc && UC_MIGRATION_MAP[rawUc]) ? UC_MIGRATION_MAP[rawUc] : rawUc;
+            if (finalUc && b.gerencia && b.locin) {
+              dbMappings[finalUc] = {
+                uc: finalUc,
                 gerencia: b.gerencia,
                 locin: b.locin,
                 cidade: b.cidade || "",
@@ -4185,7 +4560,7 @@ export default function App() {
 
           if (Object.keys(dbMappings).length > 0) {
             setUcMappings((prev) => {
-              const existingMap = new Map(prev.map((m) => [m.uc, m]));
+              const existingMap = new Map<string, UCLocinMapping>(prev.map((m) => [m.uc, m]));
               Object.values(dbMappings).forEach((m) => {
                 existingMap.set(m.uc, m);
               });
@@ -4203,34 +4578,108 @@ export default function App() {
           // Apply fixes & deduplicate
           const updatedBills = mappedBills.map((b) => {
             let updatedBill = { ...b };
+            let currentUc = updatedBill.uc;
+            if (currentUc && UC_MIGRATION_MAP[currentUc]) {
+              currentUc = UC_MIGRATION_MAP[currentUc];
+            }
+
             // Fix Elektro/Energisa UC - filename is the authoritative UC
             const upperConc2 = (b.concessionaria || "").toUpperCase();
             const isElektroOrEnergisa =
               upperConc2.includes("ELEKTRO") || upperConc2.includes("ENERGISA");
             if (isElektroOrEnergisa && b.status === "completed") {
-              const solvedUc = extractUcFromFileName(b.fileName, b.uc);
-              if (solvedUc && b.uc !== solvedUc) {
-                updatedBill.uc = solvedUc;
+              let solvedUc = extractUcFromFileName(b.fileName, currentUc);
+              if (solvedUc && UC_MIGRATION_MAP[solvedUc]) {
+                solvedUc = UC_MIGRATION_MAP[solvedUc];
+              }
+              if (solvedUc && currentUc !== solvedUc) {
+                currentUc = solvedUc;
               }
             }
 
+            updatedBill.uc = currentUc;
+
             // Fix UC 117384 - FÁTIMA DO SUL
-            if (b.uc === "93604305181" && b.cidade !== "FÁTIMA DO SUL") {
+            if (updatedBill.uc === "93604305181" && updatedBill.cidade !== "FÁTIMA DO SUL") {
               updatedBill.cidade = "FÁTIMA DO SUL";
             }
 
             return updatedBill;
           });
 
-          setBills((prev) => {
-            const pending = prev.filter((b) => b.status !== "completed");
-            return deduplicateBills([...updatedBills, ...pending]);
+          const dedupedUpdatedBills = deduplicateBills(updatedBills);
+          const keptIds = new Set(dedupedUpdatedBills.map((b: any) => b.id));
+          const duplicateIds = updatedBills.filter(b => !keptIds.has(b.id)).map(b => b.id);
+
+          if (duplicateIds.length > 0 && isSupabaseConfigured) {
+            console.log(`[DB Cleanup] Encontradas ${duplicateIds.length} faturas duplicadas no banco. Removendo...`);
+            (async () => {
+              const chunkSize = 200;
+              for (let i = 0; i < duplicateIds.length; i += chunkSize) {
+                const chunk = duplicateIds.slice(i, i + chunkSize);
+                try {
+                  await supabase.from('bills').delete().in('id', chunk);
+                } catch(e) {
+                  console.error("Erro ao deletar duplicatas", e);
+                }
+              }
+              console.log(`[DB Cleanup] Remoção de ${duplicateIds.length} duplicatas concluída.`);
+            })();
+          }
+
+          const prevBillsMap = new Map<string, BillData>();
+          try {
+            const localSaved = localStorage.getItem("sanesul_bills");
+            if (localSaved) {
+              const parsed = JSON.parse(localSaved);
+              if (Array.isArray(parsed)) {
+                parsed.forEach((b: any) => { if (b && b.id) prevBillsMap.set(b.id, b); });
+              }
+            }
+          } catch (e) {}
+
+          const preservedBills = dedupedUpdatedBills.map((b) => {
+            const localPrev = prevBillsMap.get(b.id);
+            if (
+              (!b.saldoAcumuladoGD || b.saldoAcumuladoGD === "" || b.saldoAcumuladoGD === "0") &&
+              localPrev?.saldoAcumuladoGD &&
+              localPrev.saldoAcumuladoGD !== "" &&
+              localPrev.saldoAcumuladoGD !== "0"
+            ) {
+              return { ...b, saldoAcumuladoGD: localPrev.saldoAcumuladoGD };
+            }
+            return b;
           });
 
-          // Cache in localStorage as fallback
+          setBills((prev) => {
+            const currentPrevMap = new Map(prev.map((b) => [b.id, b]));
+            const finalBills = preservedBills.map((b) => {
+              const prevBill = currentPrevMap.get(b.id);
+              if (
+                (!b.saldoAcumuladoGD || b.saldoAcumuladoGD === "" || b.saldoAcumuladoGD === "0") &&
+                prevBill?.saldoAcumuladoGD &&
+                prevBill.saldoAcumuladoGD !== "" &&
+                prevBill.saldoAcumuladoGD !== "0"
+              ) {
+                return { ...b, saldoAcumuladoGD: prevBill.saldoAcumuladoGD };
+              }
+              return b;
+            });
+            const pending = prev.filter((b) => b.status !== "completed");
+            return deduplicateBills([...finalBills, ...pending]);
+          });
+
+          // Salva diretamente no localforage sem serialização síncrona redundante
           try {
-            localStorage.setItem("sanesul_bills", JSON.stringify(updatedBills));
+            await localforage.setItem("sanesul_bills_data", preservedBills);
+            if (preservedBills.length <= 250) {
+              try { localStorage.setItem("sanesul_bills", JSON.stringify(preservedBills)); } catch(e) {}
+            }
           } catch (e) {}
+
+          lastSavedCloudSignatureRef.current = preservedBills
+            .map((b) => `${b.id}:${b.status}:${b.valorTotal || ""}`)
+            .join("|");
 
           setSupabaseHealth({
             connected: true,
@@ -4238,9 +4687,13 @@ export default function App() {
             totalUcs: new Set(updatedBills.map(b => b.uc).filter(Boolean)).size,
             lastSync: new Date(),
           });
+        } else if (!queryError) {
+          // Nuvem vazia e sem erro
+          console.log('[Firebase] Banco de dados na nuvem atualmente sem registros.');
+          setSupabaseHealth({ connected: true, totalBills: 0, totalUcs: 0, lastSync: new Date() });
         }
       } catch (err) {
-        console.error("[Supabase] Erro inesperado ao buscar faturas:", err);
+        console.error("[Firebase] Erro inesperado ao buscar faturas:", err);
       } finally {
         setIsSyncing(false);
       }
@@ -4253,32 +4706,30 @@ export default function App() {
     };
   }, [fetchTrigger]);
 
-  const saveTimeoutRef = React.useRef<NodeJS.Timeout>();
+  const saveTimeoutRef = React.useRef<NodeJS.Timeout | undefined>(undefined);
+  const lastSavedCloudSignatureRef = React.useRef<string>("");
 
   React.useEffect(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        const completedBillsList = bills.filter((b) => b.status === "completed");
-
-        // Direct auto-save batch to Supabase Cloud
-        if (isSupabaseConfigured && completedBillsList.length > 0) {
-          try {
-            const dbData = completedBillsList.map(b => mapBillDataToDb(b));
-            for (let i = 0; i < dbData.length; i += 100) {
-              const chunk = dbData.slice(i, i + 100);
-              await supabase.from("bills").upsert(chunk, { onConflict: "id" });
-            }
-          } catch (cloudErr) {
-            console.warn("[Supabase] Erro ao persistir faturas na nuvem:", cloudErr);
-          }
-        }
-
         const billsToSave = bills.map((b) => {
           const { file, ...rest } = b as any;
           return rest;
         });
-        localStorage.setItem("sanesul_bills", JSON.stringify(billsToSave));
+        // Salva diretamente no localforage (IndexedDB assíncrono de alta performance) sem serialização síncrona redundante
+        try {
+          await localforage.setItem("sanesul_bills_data", billsToSave);
+        } catch (errForage) {
+          console.warn("Erro ao salvar no localforage:", errForage);
+        }
+
+        // Somente salva no localStorage se a base for pequena (<= 250 faturas) para não estourar o limite de 5MB nem travar a UI
+        if (billsToSave.length <= 250) {
+          try {
+            localStorage.setItem("sanesul_bills", JSON.stringify(billsToSave));
+          } catch (e) {}
+        }
 
         // Save files to localforage ONLY if files changed to prevent UI freezing
         const currentFileIds = bills.filter(b => (b as any).file).map(b => b.id).sort().join(',');
@@ -4301,7 +4752,7 @@ export default function App() {
         console.warn("LocalStorage limit reached, skipping save:", e);
       }
     }, 1500);
-  }, [bills, isAuthenticated]);
+  }, [bills]);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const isProcessingRef = useRef(false);
@@ -4323,8 +4774,10 @@ export default function App() {
     | "monitoramento_ajustes"
     | "monitoramento_reativo"
     | "monitoramento_usinas"
+    | "assistente_portal"
     | "relatorio"
   >("faturas");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [multasMonth, setMultasMonth] = useState<string>("all");
   const [selectedMultaType, setSelectedMultaType] = useState<
     "ultrapassagem" | "reativa" | "subutilizacao" | "total"
@@ -5123,7 +5576,7 @@ export default function App() {
     const refs = new Set<string>();
     bills.forEach((b) => {
       if (b.mesReferencia && b.anoLeitura) {
-        refs.add(`${formatMonth(b.mesReferencia)}/${b.anoLeitura}`);
+        refs.add(`${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`);
       }
     });
     return Array.from(refs).sort((a, b) => {
@@ -5139,15 +5592,18 @@ export default function App() {
     if (filterReference !== "all") {
       filtered = filtered.filter(
         (b) =>
-          `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` === filterReference,
+          `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}` === filterReference,
       );
     }
 
-    // UC Search Filter
+    // UC, Endereço, Cidade and Gerência Search Filter
     if (searchUC.trim() !== "") {
       const search = searchUC.toLowerCase().trim();
       filtered = filtered.filter((b) =>
-        (b.uc || "").toLowerCase().includes(search),
+        (b.uc || "").toLowerCase().includes(search) ||
+        (b.cidade || "").toLowerCase().includes(search) ||
+        (b.endereco || "").toLowerCase().includes(search) ||
+        (b.gerencia || "").toLowerCase().includes(search)
       );
     }
 
@@ -5301,119 +5757,23 @@ export default function App() {
 
   const [isMercadoLivreModalOpen, setIsMercadoLivreModalOpen] = useState(false);
   const [mercadoLivreInput, setMercadoLivreInput] = useState("");
+  const [isPppMonthModalOpen, setIsPppMonthModalOpen] = useState(false);
+  const [pppMonthInput, setPppMonthInput] = useState("");
 
 
 
-  const mirrorAppToSupabase = async () => {
-    if (!isSupabaseConfigured) {
-      showAlert("Atenção", "O Supabase não está configurado.");
-      return;
-    }
 
-    const completedBills = bills.filter((b) => b.status === "completed");
-    const countApp = completedBills.length;
-
-    showConfirm(
-      "Espelhar Faturas no Supabase (Sincronização 1:1)",
-      `Esta ação irá garantir que o banco Supabase contenha EXATAMENTE as ${countApp.toLocaleString()} faturas presentes no aplicativo.\n\n` +
-      `• Todas as ${countApp.toLocaleString()} faturas do app serão enviadas/atualizadas na nuvem.\n` +
-      `• Qualquer fatura antiga que exista na nuvem mas NÃO esteja no app será excluída.\n\n` +
-      `Deseja prosseguir com o espelhamento?`,
-      async () => {
-        setIsSyncing(true);
-        try {
-          // 1. Obter todos os IDs atualmente no Supabase
-          let cloudIds: string[] = [];
-          let from = 0;
-          let to = 999;
-          let finished = false;
-
-          while (!finished) {
-            const { data, error } = await supabase
-              .from("bills")
-              .select("id")
-              .range(from, to);
-
-            if (error) throw error;
-            if (data && data.length > 0) {
-              cloudIds = [...cloudIds, ...data.map((d) => d.id)];
-              if (data.length < 1000) {
-                finished = true;
-              } else {
-                from += 1000;
-                to += 1000;
-              }
-            } else {
-              finished = true;
-            }
-          }
-
-          const currentIdsSet = new Set(completedBills.map((b) => b.id));
-
-          // 2. Identifica registros órfãos no Supabase e remove
-          const orphanIds = cloudIds.filter((id) => !currentIdsSet.has(id));
-          if (orphanIds.length > 0) {
-            for (let i = 0; i < orphanIds.length; i += 100) {
-              const chunk = orphanIds.slice(i, i + 100);
-              const { error: delError } = await supabase.from("bills").delete().in("id", chunk);
-              if (delError) console.warn("[Supabase] Erro ao deletar órfãos:", delError);
-            }
-          }
-
-          // 3. Envia/atualiza todas as faturas do app no Supabase em lotes
-          const dbData = completedBills.map((b) => mapBillDataToDb(b));
-          for (let i = 0; i < dbData.length; i += 100) {
-            const chunk = dbData.slice(i, i + 100);
-            const { error: upsertError } = await supabase.from("bills").upsert(chunk, { onConflict: "id" });
-            if (upsertError) throw upsertError;
-          }
-
-          // 4. Mapeamentos de UCs
-          if (ucMappings.length > 0) {
-            const mappingsData = ucMappings.map((m) => ({
-              uc: String(m.uc),
-              gerencia: m.gerencia || "",
-              locin: m.locin || "",
-              cidade: m.cidade || "",
-              updated_at: new Date().toISOString(),
-            }));
-            await supabase.from("uc_mappings").upsert(mappingsData, { onConflict: "uc" });
-          }
-
-          setSupabaseHealth({
-            connected: true,
-            totalBills: countApp,
-            totalUcs: new Set(completedBills.map((b) => b.uc).filter(Boolean)).size,
-            lastSync: new Date(),
-          });
-
-          showAlert(
-            "Sucesso",
-            `Espelhamento 1:1 concluído com sucesso!\n\n` +
-            `• Faturas no App: ${countApp.toLocaleString()}\n` +
-            `• Faturas no Supabase: ${countApp.toLocaleString()}\n` +
-            (orphanIds.length > 0 ? `• Faturas órfãs removidas da nuvem: ${orphanIds.length.toLocaleString()}` : "• O banco de dados já estava 100% alinhado.")
-          );
-        } catch (err: any) {
-          console.error("Erro no espelhamento 1:1:", err);
-          showAlert("Erro", `Falha ao espelhar com Supabase: ${err.message || err}`);
-        } finally {
-          setIsSyncing(false);
-        }
-      },
-      "info"
-    );
-  };
 
   const saveMercadoLivreUcs = () => {
     const tokens = mercadoLivreInput
       .split(/[\n,;\s\t]+/)
       .map((s) => s.trim())
-      .filter((s) => /^\d+$/.test(s)); // apenas números
+      .filter((s) => /^\d+$/.test(s))
+      .map((u) => UC_MIGRATION_MAP[u] || u);
     const newList = Array.from(new Set(tokens));
     
     // Atualiza global
-    UCS_LIVRE_MERCADO_LIVRE = new Set(newList);
+    UCS_LIVRE_MERCADO_LIVRE = new Set<string>(newList);
     localStorage.setItem("sanesul_mercado_livre_ucs", JSON.stringify(newList));
     
     setIsMercadoLivreModalOpen(false);
@@ -5429,8 +5789,8 @@ export default function App() {
   const parsedInputUcs = React.useMemo(() => {
     if (!deleteUcListInput.trim()) return [];
     const tokens = deleteUcListInput
-      .split(/[\n,;\s\t]+/)
-      .map((s) => s.trim())
+      .split(/[\r\n,;\t]+/)
+      .map((s) => s.trim().replace(/^["']|["']$/g, "").replace(/^uc[\s:]*/i, "").trim())
       .filter(Boolean);
     return Array.from(new Set(tokens));
   }, [deleteUcListInput]);
@@ -5440,16 +5800,41 @@ export default function App() {
       return { bills: [] as BillData[], matchedUcs: new Set<string>(), notFoundUcs: [] as string[] };
     }
 
-    const cleanInputSet = new Set(parsedInputUcs.map((u) => u.replace(/[^\d]/g, "")));
-    const rawInputSet = new Set(parsedInputUcs.map((u) => u.toLowerCase()));
+    const cleanInputSet = new Set<string>();
+    const cleanNoZerosInputSet = new Set<string>();
+    const rawInputSet = new Set<string>();
+
+    parsedInputUcs.forEach((u) => {
+      const clean = u.replace(/[^\d]/g, "");
+      const cleanNoZeros = clean.replace(/^0+/, "");
+      const raw = u.toLowerCase().trim();
+      if (clean) {
+        cleanInputSet.add(clean);
+        if (cleanNoZeros) cleanNoZerosInputSet.add(cleanNoZeros);
+      }
+      if (raw) rawInputSet.add(raw);
+      if (clean && UC_MIGRATION_MAP[clean]) {
+        cleanInputSet.add(UC_MIGRATION_MAP[clean]);
+        cleanNoZerosInputSet.add(UC_MIGRATION_MAP[clean].replace(/^0+/, ""));
+      }
+    });
 
     const matched: BillData[] = [];
     const matchedUcs = new Set<string>();
 
     bills.forEach((b) => {
-      const cleanUc = (b.uc || "").replace(/[^\d]/g, "");
-      const rawUc = (b.uc || "").toLowerCase();
-      if ((cleanUc && cleanInputSet.has(cleanUc)) || (rawUc && rawInputSet.has(rawUc))) {
+      const bUc = String(b.uc || "").trim();
+      const cleanUc = bUc.replace(/[^\d]/g, "");
+      const cleanUcNoZeros = cleanUc.replace(/^0+/, "");
+      const rawUc = bUc.toLowerCase();
+
+      const isMatch =
+        (cleanUc && cleanInputSet.has(cleanUc)) ||
+        (cleanUcNoZeros && cleanNoZerosInputSet.has(cleanUcNoZeros)) ||
+        (rawUc && rawInputSet.has(rawUc)) ||
+        (cleanUc && UC_MIGRATION_MAP[cleanUc] && cleanInputSet.has(UC_MIGRATION_MAP[cleanUc]));
+
+      if (isMatch) {
         matched.push(b);
         matchedUcs.add(b.uc);
       }
@@ -5457,10 +5842,21 @@ export default function App() {
 
     const notFoundUcs = parsedInputUcs.filter((u) => {
       const clean = u.replace(/[^\d]/g, "");
-      const raw = u.toLowerCase();
-      return !Array.from(matchedUcs).some(
-        (mu) => (clean && mu.replace(/[^\d]/g, "") === clean) || mu.toLowerCase() === raw,
-      );
+      const cleanNoZeros = clean.replace(/^0+/, "");
+      const mapped = clean && UC_MIGRATION_MAP[clean] ? UC_MIGRATION_MAP[clean] : clean;
+      const raw = u.toLowerCase().trim();
+      return !Array.from(matchedUcs).some((mu) => {
+        const muStr = String(mu || "").trim();
+        const muClean = muStr.replace(/[^\d]/g, "");
+        const muCleanNoZeros = muClean.replace(/^0+/, "");
+        const muRaw = muStr.toLowerCase();
+        return (
+          (clean && muClean === clean) ||
+          (cleanNoZeros && muCleanNoZeros === cleanNoZeros) ||
+          (mapped && muClean === mapped) ||
+          muRaw === raw
+        );
+      });
     });
 
     return { bills: matched, matchedUcs, notFoundUcs };
@@ -5474,6 +5870,7 @@ export default function App() {
     }
 
     const targetBillIds = targetBills.map((b) => b.id);
+    const targetBillIdSet = new Set(targetBillIds);
     const ucsCount = matchedUcs.size;
     const billsCount = targetBillIds.length;
 
@@ -5483,7 +5880,7 @@ export default function App() {
       async () => {
         setIsDeletingByList(true);
         try {
-          // Delete from Supabase if configured
+          // Delete from Cloud/Supabase if configured
           if (isSupabaseConfigured) {
             try {
               let error = null;
@@ -5492,11 +5889,20 @@ export default function App() {
                 const { error: err } = await supabase.from("bills").delete().in("id", chunk);
                 if (err) error = err;
               }
-              if (error) console.error("Erro ao deletar faturas do Supabase:", error);
+              if (error) {
+        if (error.message && error.message.includes("Quota exhausted")) {
+          console.warn("Modo offline ativo por cota excedida.", error);
+        } else {
+          console.error("Erro ao deletar faturas do banco de dados:", error);
+        }
+      }
             } catch (err) {
               console.error("Erro inesperado ao deletar faturas:", err);
             }
           }
+
+          // Purge synchronously from localStorage immediately
+          purgeBillsFromLocalStorage(targetBillIds);
 
           // Remove files from localforage
           localforage
@@ -5515,14 +5921,17 @@ export default function App() {
             })
             .catch((e) => console.warn("Erro ao deletar arquivos locais", e));
 
-          // Update state
-          setBills((prev) => prev.filter((b) => !targetBillIds.includes(b.id)));
-          setSelectedBills((prev) => prev.filter((id) => !targetBillIds.includes(id)));
+          // Update state immediately
+          setBills((prev) => prev.filter((b) => !targetBillIdSet.has(b.id)));
+          setSelectedBills((prev) => prev.filter((id) => !targetBillIdSet.has(id)));
           if (analysisResults) {
             setAnalysisResults((prev: any) =>
-              prev ? prev.filter((r: any) => !targetBillIds.includes(r.id) && !matchedUcs.has(r.uc)) : null,
+              prev ? prev.filter((r: any) => !targetBillIdSet.has(r.id) && !matchedUcs.has(r.uc)) : null,
             );
           }
+          setAnalysisData((prev: any[]) =>
+            prev ? prev.filter((r: any) => !targetBillIdSet.has(r.id) && !matchedUcs.has(r.uc)) : [],
+          );
 
           setIsDeleteByListModalOpen(false);
           setDeleteUcListInput("");
@@ -5544,47 +5953,68 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.map((m: any) => (m.uc === "179291005130" ? { ...m, uc: "179291005130" } : m));
+          const map = new Map<string, UCLocinMapping>();
+          parsed.forEach((m: any) => {
+            if (m && m.uc) {
+              const u = String(m.uc).replace(/[\.\-]/g, "").trim();
+              const finalUc = UC_MIGRATION_MAP[u] || u;
+              map.set(finalUc, { ...m, uc: finalUc });
+            }
+          });
+          return Array.from(map.values());
         }
       } catch (e) {}
     }
     return [];
   });
 
-  const syncUcMappingsToSupabase = async (mappings: UCLocinMapping[]) => {
-    if (!isSupabaseConfigured || !isAuthenticated) return;
+  const syncUcMappingsToCloud = async (mappings: UCLocinMapping[]) => {
+    if (!isSupabaseConfigured) return;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: userData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+      const userId = userData?.user?.id || null;
       
-      const dbMappings = mappings.map(m => ({
-        uc: String(m.uc),
-        gerencia: String(m.gerencia || ''),
-        locin: String(m.locin || ''),
-        cidade: String(m.cidade || ''),
-        user_id: user.id,
-        updated_at: new Date().toISOString()
-      }));
+      const dbMappings = mappings.map(m => {
+        const u = String(m.uc).replace(/[\.\-]/g, "").trim();
+        const finalUc = UC_MIGRATION_MAP[u] || u;
+        return {
+          uc: finalUc,
+          gerencia: String(m.gerencia || ''),
+          locin: String(m.locin || ''),
+          cidade: String(m.cidade || ''),
+          endereco: String(m.endereco || ''),
+          user_id: userId,
+          updated_at: new Date().toISOString()
+        };
+      });
       
       const { error } = await supabase
         .from("uc_mappings")
         .upsert(dbMappings);
         
       if (error) {
-        console.warn("[Supabase] Erro ao salvar mapeamentos na nuvem:", error);
+        console.warn("[Firebase] Erro ao salvar mapeamentos na nuvem:", error);
+      } else {
+        console.log(`[Firebase] ${dbMappings.length} mapeamentos salvos no Firestore.`);
       }
     } catch (err) {
-      console.warn("[Supabase] Erro na sincronização de mapeamentos:", err);
+      console.warn("[Firebase] Erro na sincronização de mapeamentos:", err);
     }
   };
+  const syncUcMappingsToSupabase = syncUcMappingsToCloud;
 
   const saveUcMappings = (mappings: UCLocinMapping[]) => {
-    setUcMappings(mappings);
-    syncUcMappingsToSupabase(mappings);
+    const normalizedMappings = mappings.map((m) => {
+      const u = String(m.uc).replace(/[\.\-]/g, "").trim();
+      const finalUc = UC_MIGRATION_MAP[u] || u;
+      return { ...m, uc: finalUc };
+    });
+    setUcMappings(normalizedMappings);
+    syncUcMappingsToCloud(normalizedMappings);
     try {
       localStorage.removeItem("sanesul_uc_mappings");
-      if (mappings.length > 0) {
-        localStorage.setItem("sanesul_uc_mappings", JSON.stringify(mappings));
+      if (normalizedMappings.length > 0) {
+        localStorage.setItem("sanesul_uc_mappings", JSON.stringify(normalizedMappings));
       }
     } catch (error) {
       console.warn(
@@ -5594,45 +6024,77 @@ export default function App() {
     }
   };
 
-  const getGerencia = (uc: string) => {
-    const mapping = ucMappings.find((m) => String(m.uc) === String(uc));
-    if (mapping && mapping.gerencia) return mapping.gerencia;
+  // Memoized O(1) UC lookup map for instant performance across the entire application
+  const ucInfoMap = useMemo(() => {
+    const map = new Map<string, { gerencia?: string; locin?: string; cidade?: string; endereco?: string }>();
 
-    // Fallback: look into the loaded bills state for the gerencia
-    const bill = bills.find(
-      (b) => String(b.uc) === String(uc) && b.gerencia && b.gerencia !== "---",
-    );
-    if (bill && bill.gerencia) return bill.gerencia;
+    // 1. Pre-fill from ucMappings
+    for (let i = 0; i < ucMappings.length; i++) {
+      const m = ucMappings[i];
+      const mu = String(m.uc || "").trim();
+      if (!mu) continue;
+      const data = {
+        gerencia: m.gerencia && m.gerencia !== "---" ? m.gerencia : undefined,
+        locin: m.locin && m.locin !== "---" ? m.locin : undefined,
+        cidade: m.cidade && m.cidade !== "---" ? m.cidade : undefined,
+        endereco: m.endereco && m.endereco !== "---" ? m.endereco : undefined,
+      };
+      map.set(mu, data);
+      const migrated = UC_MIGRATION_MAP[mu];
+      if (migrated && migrated !== mu) {
+        map.set(migrated, data);
+      }
+    }
 
-    return "---";
-  };
+    // 2. Pre-fill from bills for any missing data
+    for (let i = 0; i < bills.length; i++) {
+      const b = bills[i];
+      const bu = String(b.uc || "").trim();
+      if (!bu) continue;
+      const existing = map.get(bu);
+      const g = (existing && existing.gerencia) || (b.gerencia && b.gerencia !== "---" ? b.gerencia : undefined);
+      const l = (existing && existing.locin) || (b.locin && b.locin !== "---" ? b.locin : undefined);
+      const c = (existing && existing.cidade) || (b.cidade && b.cidade !== "---" ? b.cidade : undefined);
+      const e = (existing && existing.endereco) || (b.endereco && b.endereco !== "---" ? b.endereco : undefined);
+      const updated = { gerencia: g, locin: l, cidade: c, endereco: e };
+      map.set(bu, updated);
+      const migrated = UC_MIGRATION_MAP[bu];
+      if (migrated && migrated !== bu) {
+        map.set(migrated, updated);
+      }
+    }
 
-  const getLocin = (uc: string) => {
-    const mapping = ucMappings.find((m) => String(m.uc) === String(uc));
-    if (mapping && mapping.locin) return mapping.locin;
+    return map;
+  }, [ucMappings, bills]);
 
-    const bill = bills.find(
-      (b) => String(b.uc) === String(uc) && b.locin && b.locin !== "---",
-    );
-    if (bill && bill.locin) return bill.locin;
+  const getGerencia = useCallback((uc: string) => {
+    const rawUc = String(uc || "").trim();
+    const info = ucInfoMap.get(rawUc) || ucInfoMap.get(UC_MIGRATION_MAP[rawUc] || "");
+    return info?.gerencia && info.gerencia !== "---" ? info.gerencia : "---";
+  }, [ucInfoMap]);
 
-    return "---";
-  };
+  const getLocin = useCallback((uc: string) => {
+    const rawUc = String(uc || "").trim();
+    const info = ucInfoMap.get(rawUc) || ucInfoMap.get(UC_MIGRATION_MAP[rawUc] || "");
+    return info?.locin && info.locin !== "---" ? info.locin : "---";
+  }, [ucInfoMap]);
 
-  const getCidade = (uc: string, fallback?: string) => {
-    const mapping = ucMappings.find((m) => String(m.uc) === String(uc));
-    if (mapping && mapping.cidade) return mapping.cidade;
-
-    const bill = bills.find(
-      (b) => String(b.uc) === String(uc) && b.cidade && b.cidade !== "---",
-    );
-    if (bill && bill.cidade) return bill.cidade;
-
-    // Fix UC 117384 - FÁTIMA DO SUL
-    if (String(uc) === "93604305181") return "FÁTIMA DO SUL";
-
+  const getCidade = useCallback((uc: string, fallback?: string) => {
+    const rawUc = String(uc || "").trim();
+    const targetUc = UC_MIGRATION_MAP[rawUc] || rawUc;
+    if (targetUc === "93604305181" || rawUc === "117384") return "FÁTIMA DO SUL";
+    const info = ucInfoMap.get(rawUc) || ucInfoMap.get(targetUc);
+    if (info?.cidade && info.cidade !== "---") return info.cidade;
     return fallback || "---";
-  };
+  }, [ucInfoMap]);
+
+  const getEndereco = useCallback((uc: string, fallback?: string) => {
+    const rawUc = String(uc || "").trim();
+    const targetUc = UC_MIGRATION_MAP[rawUc] || rawUc;
+    const info = ucInfoMap.get(rawUc) || ucInfoMap.get(targetUc);
+    if (info?.endereco && info.endereco !== "---") return info.endereco;
+    return fallback || "";
+  }, [ucInfoMap]);
 
   const handleImportTxtGerencias = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -5650,12 +6112,14 @@ export default function App() {
         const parts = line.split(/[;,\t]/).map((p) => p.trim());
         // Require at least UC, Gerência, and LOCIN
         if (parts.length >= 3) {
-          const uc = parts[0];
+          const rawUc = parts[0];
+          const uc = (rawUc && UC_MIGRATION_MAP[rawUc]) ? UC_MIGRATION_MAP[rawUc] : rawUc;
           const gerencia = parts[1];
           const locin = parts[2];
           const cidade = parts[3] || "";
+          const endereco = parts[4] || "";
           if (uc && gerencia && locin) {
-            importedMappings.push({ uc, gerencia, locin, cidade });
+            importedMappings.push({ uc, gerencia, locin, cidade, endereco });
           } else {
             skippedLines++;
           }
@@ -5667,7 +6131,7 @@ export default function App() {
       if (importedMappings.length > 0) {
         // Obter valores numéricos e fundir com os atuais
         setUcMappings((prev) => {
-          const existingMap = new Map(prev.map((m) => [m.uc, m]));
+          const existingMap = new Map<string, UCLocinMapping>(prev.map((m) => [m.uc, m]));
           importedMappings.forEach((m) => existingMap.set(m.uc, m));
           const updated = Array.from(existingMap.values());
           syncUcMappingsToSupabase(updated);
@@ -5691,7 +6155,7 @@ export default function App() {
       } else {
         showAlert(
           "Atenção",
-          "Nenhum dado válido encontrado. O formato deve ser: UC;Gerência;LOCINS;Cidade",
+          "Nenhum dado válido encontrado. O formato deve ser: UC;Gerência;LOCINS;Cidade;Endereço",
         );
       }
 
@@ -5706,10 +6170,10 @@ export default function App() {
   const [totalSyncItems, setTotalSyncItems] = useState(0);
 
   const syncSingleMappingToSupabase = async (mapping: UCLocinMapping) => {
-    if (!isSupabaseConfigured || !isAuthenticated) {
+    if (!isSupabaseConfigured) {
       showAlert(
         "Erro",
-        "Você precisa estar logado e com o Supabase configurado para sincronizar.",
+        "O Firebase não está configurado para sincronizar.",
       );
       return;
     }
@@ -5753,10 +6217,10 @@ export default function App() {
   };
 
   const syncMappingsToSupabase = () => {
-    if (!isSupabaseConfigured || !isAuthenticated) {
+    if (!isSupabaseConfigured) {
       showAlert(
         "Erro",
-        "Você precisa estar logado e com o Supabase configurado para sincronizar.",
+        "O Firebase não está configurado para sincronizar.",
       );
       return;
     }
@@ -5810,7 +6274,7 @@ export default function App() {
           if (errorCount > 0) {
             showAlert(
               "Atenção: Sincronização com Falhas",
-              `Sucesso: ${successCount}. Falhas: ${errorCount}. \nSe este for o seu primeiro sincronismo, verifique se as colunas 'gerencia', 'locins' e 'cidade' existem na tabela 'bills' do seu Supabase.`,
+              `Sucesso: ${successCount}. Falhas: ${errorCount}. \nVerifique a sua conexão com o Firebase e tente novamente.`,
             );
           } else {
             showAlert(
@@ -5844,20 +6308,125 @@ export default function App() {
   const showConfirm = (
     title: string,
     message: string,
-    onConfirm: () => void,
+    onConfirm: () => void | Promise<void>,
     type: "danger" | "info" = "info",
   ) => {
     setConfirmModalData({
       title,
       message,
-      onConfirm: () => {
-        onConfirm();
+      onConfirm: async () => {
         setShowConfirmModal(false);
+        try {
+          await onConfirm();
+        } catch (e) {
+          console.error("Erro na confirmação:", e);
+        }
       },
       type,
       isAlert: false,
     });
     setShowConfirmModal(true);
+  };
+
+  const handleClearCache = () => {
+    showConfirm(
+      "Limpar Cache e Zerar Faturas",
+      "Isso apagará TODAS as faturas salvas na memória local (cache) e zerará completamente o painel. Deseja continuar?",
+      async () => {
+        try {
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          setBills([]);
+          setSelectedBills([]);
+          if (analysisResults) setAnalysisResults(null);
+          
+          localStorage.removeItem("sanesul_bills");
+          localStorage.setItem("sanesul_bills", "[]");
+          localStorage.removeItem("sanesul_bills_files");
+          localStorage.removeItem("sanesul_agrupadora_files");
+          localStorage.removeItem("firebase_quota_date");
+          resetQuotaCircuitBreaker();
+          (window as any).__lastSavedFileIds = "";
+          
+          try {
+            await localforage.setItem("sanesul_bills_data", []);
+            await localforage.removeItem("sanesul_bills_data");
+            await localforage.removeItem("sanesul_bills_files");
+            await localforage.clear();
+          } catch(e) {}
+
+          if (typeof indexedDB !== "undefined" && indexedDB.databases) {
+            try {
+              const dbs = await indexedDB.databases();
+              for (const dbInfo of dbs) {
+                if (dbInfo.name && (dbInfo.name.includes("firestore") || dbInfo.name.includes("localforage"))) {
+                  indexedDB.deleteDatabase(dbInfo.name);
+                }
+              }
+            } catch(e) {}
+          }
+
+          setSupabaseHealth({ connected: true, totalBills: 0, totalUcs: 0, lastSync: new Date() });
+          showAlert("Sucesso", "Todas as faturas e cache local foram apagados com sucesso!");
+        } catch (err) {
+          console.error("Erro ao limpar cache:", err);
+          showAlert("Erro", "Ocorreu um erro ao limpar o cache.");
+        }
+      },
+      "danger"
+    );
+  };
+
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+
+  const syncBillsToCloud = async (billsToSync?: BillData[]) => {
+    const list = billsToSync || bills;
+    if (!list || list.length === 0) {
+      showAlert("Aviso", "Não há faturas para sincronizar com o Firebase.");
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      showAlert("Erro", "Firebase não está configurado.");
+      return;
+    }
+
+    try {
+      setIsSyncingCloud(true);
+      resetQuotaCircuitBreaker();
+      const { data: userData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+      const userId = userData?.user?.id || null;
+
+      const dbData = list.map((b) => mapBillDataToDb(b, userId));
+      console.log(`[Firebase Sync] Sincronizando ${dbData.length} faturas em lotes com o Firestore...`);
+      
+      const chunkSize = 50;
+      let totalSaved = 0;
+      let lastError: any = null;
+
+      for (let i = 0; i < dbData.length; i += chunkSize) {
+        const chunk = dbData.slice(i, i + chunkSize);
+        const { error } = await supabase.from("bills").upsert(chunk);
+        if (error) {
+          lastError = error;
+          console.error(`[Firebase Sync] Erro no lote ${i}-${i + chunk.length}:`, error);
+        } else {
+          totalSaved += chunk.length;
+        }
+      }
+
+      if (lastError) {
+        console.error("[Firebase Sync] Erro na sincronização:", lastError);
+        showAlert("Erro", `Erro ao salvar faturas no Firebase: ${lastError.message}`);
+      } else {
+        console.log(`[Firebase Sync] ${totalSaved} faturas sincronizadas com sucesso!`);
+        showAlert("Sucesso", `${totalSaved} faturas foram salvas com sucesso no Firebase Firestore!`);
+        setFetchTrigger((prev) => prev + 1);
+      }
+    } catch (err: any) {
+      console.error("[Firebase Sync] Erro inesperado:", err);
+      showAlert("Erro", `Erro ao sincronizar: ${err?.message || err}`);
+    } finally {
+      setIsSyncingCloud(false);
+    }
   };
 
   React.useEffect(() => {
@@ -6119,9 +6688,20 @@ export default function App() {
   };
 
   const downloadExcelTemplate = () => {
-    const ws = XLSX.utils.json_to_sheet([{}], {
+    const sampleRow: Record<string, string> = {};
+    EXCEL_COLUMNS.forEach((col) => {
+      sampleRow[col.header] = (col as any).example || "";
+    });
+
+    const ws = XLSX.utils.json_to_sheet([sampleRow], {
       header: EXCEL_COLUMNS.map((c) => c.header),
     });
+
+    // Auto-fit column widths based on headers and sample content
+    ws["!cols"] = EXCEL_COLUMNS.map((col) => ({
+      wch: Math.max(col.header.length + 3, ((col as any).example || "").length + 3, 14),
+    }));
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Modelo Faturas");
     XLSX.writeFile(wb, "Modelo_Importacao_Faturas.xlsx");
@@ -6145,37 +6725,245 @@ export default function App() {
           return;
         }
 
+        const normalizeHeaderKey = (str: any) =>
+          String(str || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, "");
+
+        const COLUMN_ALIASES: Record<string, string> = {
+          nomedoarquivo: "fileName",
+          arquivo: "fileName",
+          filename: "fileName",
+          uc: "uc",
+          unidadeconsumidora: "uc",
+          codigocliente: "uc",
+          matricula: "uc",
+          gerencia: "gerencia",
+          locins: "locin",
+          locin: "locin",
+          cidade: "cidade",
+          municipio: "cidade",
+          endereco: "endereco",
+          endereço: "endereco",
+          enderecocompleto: "endereco",
+          endereçocompleto: "endereco",
+          logradouro: "endereco",
+          rua: "endereco",
+          address: "endereco",
+          local: "endereco",
+          localidade: "endereco",
+          end: "endereco",
+          enderecoimovel: "endereco",
+          endereçodoimovel: "endereco",
+          enderecodoimovel: "endereco",
+          enderecouc: "endereco",
+          endereçouc: "endereco",
+          enderecodaunidade: "endereco",
+          localizacao: "endereco",
+          localização: "endereco",
+          bairro: "endereco",
+          tipo: "tipo",
+          mercado: "mercado",
+          concessionaria: "concessionaria",
+          distribuidora: "concessionaria",
+          mesreferencia: "mesReferencia",
+          mesref: "mesReferencia",
+          mes: "mesReferencia",
+          anoleitura: "anoLeitura",
+          ano: "anoLeitura",
+          vencimento: "dataVencimento",
+          datavencimento: "dataVencimento",
+          notafiscal: "numeroNotaFiscal",
+          numeronotafiscal: "numeroNotaFiscal",
+          nf: "numeroNotaFiscal",
+          modalidadetarifaria: "modalidadeTarifaria",
+          modalidade: "modalidadeTarifaria",
+          subgrupo: "subgrupo",
+          valortotal: "valorTotal",
+          valortotalr: "valorTotal",
+          demandacontratadapontakw: "demandaPontaKW",
+          demandapontakw: "demandaPontaKW",
+          demandacontratadaforapontakw: "demandaForaPontaKW",
+          demandaforapontakw: "demandaForaPontaKW",
+          demandatodosperiodoskw: "demandaTodosPeriodosKW",
+          demandatodosperiodos: "demandaTodosPeriodosKW",
+          demandamedidapontakw: "demandaPotenciaMedidaPonta",
+          valordemandamedidapontar: "valorDemandaPotenciaMedidaPonta",
+          demandamedidaforapontakw: "demandaPotenciaMedidaForaPonta",
+          valordemandamedidaforapontar: "valorDemandaPotenciaMedidaForaPonta",
+          consumoemkwhgrupob: "consumoKwhGrupoB",
+          consumoemkwhgrupobkwh: "consumoKwhGrupoB",
+          consumoemkwhgrupobr: "consumoKwhGrupoB",
+          consumokwhgrupob: "consumoKwhGrupoB",
+          consumogrupobkwh: "consumoKwhGrupoB",
+          consumogrupob: "consumoKwhGrupoB",
+          consumogrupobemkwh: "consumoKwhGrupoB",
+          consumoemkwhb: "consumoKwhGrupoB",
+          consumokwhb: "consumoKwhGrupoB",
+          consumobkwh: "consumoKwhGrupoB",
+          consumob: "consumoKwhGrupoB",
+          consumoativogrupob: "consumoKwhGrupoB",
+          consumofaturadogrupob: "consumoKwhGrupoB",
+          consumomedidogrupob: "consumoKwhGrupoB",
+          consumototalgrupob: "consumoKwhGrupoB",
+          consumodogrupob: "consumoKwhGrupoB",
+          consumoemkwhdogrupob: "consumoKwhGrupoB",
+          consumogrupobr: "consumoKwhGrupoB",
+          valorconsumoemkwhgrupob: "valorConsumoKwhGrupoB",
+          valorconsumoemkwhgrupobr: "valorConsumoKwhGrupoB",
+          valorconsumogrupobr: "valorConsumoKwhGrupoB",
+          valorconsumogrupob: "valorConsumoKwhGrupoB",
+          valorconsumokwhgrupob: "valorConsumoKwhGrupoB",
+          valorconsumokwhgrupobr: "valorConsumoKwhGrupoB",
+          valordoconsumogrupob: "valorConsumoKwhGrupoB",
+          valordoconsumoemkwhgrupob: "valorConsumoKwhGrupoB",
+          valorconsumob: "valorConsumoKwhGrupoB",
+          valorconsumobr: "valorConsumoKwhGrupoB",
+          valorgrupobr: "valorConsumoKwhGrupoB",
+          valorgrupob: "valorConsumoKwhGrupoB",
+          consumorgrupob: "valorConsumoKwhGrupoB",
+          consumorgrupobr: "valorConsumoKwhGrupoB",
+          consumopontakwh: "consumoKwhPonta",
+          valorconsumopontar: "valorConsumoKwhPonta",
+          consumoemkwhintermediaria: "consumoKwhIntermediaria",
+          consumointermediariakwh: "consumoKwhIntermediaria",
+          consumointermediaria: "consumoKwhIntermediaria",
+          consumointermediario: "consumoKwhIntermediaria",
+          consumoforapontakwh: "consumoKwhForaPonta",
+          valorconsumoforapontar: "valorConsumoKwhForaPonta",
+          demandanaoconsumidapontakw: "demandaPotenciaNaoConsumidaPonta",
+          valordemandanaoconsumidapontar: "valorDemandaPotenciaNaoConsumidaPonta",
+          demandanaoconsumidaforapontakw: "demandaPotenciaNaoConsumidaFPonta",
+          valordemandanaoconsumidaforapontar: "valorDemandaPotenciaNaoConsumidaFPonta",
+          ultrapassagempontakw: "demandaPotenciaAtivaUltrapPonta",
+          valorultrapassagempontar: "valorDemandaPotenciaAtivaUltrapPonta",
+          ultrapassagemforapontakw: "demandaPotenciaAtivaUltrapFPonta",
+          valorultrapassagemforapontar: "valorDemandaPotenciaAtivaUltrapFPonta",
+          reativaexcedentepontakvarh: "energiaReativaExcedPonta",
+          valorreativaexcedentepontar: "valorEnergiaReativaExcedPonta",
+          reativaexcedenteforapontakvarh: "energiaReativaExcedFPonta",
+          valorreativaexcedenteforapontar: "valorEnergiaReativaExcedFPonta",
+          gdiouckwh: "energiaAtvInjetadaGDIOUC",
+          valorgdioucr: "valorEnergiaAtvInjetadaGDIOUC",
+          gdimuckwh: "energiaAtvInjetadaGDIMUC",
+          valorgdimucr: "valorEnergiaAtvInjetadaGDIMUC",
+          energiainjetadakwh: "energiaInjetadaKwh",
+          energiacompensadakwh: "energiaCompensadaKwh",
+          saldoacumuladogd: "saldoAcumuladoGD",
+          saldoacumulado: "saldoAcumuladoGD",
+          saldoacumuladogdkwh: "saldoAcumuladoGD",
+          saldoatualgd: "saldoAcumuladoGD",
+          saldoatual: "saldoAcumuladoGD",
+          cipr: "cip",
+          cip: "cip",
+          outrosencargosr: "outrosEncargos",
+          outrosencargos: "outrosEncargos",
+          pisr: "pis",
+          pis: "pis",
+          cofinsr: "cofins",
+          cofins: "cofins",
+          icmsr: "icms",
+          icms: "icms",
+        };
+
         const headers = data[0] as string[];
         const rows = data.slice(1) as any[][];
 
         const newBills: BillData[] = rows
+          .filter((row) => row && row.some((val) => val !== undefined && val !== null && String(val).trim() !== ""))
           .map((row, index) => {
             const billData: any = {
               id: crypto.randomUUID(),
               fileName: `Importado_${file.name}_Linha_${index + 1}`,
-              status: "completed",
+              status: "processing", // Initial status as processing
               createdAt: Date.now() + index,
               tipo: "normal",
             };
 
             headers.forEach((header, colIndex) => {
-              const columnDef = EXCEL_COLUMNS.find((c) => c.header === header);
-              if (columnDef) {
+              const rawHeader = String(header || "").trim();
+              const normHeader = normalizeHeaderKey(rawHeader);
+              const columnDef = EXCEL_COLUMNS.find((c) => c.header === rawHeader || c.key === rawHeader || normalizeHeaderKey(c.header) === normHeader);
+              let targetKey = columnDef ? columnDef.key : COLUMN_ALIASES[normHeader];
+              
+              if (!targetKey) {
+                // Heurística de fallback inteligente para variações de cabeçalho do Grupo B
+                if (normHeader.includes("grupob") || (normHeader.includes("grupo") && normHeader.includes("b"))) {
+                  if (normHeader.includes("valor") || normHeader.includes("r$") || normHeader.includes("rs")) {
+                    targetKey = "valorConsumoKwhGrupoB";
+                  } else if (normHeader.includes("consumo")) {
+                    targetKey = "consumoKwhGrupoB";
+                  }
+                }
+              }
+
+              if (targetKey) {
                 const value = row[colIndex];
-                billData[columnDef.key] =
-                  value !== undefined && value !== null ? String(value) : "";
+                billData[targetKey] =
+                  value !== undefined && value !== null ? String(value).trim() : "";
               }
             });
+
+            // Sincronizar os valores lidos de Grupo B nos respectivos campos
+            const valConsumoB = billData.consumoKwhGrupoB || billData.consumoGrupoB || billData.consumoKwh || "";
+            if (valConsumoB !== "") {
+              const cleanVal = String(valConsumoB).trim();
+              billData.consumoKwhGrupoB = cleanVal;
+              billData.consumoGrupoB = cleanVal;
+              billData.consumoKwh = cleanVal;
+            }
+            if (billData.valorConsumoKwhGrupoB) {
+              billData.valorConsumoKwhGrupoB = String(billData.valorConsumoKwhGrupoB).trim();
+            }
 
             return billData as BillData;
           })
           .map((bill) => {
-            // Enriquecer com mapeamentos de Gerência e LOCIN
+            // Apply UC_MIGRATION_MAP
+            if (bill.uc && UC_MIGRATION_MAP[String(bill.uc)]) {
+              bill.uc = UC_MIGRATION_MAP[String(bill.uc)];
+            }
+
+            // Enriquecer com mapeamentos de Gerência, LOCIN, Cidade e Endereço
             const mapping = ucMappings.find((m) => m.uc === String(bill.uc));
             if (mapping) {
               bill.gerencia = mapping.gerencia;
               bill.locin = mapping.locin;
               if (!bill.cidade) bill.cidade = mapping.cidade;
+              if (!bill.endereco && mapping.endereco) bill.endereco = mapping.endereco;
+            }
+            if (!bill.endereco) {
+              const knownInfo = ucInfoMap.get(String(bill.uc));
+              if (knownInfo?.endereco) bill.endereco = knownInfo.endereco;
+            }
+
+            // Inserir valores nos respectivos campos do Grupo B
+            const finalConsumoB = bill.consumoKwhGrupoB || bill.consumoGrupoB || bill.consumoKwh || "";
+            if (finalConsumoB !== "") {
+              const cleanVal = String(finalConsumoB).trim();
+              bill.consumoKwhGrupoB = cleanVal;
+              bill.consumoGrupoB = cleanVal;
+              bill.consumoKwh = cleanVal;
+
+              const dP = parseValue(bill.demandaPontaKW);
+              const dFP = parseValue(bill.demandaForaPontaKW);
+              if (dP === 0 && dFP === 0) {
+                if (!bill.subgrupo || bill.subgrupo.trim() === "" || bill.subgrupo === "A4") {
+                  bill.subgrupo = "B3";
+                }
+                if (!bill.tipo || bill.tipo === "normal") {
+                  bill.tipo = "B";
+                }
+                if (!bill.modalidadeTarifaria || bill.modalidadeTarifaria.trim() === "") {
+                  bill.modalidadeTarifaria = "CONVENCIONAL";
+                }
+              }
+            }
+
+            if (bill.valorConsumoKwhGrupoB) {
+              bill.valorConsumoKwhGrupoB = String(bill.valorConsumoKwhGrupoB).trim();
             }
 
             // Fix UC 117384 - FÁTIMA DO SUL
@@ -6183,9 +6971,13 @@ export default function App() {
               bill.cidade = "FÁTIMA DO SUL";
             }
 
-            // Fix UC 9000943 - Demand Contratada Ponta is 0 (Verde)
-            if (String(bill.uc) === "163738105109") {
+            // Modalidade VERDE não possui demanda contratada na ponta (sempre 0)
+            if ((bill.modalidadeTarifaria || "").toUpperCase().includes("VERDE") || String(bill.uc) === "163738105109") {
               bill.demandaPontaKW = "0";
+            }
+
+            if (bill.saldoAcumuladoGD) {
+              bill.saldoAcumuladoGD = String(bill.saldoAcumuladoGD).replace(/\./g, "").trim();
             }
 
             bill.mercado =
@@ -6207,122 +6999,110 @@ export default function App() {
             return bill;
           });
 
-        if (isSupabaseConfigured && isAuthenticated) {
-          const { data: userData } = await supabase.auth.getUser();
-          if (userData.user) {
-            const dbData = newBills.map((bill) => ({
-              id: bill.id,
-              user_id: userData.user!.id,
-              file_name: bill.fileName,
-              uc: bill.uc || "",
-              demanda_ponta_kw: bill.demandaPontaKW || "",
-              demanda_fora_ponta_kw: bill.demandaForaPontaKW || "",
-              demanda_potencia_medida_ponta:
-                bill.demandaPotenciaMedidaPonta || "",
-              demanda_potencia_medida_fora_ponta:
-                bill.demandaPotenciaMedidaForaPonta || "",
-              ano_leitura: bill.anoLeitura || "",
-              mes_referencia: bill.mesReferencia || "",
-              consumo_kwh_ponta: bill.consumoKwhPonta || "",
-              consumo_kwh_fora_ponta: bill.consumoKwhForaPonta || "",
-              consumo_kwh_grupo_b: bill.consumoKwhGrupoB || bill.consumoKwh || "",
-              valor_consumo_kwh_ponta: bill.valorConsumoKwhPonta || "",
-              valor_consumo_kwh_fora_ponta: bill.valorConsumoKwhForaPonta || "",
-              valor_consumo_kwh_grupo_b: bill.valorConsumoKwhGrupoB || "",
-              valor_total: bill.valorTotal || "",
-              cidade: bill.cidade || "",
-              demanda_potencia_nao_consumida_ponta:
-                bill.demandaPotenciaNaoConsumidaPonta || "",
-              demanda_potencia_nao_consumida_f_ponta:
-                bill.demandaPotenciaNaoConsumidaFPonta || "",
-              demanda_potencia_ativa_ultrap_ponta:
-                bill.demandaPotenciaAtivaUltrapPonta || "",
-              demanda_potencia_ativa_ultrap_f_ponta:
-                bill.demandaPotenciaAtivaUltrapFPonta || "",
-              energia_reativa_exced_ponta: bill.energiaReativaExcedPonta || "",
-              energia_reativa_exced_f_ponta:
-                bill.energiaReativaExcedFPonta || "",
-              valor_demanda_potencia_medida_ponta:
-                bill.valorDemandaPotenciaMedidaPonta || "",
-              valor_demanda_potencia_medida_fora_ponta:
-                bill.valorDemandaPotenciaMedidaForaPonta || "",
-              valor_demanda_potencia_nao_consumida_ponta:
-                bill.valorDemandaPotenciaNaoConsumidaPonta || "",
-              valor_demanda_potencia_nao_consumida_f_ponta:
-                bill.valorDemandaPotenciaNaoConsumidaFPonta || "",
-              valor_demanda_potencia_ativa_ultrap_ponta:
-                bill.valorDemandaPotenciaAtivaUltrapPonta || "",
-              valor_demanda_potencia_ativa_ultrap_f_ponta:
-                bill.valorDemandaPotenciaAtivaUltrapFPonta || "",
-              valor_energia_reativa_exced_ponta:
-                bill.valorEnergiaReativaExcedPonta || "",
-              valor_energia_reativa_exced_f_ponta:
-                bill.valorEnergiaReativaExcedFPonta || "",
-              energia_atv_injetada_gdi_ouc: bill.energiaAtvInjetadaGDIOUC || "",
-              valor_energia_atv_injetada_gdi_ouc:
-                bill.valorEnergiaAtvInjetadaGDIOUC || "",
-              energia_atv_injetada_gdi_muc: bill.energiaAtvInjetadaGDIMUC || "",
-              valor_energia_atv_injetada_gdi_muc:
-                bill.valorEnergiaAtvInjetadaGDIMUC || "",
-              cip: bill.cip || "",
-              outros_encargos: bill.outrosEncargos || "",
-              pis: bill.pis || "",
-              cofins: bill.cofins || "",
-              icms: bill.icms || "",
-              concessionaria: bill.concessionaria || "",
-              numero_nota_fiscal: bill.numeroNotaFiscal || "",
-              modalidade_tarifaria: bill.modalidadeTarifaria || "",
-              subgrupo: bill.subgrupo || "",
-              tipo: bill.tipo || "normal",
-              mercado: bill.mercado || "",
-              gerencia: bill.gerencia || "",
-              locins: bill.locin || "",
-              data_vencimento: bill.dataVencimento || "",
-              status: bill.status,
-              created_at: new Date(bill.createdAt || Date.now()).toISOString(),
-            }));
+        // Add to state immediately as "processing"
+        setBills((prev) => [...prev, ...newBills]);
 
-            let { error } = await supabase.from("bills").insert(dbData);
+        if (isSupabaseConfigured) {
+          try {
+            const { data: userData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+            const userId = userData?.user?.id || null;
+            
+            // Map the dbData forcing it to completed for the DB if we want, or leaving as processing?
+            // Usually we want the DB to reflect 'completed' once the file is fully processed.
+            const completedBills = newBills.map((b) => {
+              const normMes = formatMonth(b.mesReferencia);
+              const cleanUc = String(b.uc || "").replace(/\D/g, "");
+              const deterministicId =
+                cleanUc && normMes && b.anoLeitura
+                  ? `${cleanUc}_${normMes}_${b.anoLeitura}`
+                  : b.id;
+              return { ...b, id: deterministicId, status: "completed" as const };
+            });
+            const dbData = completedBills.map((bill) => mapBillDataToDb(bill, userId));
+            
+            console.log(`[Firebase] Gravando ${dbData.length} faturas importadas em lotes...`);
+            const chunkSize = 50;
+            let totalSaved = 0;
+            let lastError: any = null;
 
-            if (
-              error &&
-              (error.message.includes("data_vencimento") ||
-                error.message.includes("mercado") ||
-                error.message.includes("gerencia") ||
-                error.message.includes("locins") ||
-                error.message.includes("consumo_kwh_grupo_b") ||
-                error.message.includes("valor_consumo_kwh_grupo_b") ||
-                error.details?.includes("data_vencimento") ||
-                error.details?.includes("mercado") ||
-                error.details?.includes("gerencia") ||
-                error.details?.includes("locins") ||
-                error.details?.includes("consumo_kwh_grupo_b") ||
-                error.details?.includes("valor_consumo_kwh_grupo_b") ||
-                error.code === "PGRST204")
-            ) {
-              console.warn(
-                "Colunas novas não encontradas no Supabase. Inserindo sem elas...",
+            for (let i = 0; i < dbData.length; i += chunkSize) {
+              const chunk = dbData.slice(i, i + chunkSize);
+              let { error } = await supabase.from("bills").upsert(chunk);
+              if (
+                error &&
+                (error.message.includes("data_vencimento") ||
+                  error.message.includes("mercado") ||
+                  error.message.includes("gerencia") ||
+                  error.message.includes("locins") ||
+                  error.message.includes("consumo_kwh_grupo_b") ||
+                  error.message.includes("valor_consumo_kwh_grupo_b") ||
+                  error.message.includes("saldo_acumulado_gd") ||
+                  error.message.includes("consumo_kwh_intermediaria") ||
+                  error.message.includes("endereco") ||
+                  error.details?.includes("data_vencimento") ||
+                  error.details?.includes("mercado") ||
+                  error.details?.includes("gerencia") ||
+                  error.details?.includes("locins") ||
+                  error.details?.includes("consumo_kwh_grupo_b") ||
+                  error.details?.includes("valor_consumo_kwh_grupo_b") ||
+                  error.details?.includes("saldo_acumulado_gd") ||
+                  error.details?.includes("consumo_kwh_intermediaria") ||
+                  error.details?.includes("endereco") ||
+                  error.code === "PGRST204")
+              ) {
+                const fallbackChunk = chunk.map((d: any) => {
+                  const {
+                    data_vencimento,
+                    mercado,
+                    gerencia,
+                    locins,
+                    consumo_kwh_grupo_b,
+                    valor_consumo_kwh_grupo_b,
+                    saldo_acumulado_gd,
+                    consumo_kwh_intermediaria,
+                    endereco,
+                    user_id,
+                    ...rest
+                  } = d;
+                  if (consumo_kwh_grupo_b) rest.consumo_kwh_ponta = consumo_kwh_grupo_b;
+                  if (valor_consumo_kwh_grupo_b) rest.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
+                  return rest;
+                });
+                const fallbackRes = await supabase.from("bills").upsert(fallbackChunk);
+                error = fallbackRes.error;
+              }
+
+              if (error) {
+                lastError = error;
+                console.error(`[Firebase] Erro no lote ${i}-${i + chunk.length}:`, error);
+              } else {
+                totalSaved += chunk.length;
+              }
+            }
+
+            if (lastError) {
+              console.error("[Firebase] Erro ao salvar faturas importadas:", lastError);
+              showAlert(
+                "Atenção na Gravação da Nuvem",
+                `Foram lidas ${dbData.length} faturas, mas ${dbData.length - totalSaved} não puderam ser gravadas na nuvem: ${lastError.message || "Erro desconhecido"}.`,
               );
-              const fallbackData = dbData.map((d: any) => {
-                const { data_vencimento, mercado, gerencia, locins, consumo_kwh_grupo_b, valor_consumo_kwh_grupo_b, ...rest } = d;
-                if (consumo_kwh_grupo_b) rest.consumo_kwh_ponta = consumo_kwh_grupo_b;
-                if (valor_consumo_kwh_grupo_b) rest.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
-                return rest;
-              });
-              const fallbackRes = await supabase
-                .from("bills")
-                .insert(fallbackData);
-              error = fallbackRes.error;
+            } else {
+              console.log(`[Firebase] ${totalSaved} faturas importadas gravadas com sucesso no banco de dados.`);
             }
-
-            if (error) {
-              console.error("Erro ao salvar no Supabase:", error);
-              alert("Erro ao salvar os dados importados no banco de dados.");
-            }
+          } catch (err) {
+            console.error("[Firebase] Erro inesperado ao gravar faturas importadas:", err);
           }
         }
 
-        setBills((prev) => [...prev, ...newBills]);
+        // Update status to "completed" in local state
+        setBills((prev) => 
+          deduplicateBills(
+            prev.map((b) => 
+              newBills.some((nb) => nb.id === b.id) ? { ...b, status: "completed" as const } : b
+            )
+          )
+        );
+        
         alert(`${newBills.length} faturas importadas com sucesso!`);
       } catch (error) {
         console.error("Erro ao importar planilha:", error);
@@ -6358,6 +7138,7 @@ export default function App() {
           mesReferencia: "",
           consumoKwhPonta: "",
           valorConsumoKwhPonta: "",
+          consumoKwhIntermediaria: "",
           consumoKwhForaPonta: "",
           valorConsumoKwhForaPonta: "",
           valorTotal: "",
@@ -6450,7 +7231,7 @@ export default function App() {
           mes: b.mesReferencia || "N/A",
           ano: b.anoLeitura || "",
           uc: b.uc || "N/A",
-          dcp: parseValue(b.demandaPontaKW),
+          dcp: modalidade.includes("VERDE") ? 0 : parseValue(b.demandaPontaKW),
           dmp: dmp,
           dcfp: parseValue(b.demandaForaPontaKW),
           dmfp: parseValue(b.demandaPotenciaMedidaForaPonta),
@@ -6462,7 +7243,7 @@ export default function App() {
           vUltrapFP: parseValue(b.valorDemandaPotenciaAtivaUltrapFPonta),
           vNaoConsP: parseValue(b.valorDemandaPotenciaNaoConsumidaPonta),
           vNaoConsFP: parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta),
-          tipo: UCS_PPP.has(String(b.uc)) ? "PPP Fotovoltaica" : b.tipo || "",
+          tipo: isUcPPP(String(b.uc), formatMonth(b.mesReferencia) + " / " + b.anoLeitura) ? "PPP Fotovoltaica" : b.tipo || "",
           mercado: UCS_LIVRE_MERCADO_LIVRE.has(b.uc) ? "LIVRE" : "CATIVO",
           city: getCidade(String(b.uc)),
         };
@@ -6918,33 +7699,44 @@ export default function App() {
 
     const getYear = (year: string) => parseInt(year || "0", 10);
 
-    // Get all unique UCs
-    const ucs = Array.from(new Set(completedBills.map((b) => b.uc))).filter(
-      (uc) => {
-        const ucBills = completedBills.filter((b) => b.uc === uc);
+    // Pre-agrupa por UC em O(N)
+    const billsByUcMap = new Map<string, BillData[]>();
+    for (let i = 0; i < completedBills.length; i++) {
+      const b = completedBills[i];
+      const u = String(b.uc);
+      let list = billsByUcMap.get(u);
+      if (!list) {
+        list = [];
+        billsByUcMap.set(u, list);
+      }
+      list.push(b);
+    }
 
-        // Remove UCs that are clearly Grupo B (to avoid parser hallucination of demand on Grupo B)
-        const grupoBCount = ucBills.filter((b) =>
-          (b.subgrupo || "").toUpperCase().startsWith("B"),
-        ).length;
-        const grupoACount = ucBills.filter((b) =>
-          (b.subgrupo || "").toUpperCase().startsWith("A"),
-        ).length;
+    // Get all unique valid UCs
+    const ucs = Array.from(billsByUcMap.keys()).filter((uc) => {
+      const ucBills = billsByUcMap.get(uc) || [];
 
-        if (grupoBCount > 0 && grupoACount === 0) {
-          return false;
-        }
+      // Remove UCs that are clearly Grupo B (to avoid parser hallucination of demand on Grupo B)
+      const grupoBCount = ucBills.filter((b) =>
+        (b.subgrupo || "").toUpperCase().startsWith("B"),
+      ).length;
+      const grupoACount = ucBills.filter((b) =>
+        (b.subgrupo || "").toUpperCase().startsWith("A"),
+      ).length;
 
-        return ucBills.some(
-          (b) =>
-            parseValue(b.demandaPontaKW) > 0 ||
-            parseValue(b.demandaForaPontaKW) > 0,
-        );
-      },
-    );
+      if (grupoBCount > 0 && grupoACount === 0) {
+        return false;
+      }
+
+      return ucBills.some(
+        (b) =>
+          parseValue(b.demandaPontaKW) > 0 ||
+          parseValue(b.demandaForaPontaKW) > 0,
+      );
+    });
 
     const allUcData = ucs.map((uc) => {
-      let ucBills = completedBills.filter((b) => b.uc === uc);
+      let ucBills = [...(billsByUcMap.get(uc) || [])];
       const city = getCidade(String(uc), ucBills[0]?.cidade || "N/A");
 
       // Sort bills chronologically (Oldest to Newest) for change detection
@@ -7039,7 +7831,7 @@ export default function App() {
       const processedBills = ucBills.map((b) => {
         const modalidade = (b.modalidadeTarifaria || "").toUpperCase();
         const bIsVerde = modalidade.includes("VERDE");
-        const dcp = parseValue(b.demandaPontaKW);
+        const dcp = bIsVerde ? 0 : parseValue(b.demandaPontaKW);
         const dmp = parseValue(b.demandaPotenciaMedidaPonta);
         const dcfp = parseValue(b.demandaForaPontaKW);
         const dmfp = parseValue(b.demandaPotenciaMedidaForaPonta);
@@ -7353,17 +8145,17 @@ export default function App() {
     if (!monitoringResults) return [];
     const meses = new Set<string>();
     monitoringResults.changedUCs.forEach((uc: any) => {
-      uc.monthlyData.forEach((m: any) => meses.add(formatMonth(m.mes) + '/' + m.ano));
+      uc.monthlyData.forEach((m: any) => meses.add(formatMonth(m.mes) + ' / ' + m.ano));
     });
     monitoringResults.unchangedUCs.forEach((uc: any) => {
-      uc.monthlyData.forEach((m: any) => meses.add(formatMonth(m.mes) + '/' + m.ano));
+      uc.monthlyData.forEach((m: any) => meses.add(formatMonth(m.mes) + ' / ' + m.ano));
     });
     return Array.from(meses).sort((a, b) => {
       const partsA = a.split('/');
       const partsB = b.split('/');
       if (partsA[1] !== partsB[1]) return parseInt(partsB[1]) - parseInt(partsA[1]);
       const m = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-      return m.indexOf(partsB[0]) - m.indexOf(partsA[0]);
+      return m.indexOf(partsB[0].trim()) - m.indexOf(partsA[0].trim());
     });
   }, [monitoringResults]);
 
@@ -7373,7 +8165,7 @@ export default function App() {
 
     const processUcData = (ucDataList: any[]) => {
       return ucDataList.map((uc) => {
-        const filteredMonthly = uc.monthlyData.filter((m: any) => (formatMonth(m.mes) + '/' + m.ano) === selectedMonitoramentoMes);
+        const filteredMonthly = uc.monthlyData.filter((m: any) => (formatMonth(m.mes) + ' / ' + m.ano) === selectedMonitoramentoMes);
         const totalEconomy = filteredMonthly.reduce((acc: number, curr: any) => acc + curr.economy, 0);
         const totalCurrent = filteredMonthly.reduce((acc: number, curr: any) => acc + curr.currentTotal, 0);
         return {
@@ -7533,6 +8325,10 @@ export default function App() {
         result.mesReferencia = formatMonth(result.mesReferencia);
       }
 
+      if (result.saldoAcumuladoGD) {
+        result.saldoAcumuladoGD = String(result.saldoAcumuladoGD).replace(/\./g, "").trim();
+      }
+
       // --- CHECK FOR DUPLICATES IN DB AFTER EXTRACTION ---
       // existingDbId logic removed
       if (
@@ -7613,21 +8409,23 @@ export default function App() {
         error: finalError,
       };
 
-      if (isSupabaseConfigured && user) {
-        const dbData = mapBillDataToDb(updatedBill, user.id);
+      if ((updatedBill.modalidadeTarifaria || "").toUpperCase().includes("VERDE")) {
+        updatedBill.demandaPontaKW = "0";
+      }
+
+      if (isSupabaseConfigured) {
+        const userId = user?.id || null;
+        const dbData = mapBillDataToDb(updatedBill, userId);
 
         if (dbData.uc && dbData.mes_referencia && dbData.ano_leitura) {
-          // Unconditionally delete all older duplicates to guarantee only this latest one remains
-          await supabase.from("bills").delete()
-            .eq("uc", dbData.uc)
-            .eq("mes_referencia", dbData.mes_referencia)
-            .eq("ano_leitura", dbData.ano_leitura);
+          dbData.id = `${dbData.uc}_${dbData.mes_referencia}_${dbData.ano_leitura}`;
+          updatedBill.id = dbData.id;
         }
 
-        // Insert new record
-          let { error: insertError } = await supabase
-            .from("bills")
-            .insert(dbData);
+        // Upsert record directly with deterministic key (avoids prior delete query overhead)
+        let { error: insertError } = await supabase
+          .from("bills")
+          .upsert(dbData);
 
           if (
             insertError &&
@@ -7637,12 +8435,20 @@ export default function App() {
               insertError.message.includes("locins") ||
               insertError.message.includes("consumo_kwh_grupo_b") ||
               insertError.message.includes("valor_consumo_kwh_grupo_b") ||
+              insertError.message.includes("saldo_acumulado_gd") ||
+              insertError.message.includes("consumo_kwh_intermediaria") ||
               insertError.details?.includes("data_vencimento") ||
               insertError.details?.includes("mercado") ||
+              insertError.details?.includes("gerencia") ||
+              insertError.details?.includes("locins") ||
+              insertError.details?.includes("consumo_kwh_grupo_b") ||
+              insertError.details?.includes("valor_consumo_kwh_grupo_b") ||
+              insertError.details?.includes("saldo_acumulado_gd") ||
+              insertError.details?.includes("consumo_kwh_intermediaria") ||
               insertError.code === "PGRST204")
           ) {
             console.warn(
-              "Colunas novas não encontradas no Supabase. Inserindo sem elas...",
+              "Colunas novas não suportadas pelo schema antigo. Inserindo sem elas...",
             );
             const {
               data_vencimento,
@@ -7651,18 +8457,22 @@ export default function App() {
               locins,
               consumo_kwh_grupo_b,
               valor_consumo_kwh_grupo_b,
+              saldo_acumulado_gd,
+              consumo_kwh_intermediaria,
+              endereco,
+              user_id,
               ...fallbackData
             } = dbData;
             if (consumo_kwh_grupo_b) fallbackData.consumo_kwh_ponta = consumo_kwh_grupo_b;
             if (valor_consumo_kwh_grupo_b) fallbackData.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
             const fallbackRes = await supabase
               .from("bills")
-              .insert(fallbackData);
+              .upsert(fallbackData);
             insertError = fallbackRes.error;
           }
 
           if (insertError) {
-            console.error("Erro ao salvar fatura no Supabase:", insertError);
+            console.error("Erro ao salvar fatura no Firebase:", insertError);
             updatedBill.status = "error";
             updatedBill.error = insertError.message || "Erro ao salvar no banco de dados.";
           }
@@ -7835,22 +8645,13 @@ export default function App() {
     let currentUser = null;
     if (isSupabaseConfigured) {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        currentUser = user;
+        const { data: userData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+        currentUser = userData?.user || null;
       } catch (authError: any) {
         console.warn(
-          "Erro ao obter usuário no início do processamento:",
+          "Aviso ao verificar autenticação no início do processamento:",
           authError,
         );
-        if (authError.message?.includes("Refresh Token Not Found")) {
-          supabase.auth.signOut();
-          setIsAuthenticated(false);
-          setIsProcessing(false);
-          isProcessingRef.current = false;
-          return;
-        }
       }
     }
 
@@ -7947,11 +8748,81 @@ export default function App() {
     isProcessingRef.current = false;
   };
 
+  const removeDuplicates = async () => {
+    const ucMesAnoMap = new Map<string, string[]>();
+    bills.forEach((b) => {
+      const key = `${b.uc}_${b.mesReferencia}_${b.anoLeitura}`;
+      const ids = ucMesAnoMap.get(key) || [];
+      ids.push(b.id);
+      ucMesAnoMap.set(key, ids);
+    });
+
+    const duplicateIdsToRemove: string[] = [];
+    ucMesAnoMap.forEach((ids) => {
+      if (ids.length > 1) {
+        duplicateIdsToRemove.push(...ids.slice(1));
+      }
+    });
+
+    if (duplicateIdsToRemove.length === 0) {
+      alert("Nenhuma fatura duplicada encontrada!");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Foram encontradas ${duplicateIdsToRemove.length} faturas duplicadas (mesma UC e Mês de Referência). Deseja excluí-las? Esta ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+
+    if (isSupabaseConfigured) {
+      try {
+        let error = null;
+        for (let i = 0; i < duplicateIdsToRemove.length; i += 100) {
+          const chunk = duplicateIdsToRemove.slice(i, i + 100);
+          const { error: err } = await supabase.from("bills").delete().in("id", chunk);
+          if (err) error = err;
+        }
+        if (error) {
+        if (error.message && error.message.includes("Quota exhausted")) {
+          console.warn("Modo offline ativo por cota excedida.", error);
+        } else {
+          console.error("Erro ao deletar duplicatas do banco de dados:", error);
+        }
+      }
+      } catch (err) {
+        console.error("Erro inesperado ao deletar duplicatas:", err);
+      }
+    }
+    
+    purgeBillsFromLocalStorage(duplicateIdsToRemove);
+    setBills((prev) => prev.filter((b) => !duplicateIdsToRemove.includes(b.id)));
+    setSelectedBills((prev) => prev.filter((id) => !duplicateIdsToRemove.includes(id)));
+    if (analysisResults) {
+      setAnalysisResults((prev: any) =>
+        prev ? prev.filter((r: any) => !duplicateIdsToRemove.includes(r.id)) : null,
+      );
+    }
+    alert("Duplicatas excluídas com sucesso!");
+  };
+
   const [selectedBills, setSelectedBills] = useState<string[]>([]);
 
-  const completedBills = bills.filter((b) => b.status === "completed");
+  const completedBills = useMemo(() => bills.filter((b) => b.status === "completed"), [bills]);
 
   const adjustmentsList = useMemo(() => {
+    // Pre-agrupamento de faturas completas por UC em O(N) para busca O(1) imediata
+    const ucBillsMap = new Map<string, BillData[]>();
+    for (let i = 0; i < completedBills.length; i++) {
+      const b = completedBills[i];
+      const u = String(b.uc);
+      let list = ucBillsMap.get(u);
+      if (!list) {
+        list = [];
+        ucBillsMap.set(u, list);
+      }
+      list.push(b);
+    }
+
     return Object.keys(customRequestedAdjustments).map((ucId) => {
       const req = customRequestedAdjustments[ucId];
       const orig = customOriginalContratadas[ucId] || { p: 0, fp: 0 };
@@ -7961,7 +8832,7 @@ export default function App() {
       let city = "-";
       let gerencia = "-";
       
-      const ucBills = completedBills.filter((b) => String(b.uc) === String(ucId));
+      const ucBills = ucBillsMap.get(String(ucId)) || [];
 
       if (ucData) {
         city = ucData.city || "-";
@@ -8036,7 +8907,8 @@ export default function App() {
 
         // Use the value of the last month inserted in the app for BEFORE/Baseline columns as requested (Contratada P and Contratada FP)
         const lastBill = sortedUcBills[sortedUcBills.length - 1];
-        dcpBefore = parseValue(lastBill.demandaPontaKW);
+        const isLastVerde = (lastBill.modalidadeTarifaria || "").toUpperCase().includes("VERDE");
+        dcpBefore = isLastVerde ? 0 : parseValue(lastBill.demandaPontaKW);
         dcfpBefore = parseValue(lastBill.demandaForaPontaKW);
 
         // Keep the requested_adjustments values for the AFTER/Altered columns as requested (Contratada P Alt and Contratada FP Alt)
@@ -8260,7 +9132,8 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           const filtered = parsed.filter((b: any) => !deletedIds.includes(b.id));
-          localStorage.setItem("sanesul_bills", JSON.stringify(filtered));
+          try { localStorage.setItem("sanesul_bills", JSON.stringify(filtered)); } catch(e) {}
+          try { localforage.setItem("sanesul_bills_data", JSON.parse(JSON.stringify(filtered))); } catch(e) {}
         }
       }
     } catch (e) {}
@@ -8270,7 +9143,13 @@ export default function App() {
     if (isSupabaseConfigured) {
       try {
         const { error } = await supabase.from("bills").delete().eq("id", id);
-        if (error) console.error("Erro ao deletar fatura do Supabase:", error);
+        if (error) {
+        if (error.message && error.message.includes("Quota exhausted")) {
+          console.warn("Modo offline ativo por cota excedida.", error);
+        } else {
+          console.error("Erro ao deletar fatura do Firebase:", error);
+        }
+      }
       } catch (err) {
         console.error("Erro inesperado ao deletar fatura:", err);
       }
@@ -8294,6 +9173,7 @@ export default function App() {
 
   const removeSelectedBills = async () => {
     if (isSupabaseConfigured && selectedBills.length > 0) {
+      
       try {
         let error = null;
         for (let i = 0; i < selectedBills.length; i += 100) {
@@ -8301,7 +9181,13 @@ export default function App() {
           const { error: err } = await supabase.from("bills").delete().in("id", chunk);
           if (err) error = err;
         }
-        if (error) console.error("Erro ao deletar faturas do Supabase:", error);
+        if (error) {
+        if (error.message && error.message.includes("Quota exhausted")) {
+          console.warn("Modo offline ativo por cota excedida.", error);
+        } else {
+          console.error("Erro ao deletar faturas do Firebase:", error);
+        }
+      }
       } catch (err) {
         console.error("Erro inesperado ao deletar faturas:", err);
       }
@@ -8347,7 +9233,13 @@ export default function App() {
           const { error: err } = await supabase.from("bills").delete().in("id", chunk);
           if (err) error = err;
         }
-        if (error) console.error("Erro ao deletar faturas do Supabase:", error);
+        if (error) {
+        if (error.message && error.message.includes("Quota exhausted")) {
+          console.warn("Modo offline ativo por cota excedida.", error);
+        } else {
+          console.error("Erro ao deletar faturas do Firebase:", error);
+        }
+      }
       } catch (err) {
         console.error("Erro inesperado ao deletar faturas:", err);
       }
@@ -8377,65 +9269,77 @@ export default function App() {
   };
 
   const removeMonthBills = async (monthRef: string) => {
+    const targetRef = monthRef.trim().toLowerCase();
     const monthBills = bills.filter(
-      (b) => `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` === monthRef,
+      (b) => `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`.trim().toLowerCase() === targetRef,
     );
     const monthBillIds = monthBills.map((b) => b.id);
 
     if (monthBillIds.length === 0) {
-      alert(`Nenhuma fatura encontrada para o mês ${monthRef}.`);
+      showAlert("Aviso", `Nenhuma fatura encontrada para o mês ${monthRef}.`);
       return;
     }
 
-    const confirmed = window.confirm(
+    showConfirm(
+      "Excluir Mês",
       `Tem certeza que deseja excluir TODAS as ${monthBillIds.length} faturas do mês ${monthRef}? Esta ação não pode ser desfeita.`,
-    );
-    if (!confirmed) return;
-
-    if (isSupabaseConfigured) {
-      try {
-        let error = null;
-        for (let i = 0; i < monthBillIds.length; i += 100) {
-          const chunk = monthBillIds.slice(i, i + 100);
-          const { error: err } = await supabase.from("bills").delete().in("id", chunk);
-          if (err) error = err;
+      async () => {
+        // Reset filter if the deleted month was the active filter
+        if (filterReference === monthRef) {
+          setFilterReference("all");
         }
-        if (error) console.error("Erro ao deletar faturas do Supabase:", error);
-      } catch (err) {
-        console.error("Erro inesperado ao deletar faturas:", err);
-      }
-    }
 
-    // Remove files from localforage
-    localforage
-      .getItem<Record<string, File>>("sanesul_bills_files")
-      .then((filesMap) => {
-        if (filesMap) {
-          let hasChanges = false;
-          monthBillIds.forEach((id) => {
-            if (filesMap[id]) {
-              delete filesMap[id];
-              hasChanges = true;
+        // Atualiza a tela e o armazenamento local imediatamente para feedback instantâneo
+        purgeBillsFromLocalStorage(monthBillIds);
+        setBills((prev) => prev.filter((b) => !monthBillIds.includes(b.id)));
+        setSelectedBills((prev) => prev.filter((id) => !monthBillIds.includes(id)));
+        if (analysisResults) {
+          setAnalysisResults((prev: any) =>
+            prev ? prev.filter((r: any) => !monthBillIds.includes(r.id)) : null,
+          );
+        }
+
+        // Remove files from localforage
+        localforage
+          .getItem<Record<string, File>>("sanesul_bills_files")
+          .then((filesMap) => {
+            if (filesMap) {
+              let hasChanges = false;
+              monthBillIds.forEach((id) => {
+                if (filesMap[id]) {
+                  delete filesMap[id];
+                  hasChanges = true;
+                }
+              });
+              if (hasChanges) localforage.setItem("sanesul_bills_files", filesMap);
             }
-          });
-          if (hasChanges) localforage.setItem("sanesul_bills_files", filesMap);
-        }
-      })
-      .catch((e) => console.warn("Erro ao deletar arquivos locais", e));
+          })
+          .catch((e) => console.warn("Erro ao deletar arquivos locais", e));
 
-    purgeBillsFromLocalStorage(monthBillIds);
-    setBills((prev) => prev.filter((b) => !monthBillIds.includes(b.id)));
-    setSelectedBills((prev) => prev.filter((id) => !monthBillIds.includes(id)));
-    if (analysisResults) {
-      setAnalysisResults((prev: any) =>
-        prev ? prev.filter((r: any) => !monthBillIds.includes(r.id)) : null,
-      );
-    }
-    // Reset filter if the deleted month was the active filter
-    if (filterReference === monthRef) {
-      setFilterReference("all");
-    }
+        if (isSupabaseConfigured) {
+          try {
+            let error = null;
+            for (let i = 0; i < monthBillIds.length; i += 100) {
+              const chunk = monthBillIds.slice(i, i + 100);
+              const { error: err } = await supabase.from("bills").delete().in("id", chunk);
+              if (err) error = err;
+            }
+            if (error) {
+              if (error.message && error.message.includes("Quota exhausted")) {
+                console.warn("Modo offline ativo por cota excedida.", error);
+              } else {
+                console.error("Erro ao deletar faturas do Firebase:", error);
+              }
+            }
+          } catch (err) {
+            console.error("Erro inesperado ao deletar faturas:", err);
+          }
+        }
+      },
+      "danger"
+    );
   };
+
 
   const deselectFirst223 = () => {
     const first223Ids = bills.slice(0, 223).map((b) => b.id);
@@ -8536,7 +9440,7 @@ export default function App() {
       if (b.status !== "completed") return false;
       if (
         selectedReactiveMonth !== "all" &&
-        `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedReactiveMonth
+        `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}` !== selectedReactiveMonth
       )
         return false;
       const totalReativo =
@@ -8646,7 +9550,7 @@ export default function App() {
       if (b.status !== "completed") return false;
       if (
         selectedReactiveMonth !== "all" &&
-        `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedReactiveMonth
+        `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}` !== selectedReactiveMonth
       )
         return false;
       const totalReativo =
@@ -8759,12 +9663,32 @@ export default function App() {
   };
 
   const exportToCSV = () => {
-    // Export all completed bills without filtering by the selected reference
-    const completedBills = bills.filter((b) => b.status === "completed");
+    let completedBills = bills.filter((b) => b.status === "completed");
+
+    // Determine if a specific month/reference is selected manually
+    let targetMonth = "all";
+    if (activeTab === "faturas" && filterReference !== "all") {
+      targetMonth = filterReference;
+    } else if (activeTab === "relatorio" && selectedRelatorioMonth !== "all") {
+      targetMonth = selectedRelatorioMonth;
+    } else if (activeTab === "dashboard" && selectedMonth !== "all") {
+      targetMonth = selectedMonth;
+    } else if (filterReference !== "all") {
+      targetMonth = filterReference;
+    }
+
+    if (targetMonth !== "all") {
+      completedBills = completedBills.filter(
+        (b) => `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}` === targetMonth,
+      );
+    }
+
     if (completedBills.length === 0) {
       showAlert(
         "Exportação",
-        "Não há faturas concluídas para exportar.",
+        targetMonth !== "all"
+          ? `Não há faturas concluídas para exportar no mês selecionado (${targetMonth}).`
+          : "Não há faturas concluídas para exportar.",
       );
       return;
     }
@@ -8775,6 +9699,7 @@ export default function App() {
       "Gerência",
       "LOCINS",
       "Cidade",
+      "Endereço",
       "Tipo",
       "Mercado",
       "Concessionária",
@@ -8785,20 +9710,20 @@ export default function App() {
       "Modalidade Tarifária",
       "Subgrupo",
       "Valor Total (R$)",
-      "Consumo Grupo B (kWh)",
+      "Consumo em kWh (Grupo B)",
+      "Valor Consumo Grupo B (R$)",
+      "Consumo em kWh - Intermediária",
       "Demanda Contratada Ponta (kW)",
       "Demanda Contratada Fora Ponta (kW)",
+      "Demanda Todos os Períodos (kW)",
       "Demanda Medida Ponta (kW)",
       "Valor Demanda Medida Ponta (R$)",
       "Demanda Medida Fora Ponta (kW)",
       "Valor Demanda Medida Fora Ponta (R$)",
-      "Consumo Grupo B (kWh)",
-      "Valor Consumo Grupo B (R$)",
       "Consumo Ponta (kWh)",
       "Valor Consumo Ponta (R$)",
       "Consumo Fora Ponta (kWh)",
       "Valor Consumo Fora Ponta (R$)",
-      "Demanda Todos os Períodos (kW)",
       "Demanda Não Consumida Ponta (kW)",
       "Valor Demanda Não Consumida Ponta (R$)",
       "Demanda Não Consumida Fora Ponta (kW)",
@@ -8815,6 +9740,9 @@ export default function App() {
       "Valor GDI oUC (R$)",
       "GDI mUC (kWh)",
       "Valor GDI mUC (R$)",
+      "Energia Injetada (kWh)",
+      "Energia Compensada (kWh)",
+      "Saldo Acumulado GD",
       "CIP (R$)",
       "Outros Encargos (R$)",
       "PIS (R$)",
@@ -8838,11 +9766,12 @@ export default function App() {
       return [
         b.fileName,
         b.uc,
-        getGerencia(String(b.uc)),
-        getLocin(String(b.uc)),
+        b.gerencia || getGerencia(String(b.uc)),
+        b.locin || getLocin(String(b.uc)),
         getCidade(String(b.uc), b.cidade),
+        b.endereco || "",
         b.tipo || "",
-        UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc)) ? "LIVRE" : "CATIVO",
+        b.mercado || (UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc)) ? "LIVRE" : "CATIVO"),
         b.concessionaria
           ? b.concessionaria.toUpperCase().includes("ENERGISA")
             ? "ENERGISA"
@@ -8857,20 +9786,20 @@ export default function App() {
         b.modalidadeTarifaria || "",
         b.subgrupo || "",
         b.valorTotal,
-        b.consumoGrupoB || "",
+        b.consumoKwhGrupoB || b.consumoGrupoB || (b.tipo === "B" ? b.consumoKwh : "") || "",
+        b.valorConsumoKwhGrupoB || "",
+        b.consumoKwhIntermediaria || "",
         b.demandaPontaKW,
         b.demandaForaPontaKW,
+        b.demandaTodosPeriodosKW || "",
         b.demandaPotenciaMedidaPonta,
         b.valorDemandaPotenciaMedidaPonta,
         b.demandaPotenciaMedidaForaPonta,
         b.valorDemandaPotenciaMedidaForaPonta,
-        b.consumoKwhGrupoB || b.consumoKwh || "",
-        b.valorConsumoKwhGrupoB || "",
         b.consumoKwhPonta,
         b.valorConsumoKwhPonta,
         b.consumoKwhForaPonta,
         b.valorConsumoKwhForaPonta,
-        b.demandaTodosPeriodosKW || "",
         b.demandaPotenciaNaoConsumidaPonta,
         b.valorDemandaPotenciaNaoConsumidaPonta,
         b.demandaPotenciaNaoConsumidaFPonta,
@@ -8887,6 +9816,9 @@ export default function App() {
         b.valorEnergiaAtvInjetadaGDIOUC,
         b.energiaAtvInjetadaGDIMUC,
         b.valorEnergiaAtvInjetadaGDIMUC,
+        b.energiaInjetadaKwh || "",
+        b.energiaCompensadaKwh || "",
+        b.saldoAcumuladoGD || "",
         b.cip,
         b.outrosEncargos,
         b.pis || "",
@@ -8907,7 +9839,10 @@ export default function App() {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
-    const fileName = `extracao_faturas_consolidado_${new Date().toISOString().split("T")[0]}.csv`;
+    const fileName =
+      targetMonth !== "all"
+        ? `extracao_faturas_${targetMonth.replace("/", "_")}_${new Date().toISOString().split("T")[0]}.csv`
+        : `extracao_faturas_consolidado_${new Date().toISOString().split("T")[0]}.csv`;
 
     link.setAttribute("href", url);
     link.setAttribute("download", fileName);
@@ -8937,11 +9872,13 @@ export default function App() {
       "Mercado",
       "Concessionária",
       "Cidade",
+      "Endereço",
       "Nota Fiscal",
       "Modalidade Tarifária",
       "Subgrupo",
       "Valor Total (R$)",
       "Consumo Ponta (kWh)",
+      "Consumo em kWh - Intermediária",
       "Consumo Fora Ponta (kWh)",
       "Demanda Medida Ponta (kW)",
       "Demanda Medida Fora Ponta (kW)",
@@ -8983,11 +9920,13 @@ export default function App() {
         d.mercado,
         d.concessionaria,
         getCidade(String(d.uc), d.cidade),
+        d.endereco || "",
         d.numeroNotaFiscal,
         d.modalidadeTarifaria,
         d.subgrupo,
         d.valorTotal,
         d.consumoPonta,
+        d.consumoIntermediaria || 0,
         d.consumoForaPonta,
         d.demandaMedidaPonta,
         d.demandaMedidaForaPonta,
@@ -9072,7 +10011,7 @@ export default function App() {
         parseValue(b.valorDemandaPotenciaNaoConsumidaFPonta);
       const t = u + r + s;
 
-      const monthName = `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`;
+      const monthName = `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`;
       const sortKey = `${b.anoLeitura}${getMonthNumber(b.mesReferencia.toString()).toString().padStart(2, "0")}`;
 
       if (!monthlyBreakdown[sortKey]) {
@@ -9134,63 +10073,72 @@ export default function App() {
     };
   }, [completedBills, selectedMultaType, multasMonth, multasSortDirection]);
 
-  const dashboardData = completedBills.map((b) => ({
-    name: `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`,
-    uc: b.uc,
-    consumoPonta: parseValue(b.consumoKwhPonta),
-    valorConsumoPonta: parseValue(b.valorConsumoKwhPonta),
-    consumoForaPonta: parseValue(b.consumoKwhForaPonta),
-    valorConsumoForaPonta: parseValue(b.valorConsumoKwhForaPonta),
-    consumoGrupoB: parseValue(b.consumoKwhGrupoB || b.consumoKwh),
-    valorConsumoGrupoB: parseValue(b.valorConsumoKwhGrupoB),
-    valorTotal: parseValue(b.valorTotal),
-    demandaMedidaPonta: parseValue(b.demandaPotenciaMedidaPonta),
-    demandaMedidaForaPonta: parseValue(b.demandaPotenciaMedidaForaPonta),
-    valorDemandaPonta: parseValue(b.valorDemandaPotenciaMedidaPonta),
-    valorDemandaForaPonta: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
-    demandaContratadaPonta: parseValue(b.demandaPontaKW),
-    demandaContratadaForaPonta: parseValue(b.demandaForaPontaKW),
-    ultrapassagemPonta: parseValue(b.demandaPotenciaAtivaUltrapPonta),
-    ultrapassagemForaPonta: parseValue(b.demandaPotenciaAtivaUltrapFPonta),
-    reativaPonta: parseValue(b.energiaReativaExcedPonta),
-    reativaForaPonta: parseValue(b.energiaReativaExcedFPonta),
-    solarInjetadaOUC: parseValue(b.energiaAtvInjetadaGDIOUC),
-    solarInjetadaMUC: parseValue(b.energiaAtvInjetadaGDIMUC),
-    valorUltrapassagemPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
-    valorUltrapassagemForaPonta: parseValue(
-      b.valorDemandaPotenciaAtivaUltrapFPonta,
-    ),
-    valorReativaPonta: parseValue(b.valorEnergiaReativaExcedPonta),
-    valorReativaForaPonta: parseValue(b.valorEnergiaReativaExcedFPonta),
-    valorSolarOUC: parseValue(b.valorEnergiaAtvInjetadaGDIOUC),
-    valorSolarMUC: parseValue(b.valorEnergiaAtvInjetadaGDIMUC),
-    cip: parseValue(b.cip),
-    outrosEncargos: parseValue(b.outrosEncargos),
-    pis: parseValue(b.pis),
-    cofins: parseValue(b.cofins),
-    icms: parseValue(b.icms),
-    concessionaria: b.concessionaria || "",
-    numeroNotaFiscal: b.numeroNotaFiscal || "",
-    cidade: getCidade(String(b.uc), b.cidade),
-    tipo: UCS_PPP.has(String(b.uc)) ? "PPP Fotovoltaica" : b.tipo || "",
-    mercado: UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc)) ? "LIVRE" : "CATIVO",
-    fileName: b.fileName || "",
-    modalidadeTarifaria: (b.modalidadeTarifaria || "").toString().toUpperCase(),
-    subgrupo: (b.subgrupo || "").toString().toUpperCase(),
-  }));
+  const dashboardData = useMemo(() => {
+    return completedBills.map((b) => ({
+      name: `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`,
+      uc: b.uc,
+      consumoPonta: parseValue(b.consumoKwhPonta),
+      valorConsumoPonta: parseValue(b.valorConsumoKwhPonta),
+      consumoIntermediaria: parseValue(b.consumoKwhIntermediaria),
+      consumoForaPonta: parseValue(b.consumoKwhForaPonta),
+      valorConsumoForaPonta: parseValue(b.valorConsumoKwhForaPonta),
+      consumoGrupoB: parseValue(b.consumoKwhGrupoB || b.consumoKwh),
+      valorConsumoGrupoB: parseValue(b.valorConsumoKwhGrupoB),
+      valorTotal: parseValue(b.valorTotal),
+      demandaMedidaPonta: parseValue(b.demandaPotenciaMedidaPonta),
+      demandaMedidaForaPonta: parseValue(b.demandaPotenciaMedidaForaPonta),
+      valorDemandaPonta: parseValue(b.valorDemandaPotenciaMedidaPonta),
+      valorDemandaForaPonta: parseValue(b.valorDemandaPotenciaMedidaForaPonta),
+      demandaContratadaPonta: (b.modalidadeTarifaria || "").toUpperCase().includes("VERDE") ? 0 : parseValue(b.demandaPontaKW),
+      demandaContratadaForaPonta: parseValue(b.demandaForaPontaKW),
+      ultrapassagemPonta: parseValue(b.demandaPotenciaAtivaUltrapPonta),
+      ultrapassagemForaPonta: parseValue(b.demandaPotenciaAtivaUltrapFPonta),
+      reativaPonta: parseValue(b.energiaReativaExcedPonta),
+      reativaForaPonta: parseValue(b.energiaReativaExcedFPonta),
+      solarInjetadaOUC: parseValue(b.energiaAtvInjetadaGDIOUC),
+      solarInjetadaMUC: parseValue(b.energiaAtvInjetadaGDIMUC),
+      valorUltrapassagemPonta: parseValue(b.valorDemandaPotenciaAtivaUltrapPonta),
+      valorUltrapassagemForaPonta: parseValue(
+        b.valorDemandaPotenciaAtivaUltrapFPonta,
+      ),
+      valorReativaPonta: parseValue(b.valorEnergiaReativaExcedPonta),
+      valorReativaForaPonta: parseValue(b.valorEnergiaReativaExcedFPonta),
+      valorSolarOUC: parseValue(b.valorEnergiaAtvInjetadaGDIOUC),
+      valorSolarMUC: parseValue(b.valorEnergiaAtvInjetadaGDIMUC),
+      cip: parseValue(b.cip),
+      outrosEncargos: parseValue(b.outrosEncargos),
+      pis: parseValue(b.pis),
+      cofins: parseValue(b.cofins),
+      icms: parseValue(b.icms),
+      concessionaria: b.concessionaria || "",
+      numeroNotaFiscal: b.numeroNotaFiscal || "",
+      cidade: getCidade(String(b.uc), b.cidade),
+      endereco: b.endereco || getEndereco(String(b.uc)),
+      tipo: isUcPPP(String(b.uc), formatMonth(b.mesReferencia) + " / " + b.anoLeitura) ? "PPP Fotovoltaica" : b.tipo || "",
+      mercado: UCS_LIVRE_MERCADO_LIVRE.has(String(b.uc)) ? "LIVRE" : "CATIVO",
+      fileName: b.fileName || "",
+      modalidadeTarifaria: (b.modalidadeTarifaria || "").toString().toUpperCase(),
+      subgrupo: (b.subgrupo || "").toString().toUpperCase(),
+    }));
+  }, [completedBills, getCidade, getEndereco, formatMonth, parseValue]);
 
-  const ucs = Array.from(new Set(dashboardData.map((d) => d.uc))).filter(
-    Boolean,
+  const ucs = useMemo(
+    () => Array.from(new Set(dashboardData.map((d) => d.uc))).filter(Boolean),
+    [dashboardData]
   );
 
-  const availableMonths = Array.from(new Set(dashboardData.map((d) => d.name)))
-    .filter(Boolean)
-    .sort((a, b) => {
-      const [mA, yA] = String(a).split("/");
-      const [mB, yB] = String(b).split("/");
-      if (yA !== yB) return Number(yB) - Number(yA);
-      return getMonthNumber(mB) - getMonthNumber(mA);
-    });
+  const availableMonths = useMemo(
+    () =>
+      Array.from(new Set(dashboardData.map((d) => d.name)))
+        .filter(Boolean)
+        .sort((a, b) => {
+          const [mA, yA] = String(a).split("/");
+          const [mB, yB] = String(b).split("/");
+          if (yA !== yB) return Number(yB) - Number(yA);
+          return getMonthNumber(mB) - getMonthNumber(mA);
+        }),
+    [dashboardData]
+  );
 
   const availableRelatorioTypes = React.useMemo(() => {
     const types = Array.from(new Set(dashboardData.map((d) => d.tipo)))
@@ -9205,97 +10153,111 @@ export default function App() {
     return types;
   }, [dashboardData]);
 
-  const filteredDashboardData = dashboardData.filter((d) => {
-    const matchesUC =
-      !selectedUC ||
-      selectedUC === "all" ||
-      d.uc.toString().includes(selectedUC);
-    const matchesMonth = selectedMonth === "all" || d.name === selectedMonth;
-    const matchesConcessionaria =
-      selectedConcessionaria === "all" ||
-      d.concessionaria === selectedConcessionaria;
+  const filteredDashboardData = useMemo(() => {
+    return dashboardData.filter((d) => {
+      const matchesUC =
+        !selectedUC ||
+        selectedUC === "all" ||
+        d.uc.toString().includes(selectedUC);
+      const matchesMonth = selectedMonth === "all" || d.name === selectedMonth;
+      const matchesConcessionaria =
+        selectedConcessionaria === "all" ||
+        d.concessionaria === selectedConcessionaria;
 
-    if (!matchesUC || !matchesMonth || !matchesConcessionaria) return false;
+      if (!matchesUC || !matchesMonth || !matchesConcessionaria) return false;
 
-    if (
-      dashboardSubTab === "financeiro" &&
-      financialSubTab === "energia_solar"
-    ) {
-      const totalCreditos = Math.abs(d.valorSolarOUC + d.valorSolarMUC);
-      return totalCreditos > 0;
-    }
+      if (
+        dashboardSubTab === "financeiro" &&
+        financialSubTab === "energia_solar"
+      ) {
+        const totalCreditos = Math.abs(d.valorSolarOUC + d.valorSolarMUC);
+        return totalCreditos > 0;
+      }
 
-    if (dashboardSubTab === "operacionais" && operationalSubTab === "solar") {
-      const totalInjetada = Math.abs(d.solarInjetadaOUC + d.solarInjetadaMUC);
-      return totalInjetada > 0;
-    }
+      if (dashboardSubTab === "operacionais" && operationalSubTab === "solar") {
+        const totalInjetada = Math.abs(d.solarInjetadaOUC + d.solarInjetadaMUC);
+        return totalInjetada > 0;
+      }
 
-    if (dashboardSubTab === "operacionais" && operationalSubTab === "reativa") {
-      return d.reativaPonta > 0 || d.reativaForaPonta > 0;
-    }
+      if (dashboardSubTab === "operacionais" && operationalSubTab === "reativa") {
+        return d.reativaPonta > 0 || d.reativaForaPonta > 0;
+      }
 
-    if (
-      dashboardSubTab === "operacionais" &&
-      operationalSubTab === "ultrapassagem"
-    ) {
-      return d.ultrapassagemPonta + d.ultrapassagemForaPonta > 0;
-    }
+      if (
+        dashboardSubTab === "operacionais" &&
+        operationalSubTab === "ultrapassagem"
+      ) {
+        return d.ultrapassagemPonta + d.ultrapassagemForaPonta > 0;
+      }
 
-    if (
-      dashboardSubTab === "operacionais" &&
-      operationalSubTab === "subutilizacao"
-    ) {
-      return d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
-    }
+      if (
+        dashboardSubTab === "operacionais" &&
+        operationalSubTab === "subutilizacao"
+      ) {
+        return d.demandaContratadaPonta > 0 || d.demandaContratadaForaPonta > 0;
+      }
 
-    if (
-      dashboardSubTab === "financeiro" &&
-      financialSubTab === "multa_reativa"
-    ) {
-      return d.valorReativaPonta > 0 || d.valorReativaForaPonta > 0;
-    }
+      if (
+        dashboardSubTab === "financeiro" &&
+        financialSubTab === "multa_reativa"
+      ) {
+        return d.valorReativaPonta > 0 || d.valorReativaForaPonta > 0;
+      }
 
-    if (
-      dashboardSubTab === "financeiro" &&
-      financialSubTab === "multa_ultrapassagem"
-    ) {
-      return d.valorUltrapassagemPonta + d.valorUltrapassagemForaPonta > 0;
-    }
+      if (
+        dashboardSubTab === "financeiro" &&
+        financialSubTab === "multa_ultrapassagem"
+      ) {
+        return d.valorUltrapassagemPonta + d.valorUltrapassagemForaPonta > 0;
+      }
 
-    return true;
-  });
+      return true;
+    });
+  }, [
+    dashboardData,
+    selectedUC,
+    selectedMonth,
+    selectedConcessionaria,
+    dashboardSubTab,
+    financialSubTab,
+    operationalSubTab,
+  ]);
 
-  const generalFilteredData = dashboardData.filter((d) => {
-    const matchesUC =
-      !selectedUC ||
-      selectedUC === "all" ||
-      d.uc.toString().includes(selectedUC);
-    const matchesMonth = selectedMonth === "all" || d.name === selectedMonth;
-    const matchesConcessionaria =
-      selectedConcessionaria === "all" ||
-      d.concessionaria === selectedConcessionaria;
-    return matchesUC && matchesMonth && matchesConcessionaria;
-  });
+  const generalFilteredData = useMemo(() => {
+    return dashboardData.filter((d) => {
+      const matchesUC =
+        !selectedUC ||
+        selectedUC === "all" ||
+        d.uc.toString().includes(selectedUC);
+      const matchesMonth = selectedMonth === "all" || d.name === selectedMonth;
+      const matchesConcessionaria =
+        selectedConcessionaria === "all" ||
+        d.concessionaria === selectedConcessionaria;
+      return matchesUC && matchesMonth && matchesConcessionaria;
+    });
+  }, [dashboardData, selectedUC, selectedMonth, selectedConcessionaria]);
 
-  const filteredRelatorioData = dashboardData.filter((d) => {
-    const matchesMonth =
-      selectedRelatorioMonth === "all" || d.name === selectedRelatorioMonth;
-    const matchesType =
-      selectedRelatorioType.includes("all") ||
-      selectedRelatorioType.includes(d.tipo) ||
-      (selectedRelatorioType.includes("INJETADO") && UCS_PPP.has(String(d.uc)));
-    return matchesMonth && matchesType && d.uc !== "31383580";
-  });
+  const filteredRelatorioData = useMemo(() => {
+    return dashboardData.filter((d) => {
+      const matchesMonth =
+        selectedRelatorioMonth === "all" || d.name === selectedRelatorioMonth;
+      const matchesType =
+        selectedRelatorioType.includes("all") ||
+        selectedRelatorioType.includes(d.tipo) ||
+        (selectedRelatorioType.includes("INJETADO") && isUcPPP(String(d.uc), d.name));
+      return matchesMonth && matchesType && d.uc !== "31383580";
+    });
+  }, [dashboardData, selectedRelatorioMonth, selectedRelatorioType]);
 
   const relatorioTotals = React.useMemo(() => {
     return filteredRelatorioData.reduce(
       (acc, curr) => {
         acc.valorTotal += curr.valorTotal || 0;
         acc.consumoTotal +=
-          (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0);
+          (curr.consumoPonta || 0) + (curr.consumoIntermediaria || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0);
 
         // For Relatório Financeiro cards, only include PPP Fotovoltaica UCs for injected energy
-        if (UCS_PPP.has(String(curr.uc))) {
+        if (isUcPPP(String(curr.uc), curr.name)) {
           acc.valorInjetado +=
             (curr.valorSolarOUC || 0) + (curr.valorSolarMUC || 0);
           acc.totalInjetadoKwh +=
@@ -9308,9 +10270,11 @@ export default function App() {
     );
   }, [filteredRelatorioData]);
 
-  const filteredUcs = Array.from(
-    new Set(filteredDashboardData.map((d) => d.uc)),
-  ).filter(Boolean);
+  const filteredUcs = useMemo(() => {
+    return Array.from(
+      new Set(filteredDashboardData.map((d) => d.uc)),
+    ).filter(Boolean);
+  }, [filteredDashboardData]);
 
   const sortedDashboardData = React.useMemo(() => {
     return [...filteredDashboardData].sort((a, b) => {
@@ -9410,88 +10374,86 @@ export default function App() {
   ]);
 
   // Group by month/year for charts
-  const timeSeriesData = Object.values(
-    filteredDashboardData.reduce((acc: any, curr) => {
-      const key = curr.name;
-      if (!acc[key]) {
-        acc[key] = {
-          name: key,
-          consumoPonta: 0,
-          valorConsumoPonta: 0,
-          consumoForaPonta: 0,
-          valorConsumoForaPonta: 0,
-          consumoGrupoB: 0,
-          valorConsumoGrupoB: 0,
-          valorTotal: 0,
-          demandaMedidaPonta: 0,
-          demandaMedidaForaPonta: 0,
-          demandaContratadaPonta: 0,
-          demandaContratadaForaPonta: 0,
-          ultrapassagemPonta: 0,
-          ultrapassagemForaPonta: 0,
-          reativaPonta: 0,
-          reativaForaPonta: 0,
-          solarInjetada: 0,
-          solarCompensada: 0,
-          solarInjetadaOUC: 0,
-          solarInjetadaMUC: 0,
-          valorUltrapassagemPonta: 0,
-          valorUltrapassagemForaPonta: 0,
-          valorReativaPonta: 0,
-          valorReativaForaPonta: 0,
-          valorSolarOUC: 0,
-          valorSolarMUC: 0,
-          cip: 0,
-          outrosEncargos: 0,
-        };
-      }
-      acc[key].consumoPonta += curr.consumoPonta;
-      acc[key].valorConsumoPonta += curr.valorConsumoPonta;
-      acc[key].consumoForaPonta += curr.consumoForaPonta;
-      acc[key].valorConsumoForaPonta += curr.valorConsumoForaPonta;
-      acc[key].consumoGrupoB += curr.consumoGrupoB;
-      acc[key].valorConsumoGrupoB += curr.valorConsumoGrupoB;
-      acc[key].valorTotal += curr.valorTotal;
-      acc[key].demandaMedidaPonta = Math.max(
-        acc[key].demandaMedidaPonta,
-        curr.demandaMedidaPonta,
-      );
-      acc[key].demandaMedidaForaPonta = Math.max(
-        acc[key].demandaMedidaForaPonta,
-        curr.demandaMedidaForaPonta,
-      );
-      acc[key].demandaContratadaPonta = Math.max(
-        acc[key].demandaContratadaPonta,
-        curr.demandaContratadaPonta,
-      );
-      acc[key].demandaContratadaForaPonta = Math.max(
-        acc[key].demandaContratadaForaPonta,
-        curr.demandaContratadaForaPonta,
-      );
-      acc[key].ultrapassagemPonta += curr.ultrapassagemPonta;
-      acc[key].ultrapassagemForaPonta += curr.ultrapassagemForaPonta;
-      acc[key].reativaPonta += curr.reativaPonta;
-      acc[key].reativaForaPonta += curr.reativaForaPonta;
-      acc[key].solarInjetada += curr.solarInjetada;
-      acc[key].solarCompensada += curr.solarCompensada;
-      acc[key].solarInjetadaOUC += curr.solarInjetadaOUC;
-      acc[key].solarInjetadaMUC += curr.solarInjetadaMUC;
-      acc[key].valorUltrapassagemPonta += curr.valorUltrapassagemPonta;
-      acc[key].valorUltrapassagemForaPonta += curr.valorUltrapassagemForaPonta;
-      acc[key].valorReativaPonta += curr.valorReativaPonta;
-      acc[key].valorReativaForaPonta += curr.valorReativaForaPonta;
-      acc[key].valorSolarOUC += curr.valorSolarOUC;
-      acc[key].valorSolarMUC += curr.valorSolarMUC;
-      acc[key].cip += curr.cip;
-      acc[key].outrosEncargos += curr.outrosEncargos;
-      acc[key].valorConsumo =
-        acc[key].valorTotal +
-        Math.abs(acc[key].valorSolarOUC + acc[key].valorSolarMUC) -
-        acc[key].cip -
-        acc[key].outrosEncargos;
-      return acc;
-    }, {}),
-  );
+  const timeSeriesData = useMemo(() => {
+    return Object.values(
+      filteredDashboardData.reduce((acc: any, curr) => {
+        const key = curr.name;
+        if (!acc[key]) {
+          acc[key] = {
+            name: key,
+            consumoPonta: 0,
+            valorConsumoPonta: 0,
+            consumoForaPonta: 0,
+            valorConsumoForaPonta: 0,
+            consumoGrupoB: 0,
+            valorConsumoGrupoB: 0,
+            valorTotal: 0,
+            demandaMedidaPonta: 0,
+            demandaMedidaForaPonta: 0,
+            demandaContratadaPonta: 0,
+            demandaContratadaForaPonta: 0,
+            ultrapassagemPonta: 0,
+            ultrapassagemForaPonta: 0,
+            reativaPonta: 0,
+            reativaForaPonta: 0,
+            solarInjetadaOUC: 0,
+            solarInjetadaMUC: 0,
+            valorUltrapassagemPonta: 0,
+            valorUltrapassagemForaPonta: 0,
+            valorReativaPonta: 0,
+            valorReativaForaPonta: 0,
+            valorSolarOUC: 0,
+            valorSolarMUC: 0,
+            cip: 0,
+            outrosEncargos: 0,
+          };
+        }
+        acc[key].consumoPonta += curr.consumoPonta;
+        acc[key].valorConsumoPonta += curr.valorConsumoPonta;
+        acc[key].consumoForaPonta += curr.consumoForaPonta;
+        acc[key].valorConsumoForaPonta += curr.valorConsumoForaPonta;
+        acc[key].consumoGrupoB += curr.consumoGrupoB;
+        acc[key].valorConsumoGrupoB += curr.valorConsumoGrupoB;
+        acc[key].valorTotal += curr.valorTotal;
+        acc[key].demandaMedidaPonta = Math.max(
+          acc[key].demandaMedidaPonta,
+          curr.demandaMedidaPonta,
+        );
+        acc[key].demandaMedidaForaPonta = Math.max(
+          acc[key].demandaMedidaForaPonta,
+          curr.demandaMedidaForaPonta,
+        );
+        acc[key].demandaContratadaPonta = Math.max(
+          acc[key].demandaContratadaPonta,
+          curr.demandaContratadaPonta,
+        );
+        acc[key].demandaContratadaForaPonta = Math.max(
+          acc[key].demandaContratadaForaPonta,
+          curr.demandaContratadaForaPonta,
+        );
+        acc[key].ultrapassagemPonta += curr.ultrapassagemPonta;
+        acc[key].ultrapassagemForaPonta += curr.ultrapassagemForaPonta;
+        acc[key].reativaPonta += curr.reativaPonta;
+        acc[key].reativaForaPonta += curr.reativaForaPonta;
+        acc[key].solarInjetadaOUC += curr.solarInjetadaOUC;
+        acc[key].solarInjetadaMUC += curr.solarInjetadaMUC;
+        acc[key].valorUltrapassagemPonta += curr.valorUltrapassagemPonta;
+        acc[key].valorUltrapassagemForaPonta += curr.valorUltrapassagemForaPonta;
+        acc[key].valorReativaPonta += curr.valorReativaPonta;
+        acc[key].valorReativaForaPonta += curr.valorReativaForaPonta;
+        acc[key].valorSolarOUC += curr.valorSolarOUC;
+        acc[key].valorSolarMUC += curr.valorSolarMUC;
+        acc[key].cip += curr.cip;
+        acc[key].outrosEncargos += curr.outrosEncargos;
+        acc[key].valorConsumo =
+          acc[key].valorTotal +
+          Math.abs(acc[key].valorSolarOUC + acc[key].valorSolarMUC) -
+          acc[key].cip -
+          acc[key].outrosEncargos;
+        return acc;
+      }, {} as Record<string, any>),
+    );
+  }, [filteredDashboardData]);
 
   const COLORS = ["#0054A6", "#00AEEF", "#1E293B", "#64748B"];
 
@@ -9507,7 +10469,7 @@ export default function App() {
         <Logo className="h-14" />
         <div className="flex flex-col items-center gap-3">
           <Loader2 size={36} className="animate-spin text-sanesul-primary" />
-          <p className="text-sm font-bold text-slate-600">Carregando faturas do Supabase Cloud...</p>
+          <p className="text-sm font-bold text-slate-600">Carregando faturas da Nuvem Google...</p>
           <p className="text-xs text-slate-400">Aguarde enquanto buscamos os dados</p>
         </div>
       </div>
@@ -9518,7 +10480,7 @@ export default function App() {
     return (
       <VisaoGeralDashboard
         data={dashboardData}
-        setCurrentPage={setCurrentPage}
+        setCurrentPage={(p) => setCurrentPage(p as "visao_geral" | "sistema")}
         handleLogout={handleLogout}
         hasApiKey={hasApiKey}
         handleSelectKey={handleSelectKey}
@@ -9526,125 +10488,171 @@ export default function App() {
     );
   }
 
+  const navigationTabs = [
+    { id: "faturas", label: "Gestão de Faturas", icon: FileText, desc: "Cadastro e importação de faturas" },
+    { id: "multas", label: "Multas", icon: AlertTriangle, desc: "Auditoria de ultrapassagem e excedente" },
+    { id: "dashboard", label: "Dashboard Analítico", icon: LayoutDashboard, desc: "Gráficos executivos e indicadores" },
+    { id: "analises", label: "Análises de Dados", icon: BarChart3, desc: "Matriz e exploração analítica" },
+    { id: "monitoramento", label: "Monitoramento Demanda", icon: DollarSign, desc: "Otimização e ultrapassagens" },
+    { id: "monitoramento_ajustes", label: "Ajuste de Demanda", icon: FileCheck, desc: "Histórico de solicitações contratuais" },
+    { id: "monitoramento_reativo", label: "Monitoramento Reativo", icon: Zap, desc: "Fator de potência e reativo excedente" },
+    { id: "monitoramento_usinas", label: "Monitoramento Usinas", icon: Leaf, desc: "PPP e GDI fotovoltaica" },
+    {
+      id: "assistente_portal",
+      label: "Assistente do Portal",
+      icon: Bot,
+      badge: "Chatbot IA",
+      desc: "Localize UCs pelo endereço completo ou parcial, pergunte sobre multas, demanda, reativo, usinas ou faturas. Modo consulta.",
+    },
+    { id: "relatorio", label: "Relatório Financeiro", icon: FileSpreadsheet, desc: "Consolidado contábil e tributário" },
+  ];
+
+  const currentTabObj = navigationTabs.find((t) => t.id === activeTab) || navigationTabs[0];
+
   return (
-    <div className="min-h-screen bg-sanesul-bg text-sanesul-text font-sans p-4 md:p-8">
-      {/* Header */}
-      <header className="max-w-[1600px] mx-auto mb-8 border-b border-slate-200/80 pb-6 space-y-6">
-        {/* Top Navbar */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Logo className="h-12" />
-            <div className="hidden sm:flex items-center gap-2 pl-4 border-l border-slate-200">
-              <span className="flex h-2.5 w-2.5 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-              </span>
-              <span className="text-[11px] font-bold text-slate-600 tracking-wider uppercase">
-                Sistema Operacional (Nuvem Supabase)
-              </span>
-            </div>
-          </div>
+    <div className="min-h-screen bg-slate-50 text-sanesul-text font-sans flex flex-col">
+      {/* Top Navbar Header */}
+      <header className="bg-white border-b border-slate-200/90 px-4 md:px-8 py-3.5 sticky top-0 z-40 flex items-center justify-between gap-4 shadow-2xs">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="lg:hidden p-2 text-slate-600 hover:text-sanesul-primary hover:bg-slate-100 rounded-xl border border-slate-200 transition-all"
+            title="Abrir Módulos"
+          >
+            <Menu size={20} />
+          </button>
 
-          {/* Quick Actions & System Controls */}
-          <div className="flex flex-wrap gap-2.5 items-center">
-            {/* Supabase Database Badge */}
-            <div
-              className="flex items-center gap-2 px-3.5 py-2 border rounded-xl text-xs font-semibold shadow-xs transition-all bg-sky-50/90 text-sky-800 border-sky-200"
-              title={`Banco de Dados Supabase Cloud: ${bills.length.toLocaleString()} faturas`}
-            >
-              <Cloud size={15} className="text-sky-600" />
-              <span className="font-mono font-bold">
-                {`Supabase: ${bills.length.toLocaleString()} faturas`}
-              </span>
-            </div>
+          <Logo className="h-10" />
 
-
-            {/* Espelhar no Supabase (1:1) */}
-            <button
-              onClick={mirrorAppToSupabase}
-              disabled={isSyncing}
-              className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-sky-600 to-blue-700 text-white hover:from-sky-500 hover:to-blue-600 transition-all rounded-xl text-xs font-bold shadow-sm shadow-blue-500/20 active:scale-95 disabled:opacity-50"
-              title="Garante que o Supabase contenha exatamente as faturas presentes no App (Sincronização Estrita 1:1)"
-            >
-              {isSyncing ? (
-                <Loader2 size={15} className="animate-spin text-white" />
-              ) : (
-                <FileUp size={15} />
-              )}
-              <span>Espelhar no Supabase (1:1)</span>
-            </button>
-
-            {/* Configurar API */}
-            <button
-              onClick={handleSelectKey}
-              className={`flex items-center gap-2 px-4 py-2 border transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 ${
-                hasApiKey
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                  : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-              }`}
-              title={hasApiKey ? "Chave de IA Ativa - Trocar Chave" : "Configurar Chave Gemini AI"}
-            >
-              <Key size={15} />
-              <span>{hasApiKey ? "IA Conectada" : "Configurar API"}</span>
-            </button>
-
-            {/* Voltar para Visão Geral */}
-            <button
-              onClick={() => setCurrentPage("visao_geral")}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
-            >
-              <ArrowLeft size={15} />
-              <span>Visão Geral</span>
-            </button>
-
-            {/* Sair */}
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-red-300 text-slate-600 hover:text-red-600 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
-              title="Encerrar Sessão"
-            >
-              <LogOut size={15} />
-              <span>Sair</span>
-            </button>
+          <div className="hidden sm:flex items-center gap-2 pl-4 border-l border-slate-200">
+            <span className="flex h-2.5 w-2.5 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+            </span>
+            <span className="text-[11px] font-bold text-slate-600 tracking-wider uppercase">
+              Sistema Operacional (Nuvem Google)
+            </span>
           </div>
         </div>
 
-        {/* Navigation Tabs Bar */}
-        <div className="flex items-center overflow-x-auto no-scrollbar py-1">
-          <div className="flex gap-1.5 p-1.5 bg-slate-100/80 backdrop-blur-sm border border-slate-200/80 rounded-2xl w-fit">
-            {[
-              { id: "faturas", label: "Gestão de Faturas", icon: FileText },
-              { id: "multas", label: "Multas", icon: AlertTriangle },
-              { id: "dashboard", label: "Dashboard Analítico", icon: LayoutDashboard },
-              { id: "analises", label: "Análises de Dados", icon: BarChart3 },
-              { id: "monitoramento", label: "Monitoramento Demanda", icon: DollarSign },
-              { id: "monitoramento_ajustes", label: "Ajuste de Demanda", icon: FileCheck },
-              { id: "monitoramento_reativo", label: "Monitoramento Reativo", icon: Zap },
-              { id: "monitoramento_usinas", label: "Monitoramento Usinas", icon: Leaf },
-              { id: "relatorio", label: "Relatório Financeiro", icon: FileSpreadsheet },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center gap-2 px-5 py-2.5 transition-all rounded-xl text-xs font-bold tracking-wide whitespace-nowrap ${
-                    isActive
-                      ? "bg-sanesul-primary text-white shadow-md shadow-sanesul-primary/20 scale-[1.02]"
-                      : "text-slate-600 hover:text-sanesul-primary hover:bg-white/80"
-                  }`}
-                >
-                  <Icon size={15} />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        {/* Quick Actions & System Controls */}
+        <div className="flex items-center gap-2.5">
+          {/* Voltar para Visão Geral */}
+          <button
+            onClick={() => setCurrentPage("visao_geral")}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:border-sanesul-primary/40 text-slate-700 hover:text-sanesul-primary transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+          >
+            <ArrowLeft size={15} />
+            <span>Visão Geral</span>
+          </button>
 
-        {/* Modern Executive Action Toolbar (Displayed for activeTab === "faturas") */}
-        {activeTab === "faturas" && (
+          {/* Sair */}
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-red-300 text-slate-600 hover:text-red-600 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+            title="Encerrar Sessão"
+          >
+            <LogOut size={15} />
+            <span>Sair</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Layout Body: Sidebar on Left + Content on Right */}
+      <div className="flex flex-1 min-h-0 relative">
+        {/* Mobile Backdrop */}
+        {isSidebarOpen && (
+          <div
+            className="fixed inset-0 bg-slate-900/40 z-30 lg:hidden backdrop-blur-xs transition-opacity"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
+        {/* Barra Lateral: SOMENTE OS MÓDULOS */}
+        <aside
+          className={`fixed inset-y-16 left-0 z-30 w-64 bg-white border-r border-slate-200/90 py-3 px-2 flex flex-col gap-1 shrink-0
+            transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:h-[calc(100vh-4.25rem)] lg:sticky lg:top-16
+            shadow-xl lg:shadow-none overflow-y-auto no-scrollbar ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+        >
+          {navigationTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            const isAssistant = tab.id === "assistente_portal";
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                  setIsSidebarOpen(false);
+                }}
+                title={tab.desc}
+                className={`w-full group flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all text-left ${
+                  isActive
+                    ? isAssistant
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25 scale-[1.01]"
+                      : "bg-sanesul-primary text-white shadow-md shadow-sanesul-primary/20 scale-[1.01]"
+                    : isAssistant
+                      ? "text-blue-700 bg-blue-50/70 hover:bg-blue-100/90 hover:text-blue-900 border border-blue-200/60"
+                      : "text-slate-600 hover:text-sanesul-primary hover:bg-slate-100/80"
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className={`p-1.5 rounded-lg transition-colors ${
+                      isActive
+                        ? "bg-white/20 text-white"
+                        : isAssistant
+                          ? "bg-blue-100 text-blue-700 group-hover:bg-blue-200"
+                          : "bg-slate-100 text-slate-600 group-hover:bg-white group-hover:text-sanesul-primary"
+                    }`}
+                  >
+                    <Icon size={16} />
+                  </div>
+                  <span className="truncate">{tab.label}</span>
+                </div>
+
+                {tab.badge && (
+                  <span
+                    className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                      isActive
+                        ? "bg-white/20 text-white"
+                        : "bg-blue-100 text-blue-800 border border-blue-200"
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </aside>
+
+        {/* Content Container */}
+        <div className="p-4 md:p-8 max-w-[1600px] w-full mx-auto space-y-6 flex-1 min-w-0">
+          {/* Section Heading Bar */}
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200/80">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Módulo Ativo
+              </span>
+              <h1 className="text-xl md:text-2xl font-display font-bold text-slate-800">
+                {currentTabObj.label}
+              </h1>
+            </div>
+            {activeTab !== "assistente_portal" && (
+              <button
+                onClick={() => setActiveTab("assistente_portal")}
+                className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all active:scale-95"
+                title="Pergunte sobre multas, demanda, reativo, usinas ou a Central de Ações"
+              >
+                <Bot size={15} />
+                <span className="hidden sm:inline">Assistente do Portal</span>
+                <span className="sm:hidden">Assistente</span>
+              </button>
+            )}
+          </div>
+          {/* Modern Executive Action Toolbar (Displayed for activeTab === "faturas") */}
+          {activeTab === "faturas" && (
           <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 space-y-4">
             {/* Top Toolbar Row: Ingestion, Process & Strategy */}
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -9723,9 +10731,11 @@ export default function App() {
                         id: crypto.randomUUID(),
                         fileName: "Fatura Manual",
                         status: "completed",
+                        cidade: "",
+                        endereco: "",
                         tipo: "OPERACIONAL",
                         concessionaria: "ENERGISA",
-                        mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, "0"))}/${new Date().getFullYear()}`,
+                        mesReferencia: `${formatMonth((new Date().getMonth() + 1).toString().padStart(2, "0"))} / ${new Date().getFullYear()}`,
                         anoLeitura: new Date().getFullYear().toString(),
                       });
                       setIsBillModalOpen(true);
@@ -9735,6 +10745,24 @@ export default function App() {
                   >
                     <Plus size={15} />
                     <span>Nova Manual</span>
+                  </button>
+                  <button
+                    onClick={() => syncBillsToCloud()}
+                    disabled={isSyncingCloud || bills.length === 0}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50/80 border border-indigo-200/80 text-indigo-700 hover:bg-indigo-100 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Gravar faturas atuais diretamente no Firebase Firestore"
+                  >
+                    {isSyncingCloud ? (
+                      <>
+                        <Loader2 size={15} className="animate-spin text-indigo-600" />
+                        <span>Salvando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CloudUpload size={15} />
+                        <span>Salvar no Firebase</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -9825,27 +10853,18 @@ export default function App() {
                   <button
                     onClick={exportToCSV}
                     className="flex items-center gap-2 px-4 py-2 bg-sanesul-secondary text-white hover:bg-sanesul-secondary/90 transition-all rounded-xl text-xs font-bold shadow-xs shadow-sanesul-secondary/20 active:scale-95"
-                    title="Exportar todas as faturas para formato CSV"
+                    title={
+                      filterReference !== "all"
+                        ? `Exportar faturas do mês ${filterReference} para formato CSV`
+                        : "Exportar todas as faturas para formato CSV"
+                    }
                   >
                     <Download size={15} />
-                    <span>Exportar CSV</span>
-                  </button>
-                )}
-
-                {/* Espelhar Supabase 1:1 */}
-                {isSupabaseConfigured && bills.some((b) => b.status === "completed") && (
-                  <button
-                    onClick={mirrorAppToSupabase}
-                    disabled={isSyncing}
-                    className="flex items-center gap-2 px-3.5 py-2 bg-sky-50 border border-sky-200 text-sky-700 hover:bg-sky-100 hover:border-sky-300 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-50"
-                    title="Espelhar faturas no Supabase mantendo a contagem 100% idêntica ao aplicativo"
-                  >
-                    {isSyncing ? (
-                      <Loader2 size={15} className="animate-spin text-sky-600" />
-                    ) : (
-                      <FileUp size={15} className="text-sky-600" />
-                    )}
-                    <span>Espelhar 1:1</span>
+                    <span>
+                      {filterReference !== "all"
+                        ? `Exportar CSV (${filterReference})`
+                        : "Exportar CSV"}
+                    </span>
                   </button>
                 )}
 
@@ -9876,6 +10895,18 @@ export default function App() {
                   >
                     <RotateCcw size={15} />
                     <span>Resetar Travados</span>
+                  </button>
+                )}
+
+                {/* Limpar Duplicatas */}
+                {bills.length > 0 && (
+                  <button
+                    onClick={removeDuplicates}
+                    className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all rounded-xl text-xs font-bold shadow-xs active:scale-95"
+                    title="Procurar e excluir faturas duplicadas (mesma UC e Mês)"
+                  >
+                    <Layers size={15} />
+                    <span>Limpar Duplicatas</span>
                   </button>
                 )}
 
@@ -9921,8 +10952,7 @@ export default function App() {
               type="file"
               ref={folderInputEnergisaRef}
               onChange={(e) => handleFileUpload(e, "ENERGISA")}
-              webkitdirectory=""
-              directory=""
+              {...({ webkitdirectory: "", directory: "" } as any)}
               multiple
               className="hidden"
             />
@@ -9938,23 +10968,19 @@ export default function App() {
               type="file"
               ref={folderInputElektroRef}
               onChange={(e) => handleFileUpload(e, "ELEKTRO")}
-              webkitdirectory=""
-              directory=""
+              {...({ webkitdirectory: "", directory: "" } as any)}
               multiple
               className="hidden"
             />
           </div>
         )}
-      </header>
 
-
-
-      <main
-        className="max-w-[1600px] mx-auto"
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
+        <main
+          className="w-full"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
         {activeTab === "faturas" ? (
           bills.length === 0 ? (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center py-12">
@@ -10139,7 +11165,7 @@ export default function App() {
                   </div>
                   <input
                     type="text"
-                    placeholder="Buscar por Unidade Consumidora (UC)..."
+                    placeholder="Buscar por UC, Endereço, Cidade ou Gerência..."
                     value={searchUC}
                     onChange={(e) => setSearchUC(e.target.value)}
                     className="block w-full pl-10 pr-3 py-2 border border-sanesul-primary/10 rounded-xl text-xs focus:ring-sanesul-primary focus:border-sanesul-primary bg-slate-50/50"
@@ -10313,9 +11339,19 @@ export default function App() {
                                     </span>
                                   </td>
                                   <td className="px-4 py-3">
-                                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                                      {bill.cidade && bill.cidade !== "---" ? bill.cidade : getCidade(String(bill.uc), bill.cidade)}
-                                    </span>
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                                        {bill.cidade && bill.cidade !== "---" ? bill.cidade : getCidade(String(bill.uc), bill.cidade)}
+                                      </span>
+                                      {(bill.endereco || getEndereco(bill.uc || "")) && (
+                                        <span
+                                          className="text-[10px] text-slate-500 truncate max-w-[200px]"
+                                          title={bill.endereco || getEndereco(bill.uc || "")}
+                                        >
+                                          {bill.endereco || getEndereco(bill.uc || "")}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-3">
                                     <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
@@ -10335,7 +11371,7 @@ export default function App() {
                                   <td className="px-4 py-3">
                                     <span className="text-xs text-slate-600">
                                       {bill.mesReferencia && bill.anoLeitura
-                                        ? `${formatMonth(bill.mesReferencia)}/${bill.anoLeitura}`
+                                        ? `${formatMonth(bill.mesReferencia)} / ${bill.anoLeitura}`
                                         : "---"}
                                     </span>
                                   </td>
@@ -10820,7 +11856,7 @@ export default function App() {
                             .filter((b) => b.status === "completed")
                             .map(
                               (b) =>
-                                `${formatMonth(b.mesReferencia)}/${b.anoLeitura}`,
+                                `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`,
                             ),
                         ),
                       ).map((month) => (
@@ -11041,7 +12077,7 @@ export default function App() {
                         {generalFilteredData
                           .reduce(
                             (acc, curr) =>
-                              acc + (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0) + (curr.consumoKwh || 0),
+                              acc + (curr.consumoPonta || 0) + (curr.consumoForaPonta || 0) + (curr.consumoGrupoB || 0),
                             0,
                           )
                           .toLocaleString("pt-BR")}{" "}
@@ -11977,7 +13013,7 @@ export default function App() {
                                   ...filteredDashboardData.map(
                                     (d) =>
                                       d.valorTotal /
-                                      ((d.consumoPonta || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0) + (d.consumoKwh || 0) ||
+                                      ((d.consumoPonta || 0) + (d.consumoForaPonta || 0) + (d.consumoGrupoB || 0) ||
                                         1),
                                   ),
                                   0,
@@ -12149,6 +13185,9 @@ export default function App() {
                                     <>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">
                                         Consumo Ponta
+                                      </th>
+                                      <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">
+                                        Consumo Interm.
                                       </th>
                                       <th className="px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-sanesul-muted border-b border-sanesul-primary/5 text-right">
                                         Consumo F. Ponta
@@ -12361,7 +13400,7 @@ export default function App() {
                                         {row.name}
                                       </td>
                                       <td className="px-8 py-5 text-sm font-medium text-slate-600">
-                                        {UCS_PPP.has(String(row.uc))
+                                        {isUcPPP(String(row.uc), row.name)
                                           ? "PPP Fotovoltaica"
                                           : UCS_USINA.has(String(row.uc))
                                             ? "Usinas SANESUL"
@@ -12392,6 +13431,16 @@ export default function App() {
                                                 kWh
                                               </td>
                                               <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
+                                                {(row.consumoIntermediaria || 0).toLocaleString(
+                                                  "pt-BR",
+                                                  {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  },
+                                                )}{" "}
+                                                kWh
+                                              </td>
+                                              <td className="px-8 py-5 text-sm font-mono text-right text-slate-600">
                                                 {row.consumoForaPonta.toLocaleString(
                                                   "pt-BR",
                                                   {
@@ -12404,6 +13453,7 @@ export default function App() {
                                               <td className="px-8 py-5 text-sm font-bold text-right text-sanesul-primary">
                                                 {(
                                                   row.consumoPonta +
+                                                  (row.consumoIntermediaria || 0) +
                                                   row.consumoForaPonta
                                                 ).toLocaleString("pt-BR", {
                                                   minimumFractionDigits: 2,
@@ -13005,7 +14055,7 @@ export default function App() {
                             acc[curr.uc].totalCurrent += curr.currentTotal;
                             acc[curr.uc].totalOptimized += curr.optimizedTotal;
                             return acc;
-                          }, {}),
+                          }, {} as Record<string, any>),
                         ).map((group: any, idx: number) => (
                           <React.Fragment key={idx}>
                             <tr
@@ -14147,7 +15197,7 @@ export default function App() {
                                                     className="grid grid-cols-4 gap-4 px-4 py-3 bg-white rounded-xl border border-slate-100 hover:border-sanesul-primary/20 transition-colors"
                                                   >
                                                     <div className="text-xs font-bold text-slate-700">
-                                                      {formatMonth(month.mes)}/
+                                                      {formatMonth(month.mes)} / 
                                                       {month.ano}
                                                     </div>
                                                     <div className="text-xs font-mono text-center text-slate-500">
@@ -14457,7 +15507,7 @@ export default function App() {
                 if (b.status !== "completed") return false;
                 if (
                   selectedReactiveMonth !== "all" &&
-                  `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedReactiveMonth
+                  `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}` !== selectedReactiveMonth
                 )
                   return false;
                 const totalReativo =
@@ -14920,19 +15970,21 @@ export default function App() {
               
               const injectedBills = bills.filter((b) => {
                 if (b.status !== "completed") return false;
+                const monthYear = `${formatMonth(b.mesReferencia)} / ${b.anoLeitura}`;
                 if (
                   selectedUsinaMonth !== "all" &&
-                  `${formatMonth(b.mesReferencia)}/${b.anoLeitura}` !== selectedUsinaMonth
+                  monthYear !== selectedUsinaMonth
                 ) return false;
                 const injOuc = parseValue(b.energiaAtvInjetadaGDIOUC);
                 const injMuc = parseValue(b.energiaAtvInjetadaGDIMUC);
-                return injOuc > 0 || injMuc > 0;
+                const saldoGd = parseValue(b.saldoAcumuladoGD);
+                return injOuc > 0 || injMuc > 0 || saldoGd > 0 || isUcPPP(String(b.uc), monthYear) || UCS_USINA.has(String(b.uc));
               });
 
               const usinasDataObj = injectedBills.reduce((acc, bill) => {
                  const uc = String(bill.uc);
                  if (!acc[uc]) {
-                     const classification = UCS_PPP.has(uc) ? "PPP" : (UCS_USINA.has(uc) ? "SANESUL" : "OUTRO");
+                     const classification = isUcPPP(uc, `${formatMonth(bill.mesReferencia)} / ${bill.anoLeitura}`) ? "PPP" : (UCS_USINA.has(uc) ? "SANESUL" : "OUTRO");
                      acc[uc] = {
                         uc,
                         locin: getLocin(uc),
@@ -14943,16 +15995,276 @@ export default function App() {
                         totalValorOuc: 0,
                         totalInjetadaMuc: 0,
                         totalValorMuc: 0,
-                        billsCount: 0
+                        saldoAcumuladoGD: 0,
+                        billsCount: 0,
+                        _bills: []
                      };
                  }
                  acc[uc].totalInjetadaOuc += parseValue(bill.energiaAtvInjetadaGDIOUC);
                  acc[uc].totalValorOuc += parseValue(bill.valorEnergiaAtvInjetadaGDIOUC);
                  acc[uc].totalInjetadaMuc += parseValue(bill.energiaAtvInjetadaGDIMUC);
                  acc[uc].totalValorMuc += parseValue(bill.valorEnergiaAtvInjetadaGDIMUC);
+                 acc[uc]._bills.push(bill);
                  acc[uc].billsCount += 1;
                  return acc;
               }, {} as Record<string, any>);
+
+              // Garante que todas as UCs PPP e Usinas (da lista mensal ou global) apareçam na tabela,
+              // mesmo se não houver fatura cadastrada para o mês ou a energia injetada for 0
+              let expectedPPPs: string[] = [];
+              let hasMonthlyOverride = false;
+              if (selectedUsinaMonth !== "all" && typeof window !== "undefined") {
+                 try {
+                     const overridesStr = localStorage.getItem("PPP_UCS_MONTHLY_OVERRIDE");
+                     if (overridesStr) {
+                         const overrides = JSON.parse(overridesStr);
+                         if (Array.isArray(overrides[selectedUsinaMonth])) {
+                             expectedPPPs = overrides[selectedUsinaMonth];
+                             hasMonthlyOverride = true;
+                         }
+                     }
+                 } catch(e) {}
+              }
+              if (!hasMonthlyOverride) {
+                 expectedPPPs = Array.from(UCS_PPP);
+              }
+              
+              const expectedUsinas = Array.from(UCS_USINA);
+              
+              [...expectedPPPs.map(uc => ({uc, type: "PPP"})), ...expectedUsinas.map(uc => ({uc, type: "SANESUL"}))].forEach(({uc, type}) => {
+                  if (!usinasDataObj[uc]) {
+                      usinasDataObj[uc] = {
+                        uc,
+                        locin: getLocin(uc),
+                        gerencia: getGerencia(uc),
+                        cidade: getCidade(uc),
+                        classification: type,
+                        totalInjetadaOuc: 0,
+                        totalValorOuc: 0,
+                        totalInjetadaMuc: 0,
+                        totalValorMuc: 0,
+                        saldoAcumuladoGD: 0,
+                        billsCount: 0,
+                        _bills: []
+                      };
+                  }
+              });
+
+              Object.values(usinasDataObj).forEach((item: any) => {
+                if (item._bills && item._bills.length > 0) {
+                  if (selectedUsinaMonth !== "all") {
+                    item.saldoAcumuladoGD = item._bills.reduce((sum: number, b: any) => sum + parseValue(b.saldoAcumuladoGD), 0);
+                  } else {
+                    const sortedBills = [...item._bills].sort((a: any, b: any) => {
+                      const yearA = parseInt(a.anoLeitura, 10) || 0;
+                      const yearB = parseInt(b.anoLeitura, 10) || 0;
+                      if (yearA !== yearB) return yearB - yearA;
+                      return getMonthNumber(b.mesReferencia) - getMonthNumber(a.mesReferencia);
+                    });
+                    const latestBill = sortedBills[0];
+                    const latestMonthBills = sortedBills.filter(
+                      (b: any) => b.anoLeitura === latestBill.anoLeitura && b.mesReferencia === latestBill.mesReferencia
+                    );
+                    item.saldoAcumuladoGD = latestMonthBills.reduce((sum: number, b: any) => sum + parseValue(b.saldoAcumuladoGD), 0);
+                  }
+                } else {
+                  item.saldoAcumuladoGD = 0;
+                }
+
+                // Complementa ou sobrepõe com valor gravado manualmente no app para a usina
+                const monthKey = `${item.uc}_${selectedUsinaMonth}`;
+                const globalKey = `${item.uc}_all`;
+                if (selectedUsinaMonth !== "all" && customUsinaSaldoGD[monthKey] !== undefined) {
+                  item.saldoAcumuladoGD = customUsinaSaldoGD[monthKey];
+                } else if (selectedUsinaMonth === "all") {
+                  if (customUsinaSaldoGD[globalKey] !== undefined) {
+                    item.saldoAcumuladoGD = customUsinaSaldoGD[globalKey];
+                  } else if (item.saldoAcumuladoGD === 0) {
+                    const ucCustomKeys = Object.keys(customUsinaSaldoGD).filter(k => k.startsWith(`${item.uc}_`));
+                    if (ucCustomKeys.length > 0) {
+                      item.saldoAcumuladoGD = customUsinaSaldoGD[ucCustomKeys[ucCustomKeys.length - 1]];
+                    }
+                  }
+                }
+
+                // Helper para casar UCs com segurança (formatadas, sem pontuação, migradas ou código antigo)
+                const isMatchingBillUc = (bUc: any, targetUc: any): boolean => {
+                  if (!bUc || !targetUc) return false;
+                  const sB = String(bUc).trim();
+                  const sT = String(targetUc).trim();
+                  if (sB === sT) return true;
+
+                  const dB = sB.replace(/\D/g, "");
+                  const dT = sT.replace(/\D/g, "");
+                  if (dB && dT && dB === dT) return true;
+
+                  const cleanB = sB.replace(/[\.\-\/\s]/g, "");
+                  const cleanT = sT.replace(/[\.\-\/\s]/g, "");
+                  if (cleanB === cleanT) return true;
+
+                  const migB = UC_MIGRATION_MAP[sB] || UC_MIGRATION_MAP[cleanB] || (dB ? UC_MIGRATION_MAP[dB] : "") || sB;
+                  const migT = UC_MIGRATION_MAP[sT] || UC_MIGRATION_MAP[cleanT] || (dT ? UC_MIGRATION_MAP[dT] : "") || sT;
+                  if (migB === migT) return true;
+
+                  const dMigB = String(migB).replace(/\D/g, "");
+                  const dMigT = String(migT).replace(/\D/g, "");
+                  if (dMigB && dMigT && dMigB === dMigT) return true;
+
+                  // Verificação reversa no UC_MIGRATION_MAP
+                  for (const [oldUc, newUc] of Object.entries(UC_MIGRATION_MAP)) {
+                    const oClean = oldUc.replace(/\D/g, "");
+                    const nClean = newUc.replace(/\D/g, "");
+                    const matchB = sB === oldUc || cleanB === oClean || dB === oClean || sB === newUc || cleanB === nClean || dB === nClean;
+                    const matchT = sT === oldUc || cleanT === oClean || dT === oClean || sT === newUc || cleanT === nClean || dT === nClean;
+                    if (matchB && matchT) return true;
+                  }
+
+                  if (dB && dT && (dB.includes(dT) || dT.includes(dB)) && Math.min(dB.length, dT.length) >= 4) {
+                    return true;
+                  }
+
+                  return false;
+                };
+
+                // Coleta todas as faturas desta UC (as que já estavam em item._bills + todas do estado global bills)
+                const candidateBills = [
+                  ...(item._bills || []),
+                  ...bills.filter((b) => b && isMatchingBillUc(b.uc, item.uc)),
+                ];
+
+                // Deduplica faturas por ID ou chave única
+                const uniqueBillsMap = new Map<string, any>();
+                candidateBills.forEach((b) => {
+                  const id = b.id || `${b.uc}_${b.mesReferencia}_${b.anoLeitura}_${b.fileName || ""}`;
+                  if (!uniqueBillsMap.has(id)) {
+                    uniqueBillsMap.set(id, b);
+                  }
+                });
+                const ucBills = Array.from(uniqueBillsMap.values());
+
+                const getBillConsumo = (b: any): number => {
+                  if (!b) return 0;
+                  const ponta = parseValue(b.consumoKwhPonta ?? b.consumo_kwh_ponta);
+                  const foraPonta = parseValue(b.consumoKwhForaPonta ?? b.consumo_kwh_fora_ponta);
+                  const inter = parseValue(b.consumoKwhIntermediaria ?? b.consumo_kwh_intermediaria);
+                  const grupoB = parseValue(
+                    b.consumoKwhGrupoB ?? 
+                    b.consumo_kwh_grupo_b ?? 
+                    b.consumoGrupoB ?? 
+                    b.consumo_grupo_b
+                  );
+                  const totalPostos = ponta + foraPonta + inter + grupoB;
+                  if (totalPostos > 0) return totalPostos;
+
+                  const cKwh = parseValue(b.consumoKwh ?? b.consumo_kwh ?? b.consumoTotal ?? b.consumo_total);
+                  if (cKwh > 0) return cKwh;
+
+                  const cComp = parseValue(b.energiaCompensadaKwh ?? b.energia_compensada_kwh);
+                  if (cComp > 0) return cComp;
+
+                  return 0;
+                };
+
+                const extractYearAndMonth = (b: any) => {
+                  let year = parseInt(String(b.anoLeitura || b.ano_leitura || ""), 10) || 0;
+                  let month = getMonthNumber(b.mesReferencia || b.mes_referencia);
+
+                  const refStr = String(b.mesReferencia || b.mes_referencia || "").trim();
+                  if (year === 0 && refStr) {
+                    const match = refStr.match(/(20\d\d)/);
+                    if (match) year = parseInt(match[1], 10);
+                  }
+                  if (month === 0 && refStr) {
+                    const slashParts = refStr.split(/[\/\-\.]/);
+                    if (slashParts.length >= 2) {
+                      const p0 = parseInt(slashParts[0], 10);
+                      const p1 = parseInt(slashParts[1], 10);
+                      if (p0 >= 1 && p0 <= 12) {
+                        month = p0;
+                        if (year === 0 && p1 >= 2000) year = p1;
+                      } else if (p1 >= 1 && p1 <= 12) {
+                        month = p1;
+                        if (year === 0 && p0 >= 2000) year = p0;
+                      }
+                    }
+                  }
+
+                  const vencStr = String(b.dataVencimento || b.data_vencimento || "").trim();
+                  if ((month === 0 || year === 0) && vencStr) {
+                    const parts = vencStr.split(/[\/\-\.]/);
+                    if (parts.length >= 2) {
+                      if (month === 0) month = parseInt(parts[1], 10) || 0;
+                      if (year === 0 && parts[2]) year = parseInt(parts[2], 10) || 0;
+                    }
+                  }
+
+                  return { year, month };
+                };
+
+                // Agrupa faturas por mês/ano disponível
+                const monthlyConsumoMap: Record<string, { year: number; month: number; consumo: number; label: string }> = {};
+                ucBills.forEach((b, idx) => {
+                  const consumo = getBillConsumo(b);
+                  const { year, month } = extractYearAndMonth(b);
+
+                  const key = (month > 0 && year > 0)
+                    ? `${year}-${String(month).padStart(2, "0")}`
+                    : (b.mesReferencia ? String(b.mesReferencia).trim() : `mes_${idx}`);
+
+                  if (!monthlyConsumoMap[key]) {
+                    monthlyConsumoMap[key] = {
+                      year,
+                      month,
+                      consumo: 0,
+                      label: key,
+                    };
+                  }
+                  monthlyConsumoMap[key].consumo += consumo;
+                });
+
+                let availableMonthsList = Object.values(monthlyConsumoMap);
+
+                // Se houver mês selecionado na tela de Monitoramento Usinas
+                if (selectedUsinaMonth !== "all") {
+                  const [selMonthName, selYearStr] = selectedUsinaMonth.split("/").map((s) => s.trim());
+                  const selYear = parseInt(selYearStr, 10) || 0;
+                  const selMonth = getMonthNumber(selMonthName);
+                  if (selYear > 0 && selMonth > 0) {
+                    const targetVal = selYear * 100 + selMonth;
+                    const filteredBeforeOrEqual = availableMonthsList.filter(
+                      (m) => m.year > 0 && m.month > 0 && (m.year * 100 + m.month) <= targetVal
+                    );
+                    if (filteredBeforeOrEqual.length > 0) {
+                      availableMonthsList = filteredBeforeOrEqual;
+                    }
+                  }
+                }
+
+                // Ordena os meses disponíveis do mais recente para o mais antigo
+                availableMonthsList.sort((a, b) => {
+                  if (a.year !== b.year) return b.year - a.year;
+                  if (a.month !== b.month) return b.month - a.month;
+                  return b.label.localeCompare(a.label);
+                });
+
+                // Pega até os últimos 12 meses disponíveis
+                const monthsToConsider = availableMonthsList.slice(0, 12);
+                const totalConsumo = monthsToConsider.reduce((sum, m) => sum + m.consumo, 0);
+
+                // "valor total do consumo dividido por 12. caso haja uma uc que não tenha os 12 meses de consumo divida a soma pelo numero de meses disponivies. ou seja o consumo medio sempre será o valor das somas dos meses disponiveis dividido pelo nuemro de meses disponiveis."
+                const numMesesDisponiveis = monthsToConsider.length;
+                let consumoMedio = 0;
+                if (numMesesDisponiveis >= 12) {
+                  consumoMedio = totalConsumo / 12;
+                } else if (numMesesDisponiveis > 0) {
+                  consumoMedio = totalConsumo / numMesesDisponiveis;
+                } else {
+                  consumoMedio = 0;
+                }
+
+                item.consumoMedio12m = consumoMedio;
+                item.consumoMedioMonthsCount = numMesesDisponiveis;
+              });
 
               const usinasArray = (Object.values(usinasDataObj) as any[]).sort((a,b) => {
                   if (a.classification !== b.classification) return a.classification.localeCompare(b.classification);
@@ -14977,10 +16289,12 @@ export default function App() {
                   "Gerência": u.gerencia,
                   "Cidade": u.cidade,
                   "Classificação": u.classification,
+                  "Consumo Médio (kWh)": Math.round(u.consumoMedio12m || 0),
                   "Injetada OUC (kWh)": u.totalInjetadaOuc,
                   "Valor Injetada OUC (R$)": u.totalValorOuc,
                   "Injetada MUC (kWh)": u.totalInjetadaMuc,
                   "Valor Injetada MUC (R$)": u.totalValorMuc,
+                  "Saldo Acumulado GD (kWh)": u.saldoAcumuladoGD || 0,
                   "Quantidade Faturas": u.billsCount,
                 }));
                 const ws = XLSX.utils.json_to_sheet(exportData);
@@ -14995,26 +16309,58 @@ export default function App() {
                    "Alterar Classificação",
                    `Tem certeza que deseja alterar a classificação da UC ${uc} de ${current} para ${targetClass}?`,
                    () => {
-                     if (current === "PPP") {
-                         UCS_PPP.delete(uc);
-                         UCS_USINA.add(uc);
-                     } else if (current === "SANESUL") {
-                         UCS_USINA.delete(uc);
-                         UCS_PPP.add(uc);
-                     } else {
-                         UCS_USINA.delete(uc);
-                         UCS_PPP.add(uc);
+                     let usedMonthly = false;
+                     if (selectedUsinaMonth !== "all" && typeof window !== "undefined") {
+                       try {
+                         const overridesStr = localStorage.getItem("PPP_UCS_MONTHLY_OVERRIDE");
+                         if (overridesStr) {
+                           const overrides = JSON.parse(overridesStr);
+                           if (Array.isArray(overrides[selectedUsinaMonth])) {
+                             usedMonthly = true;
+                             if (current === "PPP") {
+                               overrides[selectedUsinaMonth] = overrides[selectedUsinaMonth].filter((u: string) => u !== uc);
+                               UCS_USINA.add(uc);
+                             } else {
+                               overrides[selectedUsinaMonth].push(uc);
+                               UCS_USINA.delete(uc);
+                             }
+                             localStorage.setItem("PPP_UCS_MONTHLY_OVERRIDE", JSON.stringify(overrides));
+                             localStorage.setItem("USINA_UCS_OVERRIDE", JSON.stringify([...UCS_USINA]));
+                           }
+                         }
+                       } catch (e) {}
                      }
-                     if (typeof window !== "undefined") {
-                         localStorage.setItem("PPP_UCS_OVERRIDE", JSON.stringify([...UCS_PPP]));
-                         localStorage.setItem("USINA_UCS_OVERRIDE", JSON.stringify([...UCS_USINA]));
+                     
+                     if (!usedMonthly) {
+                       if (current === "PPP") {
+                           UCS_PPP.delete(uc);
+                           UCS_USINA.add(uc);
+                       } else if (current === "SANESUL") {
+                           UCS_USINA.delete(uc);
+                           UCS_PPP.add(uc);
+                       } else {
+                           UCS_USINA.delete(uc);
+                           UCS_PPP.add(uc);
+                       }
+                       if (typeof window !== "undefined") {
+                           localStorage.setItem("PPP_UCS_OVERRIDE", JSON.stringify([...UCS_PPP]));
+                           localStorage.setItem("USINA_UCS_OVERRIDE", JSON.stringify([...UCS_USINA]));
+                       }
                      }
                      setUcsTrigger(t => t + 1);
                    }
                  );
               };
 
-              const renderTable = (dataArray: any[], title: string, colorLine: string) => (
+              const renderTable = (dataArray: any[], title: string, colorLine: string) => {
+                const subTotalConsumoMedio = dataArray.reduce((acc, i) => acc + (i.consumoMedio12m || 0), 0);
+                const subTotalOucKwh = dataArray.reduce((acc, i) => acc + (i.totalInjetadaOuc || 0), 0);
+                const subTotalOucVal = dataArray.reduce((acc, i) => acc + (i.totalValorOuc || 0), 0);
+                const subTotalMucKwh = dataArray.reduce((acc, i) => acc + (i.totalInjetadaMuc || 0), 0);
+                const subTotalMucVal = dataArray.reduce((acc, i) => acc + (i.totalValorMuc || 0), 0);
+                const subTotalSaldoGD = dataArray.reduce((acc, i) => acc + (i.saldoAcumuladoGD || 0), 0);
+
+                return (
                   <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm relative">
                      <div className={`absolute top-0 left-0 w-full h-1 ${colorLine}`}></div>
                      <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
@@ -15029,8 +16375,10 @@ export default function App() {
                                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">LOCIN</th>
                                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Gerência/Cidade</th>
                                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Classificação</th>
+                                   <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Consumo Médio</th>
                                    <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Injetada oUC (kWh/R$)</th>
                                    <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Injetada mUC (kWh/R$)</th>
+                                   <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Saldo Acumulado GD</th>
                                    <th className="px-6 py-4 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">Ações</th>
                                </tr>
                             </thead>
@@ -15049,12 +16397,42 @@ export default function App() {
                                            </span>
                                        </td>
                                        <td className="px-6 py-4 text-right">
+                                          <div className="text-sm font-bold text-blue-600">
+                                            {Math.round(item.consumoMedio12m || 0).toLocaleString("pt-BR")} kWh
+                                          </div>
+                                          <div className="text-[10px] text-slate-400">
+                                            {item.consumoMedioMonthsCount > 0 ? `(${item.consumoMedioMonthsCount} ${item.consumoMedioMonthsCount === 1 ? "mês" : "meses"})` : "sem faturas"}
+                                          </div>
+                                       </td>
+                                       <td className="px-6 py-4 text-right">
                                           <div className="text-sm font-bold text-emerald-600">{item.totalInjetadaOuc.toLocaleString("pt-BR")} kWh</div>
                                           <div className="text-xs text-rose-600">{(item.totalValorOuc).toLocaleString("pt-BR", {style: "currency", currency: "BRL"})}</div>
                                        </td>
                                        <td className="px-6 py-4 text-right">
                                           <div className="text-sm font-bold text-emerald-600">{item.totalInjetadaMuc.toLocaleString("pt-BR")} kWh</div>
                                           <div className="text-xs text-rose-600">{(item.totalValorMuc).toLocaleString("pt-BR", {style: "currency", currency: "BRL"})}</div>
+                                       </td>
+                                       <td className="px-6 py-4 text-right">
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            <div className="text-sm font-bold text-slate-800">{(item.saldoAcumuladoGD || 0).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kWh</div>
+                                            <button
+                                              onClick={() => {
+                                                setEditingSaldoGDItem({
+                                                  uc: item.uc,
+                                                  locin: item.locin,
+                                                  gerencia: item.gerencia,
+                                                  cidade: item.cidade,
+                                                  month: selectedUsinaMonth,
+                                                  currentValue: item.saldoAcumuladoGD || 0,
+                                                });
+                                                setTempSaldoGDInput(String(item.saldoAcumuladoGD || "0"));
+                                              }}
+                                              className="p-1.5 text-slate-400 hover:text-sanesul-primary hover:bg-slate-100 rounded-lg transition-colors"
+                                              title="Informar / Gravar Saldo Acumulado GD"
+                                            >
+                                              <Pencil size={13} />
+                                            </button>
+                                          </div>
                                        </td>
                                        <td className="px-6 py-4 text-center">
                                           <button onClick={() => toggleClass(item.uc, item.classification)} className="text-[10px] px-3 py-2 rounded-lg border border-sanesul-primary/20 text-sanesul-primary hover:bg-sanesul-primary hover:text-white font-bold transition-colors uppercase tracking-widest whitespace-nowrap">
@@ -15065,16 +16443,47 @@ export default function App() {
                                 ))}
                                 {dataArray.length === 0 && (
                                     <tr>
-                                       <td colSpan={7} className="px-6 py-12 text-center text-slate-500 italic bg-white">
+                                       <td colSpan={9} className="px-6 py-12 text-center text-slate-500 italic bg-white">
                                            Nenhum registro encontrado nesta categoria.
                                        </td>
                                     </tr>
                                 )}
                             </tbody>
+                            {dataArray.length > 0 && (
+                              <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold">
+                                <tr>
+                                  <td colSpan={4} className="px-6 py-4 text-left text-xs uppercase tracking-wider text-slate-700">
+                                    Total {title}
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="text-sm font-bold text-blue-700">{Math.round(subTotalConsumoMedio).toLocaleString("pt-BR")} kWh</div>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="text-sm font-bold text-emerald-700">{subTotalOucKwh.toLocaleString("pt-BR")} kWh</div>
+                                    <div className="text-xs text-rose-700">{subTotalOucVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</div>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="text-sm font-bold text-emerald-700">{subTotalMucKwh.toLocaleString("pt-BR")} kWh</div>
+                                    <div className="text-xs text-rose-700">{subTotalMucVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</div>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="text-sm font-bold text-slate-800">{subTotalSaldoGD.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kWh</div>
+                                  </td>
+                                  <td></td>
+                                </tr>
+                              </tfoot>
+                            )}
                          </table>
                      </div>
                   </div>
-              );
+                );
+              };
+
+              const grandTotalMucKwh = filteredUsinasArray.reduce((acc, i) => acc + (i.totalInjetadaMuc || 0), 0);
+              const grandTotalMucVal = filteredUsinasArray.reduce((acc, i) => acc + (i.totalValorMuc || 0), 0);
+              const grandTotalOucKwh = filteredUsinasArray.reduce((acc, i) => acc + (i.totalInjetadaOuc || 0), 0);
+              const grandTotalOucVal = filteredUsinasArray.reduce((acc, i) => acc + (i.totalValorOuc || 0), 0);
+              const grandTotalSaldoGD = filteredUsinasArray.reduce((acc, i) => acc + (i.saldoAcumuladoGD || 0), 0);
 
               return (
                   <>
@@ -15118,6 +16527,32 @@ export default function App() {
                             ))}
                           </select>
                         </div>
+                        {selectedUsinaMonth !== "all" && (
+                          <button
+                            onClick={() => {
+                              try {
+                                const overridesStr = localStorage.getItem("PPP_UCS_MONTHLY_OVERRIDE");
+                                if (overridesStr) {
+                                  const overrides = JSON.parse(overridesStr);
+                                  if (Array.isArray(overrides[selectedUsinaMonth])) {
+                                    setPppMonthInput(overrides[selectedUsinaMonth].join("\n"));
+                                  } else {
+                                    setPppMonthInput("");
+                                  }
+                                } else {
+                                  setPppMonthInput("");
+                                }
+                              } catch (e) {
+                                setPppMonthInput("");
+                              }
+                              setIsPppMonthModalOpen(true);
+                            }}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-sanesul-primary text-white hover:bg-sanesul-secondary transition-all rounded-xl text-xs font-bold tracking-wider"
+                          >
+                            <Building size={16} />
+                            Definir UCs PPP ({selectedUsinaMonth})
+                          </button>
+                        )}
                         <button
                           onClick={handleExportUsinas}
                           className="flex items-center gap-2 bg-sanesul-primary text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-sanesul-primary/90 transition-colors shadow-sm"
@@ -15127,6 +16562,70 @@ export default function App() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Cards de Resumo e Soma de Energia Ativa Injetada e Saldo GD */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
+                      <div className="bg-white p-6 rounded-2xl border border-emerald-100 shadow-sm">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                          Energia Atv Injetada GDI mUC
+                        </span>
+                        <div className="text-2xl font-bold text-emerald-600">
+                          {grandTotalMucKwh.toLocaleString("pt-BR")} kWh
+                        </div>
+                        <span className="text-xs font-semibold text-rose-600 block mt-1">
+                          {grandTotalMucVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </span>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-2xl border border-emerald-100 shadow-sm">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                          Energia Atv Injetada GDI oUC
+                        </span>
+                        <div className="text-2xl font-bold text-emerald-600">
+                          {grandTotalOucKwh.toLocaleString("pt-BR")} kWh
+                        </div>
+                        <span className="text-xs font-semibold text-rose-600 block mt-1">
+                          {grandTotalOucVal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </span>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-2xl border border-blue-100 shadow-sm">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                          Total Solar Injetado (mUC + oUC)
+                        </span>
+                        <div className="text-2xl font-bold text-sanesul-primary">
+                          {(grandTotalMucKwh + grandTotalOucKwh).toLocaleString("pt-BR")} kWh
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 block mt-1">
+                          Geração Total Distribuída
+                        </span>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-2xl border border-rose-100 shadow-sm">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                          Economia Compensada Total
+                        </span>
+                        <div className="text-2xl font-bold text-rose-600">
+                          {(grandTotalMucVal + grandTotalOucVal).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 block mt-1">
+                          Créditos Financeiros GDI
+                        </span>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-2xl border border-amber-100 shadow-sm">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                          Saldo Acumulado GD Total
+                        </span>
+                        <div className="text-2xl font-bold text-amber-600">
+                          {grandTotalSaldoGD.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} kWh
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 block mt-1">
+                          Créditos GD Acumulados
+                        </span>
+                      </div>
+                    </div>
+
                     <div className="space-y-8">
                        {renderTable(pppArray, "Parceria Público-Privada (PPP Fotovoltaica)", "bg-emerald-500")}
                        {renderTable(sanesulArray, "Usinas Sanesul & Outros", "bg-blue-500")}
@@ -15134,6 +16633,26 @@ export default function App() {
                   </>
               );
             })()}
+          </div>
+        ) : activeTab === "assistente_portal" ? (
+          <div className="py-2 space-y-6">
+            <AssistentePortal
+              bills={bills}
+              dashboardData={dashboardData}
+              savingsData={analysisData}
+              customUsinaSaldoGD={customUsinaSaldoGD}
+              isUcPPP={isUcPPP}
+              UCS_USINA={UCS_USINA}
+              UCS_PPP={UCS_PPP}
+              formatMonth={formatMonth}
+              parseValue={parseValue}
+              setActiveTab={setActiveTab}
+              setIsActionCenterOpen={(_open) => setActiveTab("monitoramento_ajustes")}
+              getLocin={getLocin}
+              getGerencia={getGerencia}
+              getCidade={getCidade}
+              getEndereco={getEndereco}
+            />
           </div>
         ) : activeTab === "relatorio" ? (
           <div className="py-12 space-y-12">
@@ -15768,6 +17287,8 @@ export default function App() {
           </div>
         ) : null}
       </main>
+        </div>
+      </div>
 
       {/* Custom Memo Number Prompt Modal */}
       {showMemoNumberPrompt && (
@@ -16377,11 +17898,12 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => {
-                      const uc = (
+                      let uc = (
                         document.getElementById(
                           "newGerenciaUC",
                         ) as HTMLInputElement
                       ).value;
+                      uc = uc.replace(/[\.\-]/g, "");
                       const gerencia = (
                         document.getElementById(
                           "newGerenciaName",
@@ -16600,6 +18122,75 @@ export default function App() {
         </div>
       )}
 
+      {isPppMonthModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[70vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <h2 className="text-xl font-bold text-sanesul-primary flex items-center gap-2">
+                <Building size={20} />
+                UCs PPP Fotovoltaica ({selectedUsinaMonth})
+              </h2>
+              <button
+                onClick={() => setIsPppMonthModalOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 p-6 flex flex-col min-h-0">
+              <p className="text-sm text-slate-500 mb-4">
+                Cole a lista de UCs que devem ser consideradas como PPP Fotovoltaica no mês <strong>{selectedUsinaMonth}</strong>. (Pode ser separada por vírgula, espaço ou quebra de linha).
+              </p>
+              
+              <div className="flex-1 flex flex-col min-h-0 relative">
+                <textarea
+                  value={pppMonthInput}
+                  onChange={(e) => setPppMonthInput(e.target.value)}
+                  className="w-full flex-1 p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-sanesul-primary/50 outline-none resize-none overflow-y-auto"
+                  placeholder="Exemplo:&#10;117384&#10;57294105130"
+                />
+                <div className="absolute bottom-4 right-4 text-xs text-slate-400 bg-white/80 px-2 py-1 rounded backdrop-blur border border-slate-100 shadow-sm pointer-events-none">
+                  {pppMonthInput.split(/[\n,;\s\t]+/).map(s => s.trim()).filter(s => /^\d+$/.test(s)).length} UCs Válidas
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
+              <button
+                onClick={() => setIsPppMonthModalOpen(false)}
+                className="px-6 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const validUCs = pppMonthInput.split(/[\n,;\s\t]+/).map(s => s.trim()).filter(s => /^\d+$/.test(s));
+                  try {
+                    let overrides = {};
+                    const overridesStr = localStorage.getItem("PPP_UCS_MONTHLY_OVERRIDE");
+                    if (overridesStr) {
+                      overrides = JSON.parse(overridesStr);
+                    }
+                    overrides[selectedUsinaMonth] = validUCs;
+                    localStorage.setItem("PPP_UCS_MONTHLY_OVERRIDE", JSON.stringify(overrides));
+                    setUcsTrigger(t => t + 1);
+                    setFetchTrigger(t => t + 1);
+                    setIsPppMonthModalOpen(false);
+                    
+                    showConfirm("Sucesso", `Foram salvas ${validUCs.length} UCs como PPP para o mês de ${selectedUsinaMonth}.`, () => {});
+                  } catch (e) {
+                    alert("Erro ao salvar lista de UCs PPP.");
+                  }
+                }}
+                className="px-6 py-2.5 bg-sanesul-primary hover:bg-sanesul-secondary text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-sanesul-primary/20 flex items-center gap-2"
+              >
+                <Save size={16} />
+                Salvar UCs PPP do Mês
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isMercadoLivreModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[70vh] flex flex-col">
@@ -16686,10 +18277,22 @@ export default function App() {
                   <input
                     type="text"
                     value={editingBill.uc || ""}
-                    onChange={(e) =>
-                      setEditingBill({ ...editingBill, uc: e.target.value })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                    onChange={(e) => {
+                      const newUc = e.target.value.replace(/[\.\-]/g, "");
+                      const autoEnd = getEndereco(newUc);
+                      const autoCid = getCidade(newUc);
+                      const autoGer = getGerencia(newUc);
+                      const autoLoc = getLocin(newUc);
+                      setEditingBill((prev) => ({
+                        ...prev,
+                        uc: newUc,
+                        gerencia: prev?.gerencia || (autoGer !== "---" ? autoGer : ""),
+                        locin: prev?.locin || (autoLoc !== "---" ? autoLoc : ""),
+                        cidade: prev?.cidade || (autoCid !== "---" ? autoCid : ""),
+                        endereco: prev?.endereco || autoEnd || "",
+                      }));
+                    }}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-mono"
                   />
                 </div>
                 <div className="space-y-1">
@@ -16760,6 +18363,37 @@ export default function App() {
                     value={editingBill.cidade || ""}
                     onChange={(e) =>
                       setEditingBill({ ...editingBill, cidade: e.target.value })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-500 uppercase">
+                      ENDEREÇO
+                    </label>
+                    {editingBill.uc && getEndereco(editingBill.uc) && editingBill.endereco !== getEndereco(editingBill.uc) && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingBill({
+                            ...editingBill,
+                            endereco: getEndereco(editingBill.uc || ""),
+                          })
+                        }
+                        className="text-[10px] text-blue-600 hover:text-blue-800 font-bold hover:underline"
+                        title="Preencher com o endereço cadastrado para esta UC"
+                      >
+                        Sugerir do Cadastro
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Ex: Rua / Av., Número, Bairro"
+                    value={editingBill.endereco || ""}
+                    onChange={(e) =>
+                      setEditingBill({ ...editingBill, endereco: e.target.value })
                     }
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
@@ -16838,12 +18472,17 @@ export default function App() {
                   <input
                     type="text"
                     value={editingBill.modalidadeTarifaria || ""}
-                    onChange={(e) =>
-                      setEditingBill({
+                    onChange={(e) => {
+                      const newMod = e.target.value;
+                      const updates: Partial<BillData> = {
                         ...editingBill,
-                        modalidadeTarifaria: e.target.value,
-                      })
-                    }
+                        modalidadeTarifaria: newMod,
+                      };
+                      if (newMod.toUpperCase().includes("VERDE")) {
+                        updates.demandaPontaKW = "0";
+                      }
+                      setEditingBill(updates);
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
@@ -16935,19 +18574,29 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">
-                    Contratada Ponta (kW)
+                  <label className="text-xs font-bold text-slate-500 uppercase flex items-center justify-between">
+                    <span>Contratada Ponta (kW)</span>
+                    {editingBill.modalidadeTarifaria?.toUpperCase().includes("VERDE") && (
+                      <span className="text-[10px] text-emerald-600 font-semibold normal-case">
+                        (Modalidade Verde: 0 kW)
+                      </span>
+                    )}
                   </label>
                   <input
                     type="text"
-                    value={editingBill.demandaPontaKW || ""}
+                    value={editingBill.modalidadeTarifaria?.toUpperCase().includes("VERDE") ? "0" : (editingBill.demandaPontaKW || "")}
+                    disabled={editingBill.modalidadeTarifaria?.toUpperCase().includes("VERDE")}
                     onChange={(e) =>
                       setEditingBill({
                         ...editingBill,
                         demandaPontaKW: e.target.value,
                       })
                     }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                    className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none ${
+                      editingBill.modalidadeTarifaria?.toUpperCase().includes("VERDE")
+                        ? "bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed"
+                        : "bg-slate-50 border-slate-200"
+                    }`}
                   />
                 </div>
                 <div className="space-y-1">
@@ -17167,54 +18816,38 @@ export default function App() {
                     Consumo
                   </h3>
                 </div>
-                {((editingBill.modalidadeTarifaria && editingBill.modalidadeTarifaria.toUpperCase().includes("CONVENCIONAL")) || 
-                  (editingBill.subgrupo && editingBill.subgrupo.toUpperCase().includes("B")) || 
-                  (editingBill.consumoKwhGrupoB !== undefined && editingBill.consumoKwhGrupoB !== "")) && (
-                  <>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase text-blue-600">Consumo em kWh (Grupo B)</label>
-                    <input
-                      type="text"
-                      value={editingBill.consumoKwhGrupoB || editingBill.consumoKwh || ""}
-                      onChange={(e) =>
-                        setEditingBill({
-                          ...editingBill,
-                          consumoKwhGrupoB: e.target.value,
-                        })
-                      }
-                      className="w-full px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase text-blue-600">Consumo (R$) (Grupo B)</label>
-                    <input
-                      type="text"
-                      value={editingBill.valorConsumoKwhGrupoB || ""}
-                      onChange={(e) =>
-                        setEditingBill({
-                          ...editingBill,
-                          valorConsumoKwhGrupoB: e.target.value,
-                        })
-                      }
-                      className="w-full px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
-                    />
-                  </div>
-                  </>
-                )}
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">
-                    Consumo Grupo B (kWh)
+                  <label className="text-xs font-bold text-slate-500 uppercase text-blue-600">
+                    Consumo em kWh (Grupo B)
                   </label>
                   <input
                     type="text"
-                    value={editingBill.consumoGrupoB || ""}
+                    value={editingBill.consumoKwhGrupoB || editingBill.consumoGrupoB || editingBill.consumoKwh || ""}
                     onChange={(e) =>
                       setEditingBill({
                         ...editingBill,
+                        consumoKwhGrupoB: e.target.value,
                         consumoGrupoB: e.target.value,
+                        consumoKwh: e.target.value,
                       })
                     }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                    className="w-full px-3 py-2 bg-blue-50/50 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-bold text-blue-900"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase text-blue-600">
+                    Valor Consumo Grupo B (R$)
+                  </label>
+                  <input
+                    type="text"
+                    value={editingBill.valorConsumoKwhGrupoB || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        valorConsumoKwhGrupoB: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-blue-50/50 border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none font-bold text-blue-900"
                   />
                 </div>
                 <div className="space-y-1">
@@ -17244,6 +18877,22 @@ export default function App() {
                       setEditingBill({
                         ...editingBill,
                         valorConsumoKwhPonta: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">
+                    Consumo em kWh - Intermediária
+                  </label>
+                  <input
+                    type="text"
+                    value={editingBill.consumoKwhIntermediaria || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        consumoKwhIntermediaria: e.target.value,
                       })
                     }
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
@@ -17417,6 +19066,48 @@ export default function App() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Energia Injetada (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaInjetadaKwh || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        energiaInjetadaKwh: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Energia Compensada (kWh)</label>
+                  <input
+                    type="text"
+                    value={editingBill.energiaCompensadaKwh || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        energiaCompensadaKwh: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">SALDO ACUMULADO GD</label>
+                  <input
+                    type="text"
+                    value={editingBill.saldoAcumuladoGD || ""}
+                    onChange={(e) =>
+                      setEditingBill({
+                        ...editingBill,
+                        saldoAcumuladoGD: e.target.value,
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  />
+                </div>
 
                 {/* Encargos e Impostos */}
                 <div className="col-span-1 md:col-span-2 lg:col-span-3 mt-4 mb-1">
@@ -17504,11 +19195,24 @@ export default function App() {
               <button
                 onClick={async () => {
                   let billToSave = { ...editingBill } as BillData;
-                  if (billToSave.uc && UCS_OPER.has(String(billToSave.uc))) {
+                  if ((billToSave.modalidadeTarifaria || "").toUpperCase().includes("VERDE")) {
+                    billToSave.demandaPontaKW = "0";
+                  }
+                  const valB = billToSave.consumoKwhGrupoB || billToSave.consumoGrupoB || billToSave.consumoKwh || "";
+                  if (valB) {
+                    billToSave.consumoKwhGrupoB = valB;
+                    billToSave.consumoGrupoB = valB;
+                    billToSave.consumoKwh = valB;
+                  }
+                  if (billToSave.uc) {
+                    const rawUc = String(billToSave.uc).replace(/[\.\-]/g, "").trim();
+                    billToSave.uc = UC_MIGRATION_MAP[rawUc] || rawUc;
+                  }
+                  if (billToSave.uc && (UCS_OPER.has(String(billToSave.uc)) || UCS_OPER.has(String(editingBill.uc)))) {
                     billToSave.tipo = "OPER";
                   } else if (
                     billToSave.uc &&
-                    UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc))
+                    (UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc)) || UCS_LIVRE_MERCADO_LIVRE.has(String(editingBill.uc)))
                   ) {
                     let mod = billToSave.modalidadeTarifaria || "";
                     if (!mod.toUpperCase().includes("LIVRE")) {
@@ -17520,13 +19224,17 @@ export default function App() {
                   }
                   billToSave.mercado =
                     billToSave.uc &&
-                    UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc))
+                    (UCS_LIVRE_MERCADO_LIVRE.has(String(billToSave.uc)) || UCS_LIVRE_MERCADO_LIVRE.has(String(editingBill.uc)))
                       ? "LIVRE"
                       : "CATIVO";
 
                   // Enriquecer com Gerência e LOCIN
+                  const targetUc = String(billToSave.uc);
                   const mapping = ucMappings.find(
-                    (m) => m.uc === String(billToSave.uc),
+                    (m) => {
+                      const mu = String(m.uc || "").trim();
+                      return mu === targetUc || (UC_MIGRATION_MAP[mu] || mu) === targetUc;
+                    }
                   );
                   if (mapping) {
                     billToSave.gerencia = mapping.gerencia;
@@ -17536,120 +19244,145 @@ export default function App() {
 
                   const isExisting = bills.some((b) => b.id === billToSave.id);
 
-                  if (isSupabaseConfigured && isAuthenticated) {
+                  if (isSupabaseConfigured) {
                     try {
-                      const {
-                        data: { user },
-                      } = await supabase.auth.getUser();
-                      if (user) {
-                        const dbData = mapBillDataToDb(billToSave, user.id);
-                        if (isExisting) {
-                          let { error } = await supabase
-                            .from("bills")
-                            .update(dbData)
-                            .eq("id", billToSave.id);
-                          if (
-                            error &&
-                            (error.message.includes("data_vencimento") ||
-                              error.message.includes("mercado") ||
-                              error.message.includes("gerencia") ||
-                              error.message.includes("locins") ||
-                error.message.includes("consumo_kwh_grupo_b") ||
-                error.message.includes("valor_consumo_kwh_grupo_b") ||
-                              error.details?.includes("data_vencimento") ||
-                              error.details?.includes("mercado") ||
-                              error.code === "PGRST204")
-                          ) {
-                            console.warn(
-                              "Colunas novas não encontradas no Supabase. Atualizando sem elas...",
-                            );
-                            const {
-              data_vencimento,
-              mercado,
-              gerencia,
-              locins,
-              consumo_kwh_grupo_b,
-              valor_consumo_kwh_grupo_b,
-              ...fallbackData
-            } = dbData;
-            if (consumo_kwh_grupo_b) fallbackData.consumo_kwh_ponta = consumo_kwh_grupo_b;
-            if (valor_consumo_kwh_grupo_b) fallbackData.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
-                            const fallbackRes = await supabase
-                              .from("bills")
-                              .update(fallbackData)
-                              .eq("id", billToSave.id);
-                            error = fallbackRes.error;
-                          }
-                          if (error) {
-                            console.error(
-                              "Erro ao atualizar fatura no Supabase:",
-                              error,
-                            );
-                            return;
-                          }
-                          setBills((prev) =>
-                            prev.map((b) =>
-                              b.id === billToSave.id ? billToSave : b,
-                            ),
+                      const { data: userData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+                      const userId = userData?.user?.id || null;
+                      const dbData = mapBillDataToDb(billToSave, userId);
+                      if (isExisting) {
+                        let { error } = await supabase
+                          .from("bills")
+                          .update(dbData)
+                          .eq("id", billToSave.id);
+                        if (
+                          error &&
+                          (error.message.includes("data_vencimento") ||
+                            error.message.includes("mercado") ||
+                            error.message.includes("gerencia") ||
+                            error.message.includes("locins") ||
+                            error.message.includes("consumo_kwh_grupo_b") ||
+                            error.message.includes("valor_consumo_kwh_grupo_b") ||
+                            error.message.includes("saldo_acumulado_gd") ||
+                            error.message.includes("consumo_kwh_intermediaria") ||
+                            error.message.includes("endereco") ||
+                            error.details?.includes("data_vencimento") ||
+                            error.details?.includes("mercado") ||
+                            error.details?.includes("gerencia") ||
+                            error.details?.includes("locins") ||
+                            error.details?.includes("consumo_kwh_grupo_b") ||
+                            error.details?.includes("valor_consumo_kwh_grupo_b") ||
+                            error.details?.includes("saldo_acumulado_gd") ||
+                            error.details?.includes("consumo_kwh_intermediaria") ||
+                            error.details?.includes("endereco") ||
+                            error.code === "PGRST204")
+                        ) {
+                          console.warn(
+                            "Colunas novas não suportadas pelo schema antigo. Atualizando sem elas...",
                           );
-                        } else {
-                          let { data, error } = await supabase
+                          const {
+                            data_vencimento,
+                            mercado,
+                            gerencia,
+                            locins,
+                            consumo_kwh_grupo_b,
+                            valor_consumo_kwh_grupo_b,
+                            saldo_acumulado_gd,
+                            consumo_kwh_intermediaria,
+                            endereco,
+                            ...fallbackData
+                          } = dbData;
+                          if (consumo_kwh_grupo_b) fallbackData.consumo_kwh_ponta = consumo_kwh_grupo_b;
+                          if (valor_consumo_kwh_grupo_b) fallbackData.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
+                          const fallbackRes = await supabase
                             .from("bills")
-                            .insert(dbData)
+                            .update(fallbackData)
+                            .eq("id", billToSave.id);
+                          error = fallbackRes.error;
+                        }
+                        if (error) {
+                          console.error(
+                            "[Firebase] Erro ao atualizar fatura:",
+                            error,
+                          );
+                        }
+                        setBills((prev) =>
+                          prev.map((b) =>
+                            b.id === billToSave.id ? billToSave : b,
+                          ),
+                        );
+                      } else {
+                        let { data, error } = await supabase
+                          .from("bills")
+                          .insert(dbData)
+                          .select()
+                          .single();
+                        if (
+                          error &&
+                          (error.message.includes("data_vencimento") ||
+                            error.message.includes("mercado") ||
+                            error.message.includes("gerencia") ||
+                            error.message.includes("locins") ||
+                            error.message.includes("consumo_kwh_grupo_b") ||
+                            error.message.includes("valor_consumo_kwh_grupo_b") ||
+                            error.message.includes("saldo_acumulado_gd") ||
+                            error.message.includes("consumo_kwh_intermediaria") ||
+                            error.message.includes("endereco") ||
+                            error.details?.includes("data_vencimento") ||
+                            error.details?.includes("mercado") ||
+                            error.details?.includes("gerencia") ||
+                            error.details?.includes("locins") ||
+                            error.details?.includes("consumo_kwh_grupo_b") ||
+                            error.details?.includes("valor_consumo_kwh_grupo_b") ||
+                            error.details?.includes("saldo_acumulado_gd") ||
+                            error.details?.includes("consumo_kwh_intermediaria") ||
+                            error.details?.includes("endereco") ||
+                            error.code === "PGRST204")
+                        ) {
+                          console.warn(
+                            "Colunas novas não suportadas pelo schema antigo. Inserindo sem elas...",
+                          );
+                          const {
+                            data_vencimento,
+                            mercado,
+                            gerencia,
+                            locins,
+                            consumo_kwh_grupo_b,
+                            valor_consumo_kwh_grupo_b,
+                            saldo_acumulado_gd,
+                            consumo_kwh_intermediaria,
+                            endereco,
+                            ...fallbackData
+                          } = dbData;
+                          if (consumo_kwh_grupo_b) fallbackData.consumo_kwh_ponta = consumo_kwh_grupo_b;
+                          if (valor_consumo_kwh_grupo_b) fallbackData.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
+                          const fallbackRes = await supabase
+                            .from("bills")
+                            .insert(fallbackData)
                             .select()
                             .single();
-                          if (
-                            error &&
-                            (error.message.includes("data_vencimento") ||
-                              error.message.includes("mercado") ||
-                              error.message.includes("gerencia") ||
-                              error.message.includes("locins") ||
-                error.message.includes("consumo_kwh_grupo_b") ||
-                error.message.includes("valor_consumo_kwh_grupo_b") ||
-                              error.details?.includes("data_vencimento") ||
-                              error.details?.includes("mercado") ||
-                              error.code === "PGRST204")
-                          ) {
-                            console.warn(
-                              "Colunas novas não encontradas no Supabase. Inserindo sem elas...",
-                            );
-                            const {
-              data_vencimento,
-              mercado,
-              gerencia,
-              locins,
-              consumo_kwh_grupo_b,
-              valor_consumo_kwh_grupo_b,
-              ...fallbackData
-            } = dbData;
-            if (consumo_kwh_grupo_b) fallbackData.consumo_kwh_ponta = consumo_kwh_grupo_b;
-            if (valor_consumo_kwh_grupo_b) fallbackData.valor_consumo_kwh_ponta = valor_consumo_kwh_grupo_b;
-                            const fallbackRes = await supabase
-                              .from("bills")
-                              .insert(fallbackData)
-                              .select()
-                              .single();
-                            error = fallbackRes.error;
-                            data = fallbackRes.data;
-                          }
-                          if (error) {
-                            console.error(
-                              "Erro ao inserir fatura no Supabase:",
-                              error,
-                            );
-                            return;
-                          }
-                          const newBill = mapDbToBillData(data);
-                          setBills((prev) => {
-                            if (prev.some((b) => b.id === newBill.id))
-                              return prev;
-                            return [...prev, newBill];
-                          });
+                          error = fallbackRes.error;
+                          data = fallbackRes.data;
                         }
+                        if (error) {
+                          console.error(
+                            "[Firebase] Erro ao inserir fatura:",
+                            error,
+                          );
+                        }
+                        const mapped = data ? mapDbToBillData(data) : billToSave;
+                        const newBill = {
+                          ...mapped,
+                          endereco: billToSave.endereco || mapped.endereco || "",
+                          saldoAcumuladoGD: billToSave.saldoAcumuladoGD || mapped.saldoAcumuladoGD || "",
+                        };
+                        setBills((prev) => {
+                          if (prev.some((b) => b.id === newBill.id))
+                            return prev;
+                          return [...prev, newBill];
+                        });
                       }
                     } catch (err) {
                       console.error("Erro inesperado ao salvar fatura:", err);
-                      return;
                     }
                   } else {
                     if (isExisting) {
@@ -17672,6 +19405,93 @@ export default function App() {
               >
                 <Save size={16} />
                 Salvar Fatura
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Informar / Editar Saldo Acumulado GD */}
+      {editingSaldoGDItem && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[95] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 border border-slate-100">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-sm">
+                  <Pencil size={20} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">Gravar Saldo Acumulado GD</h2>
+                  <p className="text-xs text-slate-500">UC: <span className="font-bold text-sanesul-primary">{editingSaldoGDItem.uc}</span></p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingSaldoGDItem(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-200 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2 text-xs text-slate-600">
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-500">Município:</span>
+                  <span className="font-bold text-slate-700">{editingSaldoGDItem.cidade || "-"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-500">Gerência:</span>
+                  <span className="font-bold text-slate-700">{editingSaldoGDItem.gerencia || "-"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-500">Período Referência:</span>
+                  <span className="font-bold text-sanesul-primary">{editingSaldoGDItem.month === "all" ? "Todos os Meses (Saldo Geral)" : editingSaldoGDItem.month}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-semibold text-slate-500">Saldo Atual no App:</span>
+                  <span className="font-bold text-slate-800">{editingSaldoGDItem.currentValue.toLocaleString("pt-BR")} kWh</span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                  <span>Novo Saldo Acumulado GD (kWh)</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Ex: 1250 ou 15420,50</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="0,00"
+                  value={tempSaldoGDInput}
+                  onChange={(e) => setTempSaldoGDInput(e.target.value)}
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-base font-bold text-slate-800 focus:ring-2 focus:ring-sanesul-primary/50 outline-none"
+                  autoFocus
+                />
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  O valor digitado será gravado com persistência permanente no app, atualizando tabelas, cards e faturas da usina.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingSaldoGDItem(null)}
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isSavingSaldoGD}
+                onClick={() => {
+                  const cleaned = tempSaldoGDInput.replace(/\./g, "").replace(",", ".");
+                  const num = parseFloat(cleaned) || 0;
+                  handleSaveSaldoGD(editingSaldoGDItem.uc, editingSaldoGDItem.month, num);
+                }}
+                className="flex items-center gap-2 px-6 py-2.5 bg-sanesul-primary text-white rounded-xl text-xs font-bold shadow-lg shadow-sanesul-primary/20 hover:bg-sanesul-secondary transition-all active:scale-95 disabled:opacity-50"
+              >
+                <Save size={14} />
+                {isSavingSaldoGD ? "Gravando..." : "Gravar Saldo GD"}
               </button>
             </div>
           </div>
@@ -17708,7 +19528,7 @@ export default function App() {
                   value={editingAdjustment.uc}
                   disabled={!isNewAdjustment}
                   onChange={(e) =>
-                    setEditingAdjustment({ ...editingAdjustment, uc: e.target.value.trim() })
+                    setEditingAdjustment({ ...editingAdjustment, uc: e.target.value.replace(/[\.\-]/g, "").trim() })
                   }
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-sanesul-primary/50 outline-none disabled:opacity-60 disabled:cursor-not-allowed font-mono font-bold"
                 />
@@ -17958,23 +19778,31 @@ export default function App() {
                     alert("Por favor, preencha o número de UC.");
                     return;
                   }
+
+                  const rawUc = String(uc || "").replace(/[\.\-]/g, "").trim();
+                  const targetUc = (rawUc && UC_MIGRATION_MAP[rawUc]) ? UC_MIGRATION_MAP[rawUc] : rawUc;
                   
                   // Save requested adjustments
-                  setCustomRequestedAdjustments((prev) => ({
-                    ...prev,
-                    [uc]: { p: reqP, fp: reqFP },
-                  }));
+                  setCustomRequestedAdjustments((prev) => {
+                    const next = { ...prev };
+                    if (rawUc !== targetUc) delete next[rawUc];
+                    next[targetUc] = { p: reqP, fp: reqFP };
+                    return next;
+                  });
                   
                   // Save original adjustments
-                  setCustomOriginalContratadas((prev) => ({
-                    ...prev,
-                    [uc]: { p: origP, fp: origFP },
-                  }));
+                  setCustomOriginalContratadas((prev) => {
+                    const next = { ...prev };
+                    if (rawUc !== targetUc) delete next[rawUc];
+                    next[targetUc] = { p: origP, fp: origFP };
+                    return next;
+                  });
 
                   // Save metadata adjustments
-                  setCustomAdjustmentsMetadata((prev) => ({
-                    ...prev,
-                    [uc]: {
+                  setCustomAdjustmentsMetadata((prev) => {
+                    const next = { ...prev };
+                    if (rawUc !== targetUc) delete next[rawUc];
+                    next[targetUc] = {
                       city: city || "",
                       gerencia: gerencia || "",
                       dataSolicitacao: dataSolicitacao || "",
@@ -17982,8 +19810,9 @@ export default function App() {
                       previsaoEconomia: previsaoEconomia || "",
                       ecoRealizada: ecoRealizada || "",
                       status: status || "Aguardando",
-                    },
-                  }));
+                    };
+                    return next;
+                  });
                   
                   setIsAdjustmentModalOpen(false);
                 }}

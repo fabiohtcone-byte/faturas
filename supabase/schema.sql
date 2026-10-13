@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.bills (
     valor_energia_atv_injetada_gdi_ouc TEXT,
     energia_atv_injetada_gdi_muc TEXT,
     valor_energia_atv_injetada_gdi_muc TEXT,
+    saldo_acumulado_gd TEXT,
     cip TEXT,
     outros_encargos TEXT,
     pis TEXT,
@@ -105,6 +106,7 @@ ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS energia_atv_injetada_gdi_ouc T
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS valor_energia_atv_injetada_gdi_ouc TEXT;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS energia_atv_injetada_gdi_muc TEXT;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS valor_energia_atv_injetada_gdi_muc TEXT;
+ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS saldo_acumulado_gd TEXT;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS cip TEXT;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS outros_encargos TEXT;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS pis TEXT;

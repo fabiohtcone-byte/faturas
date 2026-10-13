@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { UploadCloud, AlertCircle, FileText } from 'lucide-react';
 import { parseCSV, EnergyData } from '../utils/parser';
 import Papa from 'papaparse';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { cloudDb, isCloudConfigured } from '../lib/cloudDb';
 
 interface FileUploadProps {
   onDataLoaded: (data: EnergyData[]) => void;
@@ -24,17 +24,17 @@ export default function FileUpload({ onDataLoaded }: FileUploadProps) {
     setError(null);
     try {
       let user = null;
-      if (isSupabaseConfigured) {
-        const { data: { user: supabaseUser } } = await supabase.auth.getUser();
-        user = supabaseUser;
+      if (isCloudConfigured) {
+        const { data: { user: cloudUser } } = await cloudDb.auth.getUser();
+        user = cloudUser;
       }
       
-      if (!user && isSupabaseConfigured) throw new Error("Usuário não autenticado");
+      if (!user && isCloudConfigured) throw new Error("Usuário não autenticado");
 
       const data = await parseCSV(file);
       
-      if (isSupabaseConfigured && user) {
-        const { error: supabaseError } = await supabase
+      if (isCloudConfigured && user) {
+        const { error: cloudError } = await cloudDb
           .from('energy_invoices')
           .insert(data.map(d => ({
             uc: d.uc,
@@ -49,7 +49,7 @@ export default function FileUpload({ onDataLoaded }: FileUploadProps) {
             user_id: user.id
           })));
         
-        if (supabaseError) throw supabaseError;
+        if (cloudError) throw cloudError;
       }
       
       onDataLoaded(data);
@@ -83,12 +83,12 @@ export default function FileUpload({ onDataLoaded }: FileUploadProps) {
       complete: async (results) => {
         try {
           let user = null;
-          if (isSupabaseConfigured) {
-            const { data: { user: supabaseUser } } = await supabase.auth.getUser();
-            user = supabaseUser;
+          if (isCloudConfigured) {
+            const { data: { user: cloudUser } } = await cloudDb.auth.getUser();
+            user = cloudUser;
           }
           
-          if (!user && isSupabaseConfigured) throw new Error("Usuário não autenticado");
+          if (!user && isCloudConfigured) throw new Error("Usuário não autenticado");
 
           const data = results.data.map((row: any) => ({
             uc: row['UC'] || '',
@@ -102,8 +102,8 @@ export default function FileUpload({ onDataLoaded }: FileUploadProps) {
             cidade: row['CIDADE'] || '',
           }));
           
-          if (isSupabaseConfigured && user) {
-            const { error: supabaseError } = await supabase
+          if (isCloudConfigured && user) {
+            const { error: cloudError } = await cloudDb
               .from('energy_invoices')
               .insert(data.map(d => ({
                 uc: d.uc,
@@ -118,9 +118,9 @@ export default function FileUpload({ onDataLoaded }: FileUploadProps) {
                 user_id: user.id
               })));
               
-            if (supabaseError) {
+            if (cloudError) {
               setError('Erro ao salvar no banco de dados.');
-              console.error(supabaseError);
+              console.error(cloudError);
               setIsLoading(false);
               return;
             }

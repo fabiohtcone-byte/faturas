@@ -1,17 +1,21 @@
-import { Component, ReactNode } from 'react';
+import React, { ReactNode } from 'react';
 
 // ErrorBoundary para capturar erros de renderização e exibir na tela
-export class ErrorBoundary extends Component<{children: ReactNode}, {error: Error | null}> {
+export class ErrorBoundary extends React.Component<{children: ReactNode}, {error: Error | null}> {
+  state: { error: Error | null } = { error: null };
+
   constructor(props: {children: ReactNode}) {
     super(props);
-    this.state = {error: null};
   }
+
   static getDerivedStateFromError(error: Error) {
     return {error};
   }
+
   componentDidCatch(error: Error, info: any) {
     console.error('🔴 ErrorBoundary capturou erro:', error, info);
   }
+
   render() {
     if (this.state.error) {
       return (
