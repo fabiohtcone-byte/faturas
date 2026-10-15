@@ -103,7 +103,12 @@ import {
   RefreshCw,
   FileUp,
   FileCheck,
+  Network,
+  FolderSync,
+  HardDrive,
 } from "lucide-react";
+import { NetworkFolderSyncModal } from "./components/NetworkFolderSyncModal";
+import { NETWORK_SHARE_PATH, normalizeUcString as normalizeNetworkUc } from "./utils/networkSync";
 import { motion, AnimatePresence } from "motion/react";
 import {
   BarChart,
@@ -5720,6 +5725,7 @@ export default function App() {
     >
   >({});
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
+  const [isNetworkSyncModalOpen, setIsNetworkSyncModalOpen] = useState(false);
   const [editingBill, setEditingBill] = useState<Partial<BillData> | null>(
     null,
   );
@@ -6921,9 +6927,9 @@ export default function App() {
             return billData as BillData;
           })
           .map((bill) => {
-            // Apply UC_MIGRATION_MAP
-            if (bill.uc && UC_MIGRATION_MAP[String(bill.uc)]) {
-              bill.uc = UC_MIGRATION_MAP[String(bill.uc)];
+            // Apply UC_MIGRATION_MAP & UC normalization
+            if (bill.uc) {
+              bill.uc = normalizeNetworkUc(bill.uc);
             }
 
             // Enriquecer com mapeamentos de Gerência, LOCIN, Cidade e Endereço
@@ -10537,6 +10543,17 @@ export default function App() {
 
         {/* Quick Actions & System Controls */}
         <div className="flex items-center gap-2.5">
+          {/* Sincronizar Pasta de Rede DADOS EXTRAÍDOS */}
+          <button
+            onClick={() => setIsNetworkSyncModalOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-blue-700 via-indigo-700 to-cyan-700 hover:from-blue-800 hover:to-indigo-800 text-white transition-all rounded-xl text-xs font-bold shadow-sm shadow-blue-500/20 active:scale-95"
+            title={`Acessar pasta de rede e sincronizar planilhas: ${NETWORK_SHARE_PATH}`}
+          >
+            <Network size={15} className="text-cyan-200 animate-pulse" />
+            <span className="hidden md:inline">Rede DADOS EXTRAÍDOS</span>
+            <span className="md:hidden">Rede</span>
+          </button>
+
           {/* Voltar para Visão Geral */}
           <button
             onClick={() => setCurrentPage("visao_geral")}
@@ -10707,6 +10724,19 @@ export default function App() {
 
                 {/* Planilhas & Manual Group */}
                 <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsNetworkSyncModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-700 via-indigo-700 to-cyan-700 text-white hover:from-blue-800 hover:to-indigo-800 transition-all rounded-xl text-xs font-bold shadow-sm shadow-blue-500/25 active:scale-95"
+                    title={`Acessar pasta de rede e sincronizar planilhas: ${NETWORK_SHARE_PATH}`}
+                  >
+                    <Network size={15} className="text-cyan-200" />
+                    <span>DADOS EXTRAÍDOS (Rede)</span>
+                    <span className="hidden sm:inline-block px-1.5 py-0.5 bg-white/20 rounded text-[9px] font-black uppercase tracking-wider">
+                      \\10.100...
+                    </span>
+                  </button>
+
                   <label className="flex items-center gap-1.5 px-3 py-2 bg-blue-50/80 border border-blue-200/80 text-blue-700 hover:bg-blue-100 transition-all rounded-xl text-xs font-bold cursor-pointer active:scale-95 shadow-xs">
                     <FileSpreadsheet size={15} />
                     <span>Importar Planilha</span>
@@ -11073,6 +11103,17 @@ export default function App() {
                     >
                       <Download size={16} />
                       Baixar Modelo
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsNetworkSyncModalOpen(true);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-700 to-indigo-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider hover:from-blue-800 hover:to-indigo-800 transition-all shadow-md shadow-blue-500/20 w-full sm:w-auto justify-center"
+                      title={`Importar planilhas diretamente da pasta de rede: ${NETWORK_SHARE_PATH}`}
+                    >
+                      <Network size={16} className="text-cyan-200" />
+                      Rede DADOS EXTRAÍDOS
                     </button>
                     <label className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-blue-100 transition-colors cursor-pointer w-full sm:w-auto justify-center">
                       <FileSpreadsheet size={16} />
@@ -18244,6 +18285,31 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Network Folder Sync Modal: \\10.100.100.114\Sicone_app\Faturas\DADOS EXTRAIDOS */}
+      <NetworkFolderSyncModal
+        isOpen={isNetworkSyncModalOpen}
+        onClose={() => setIsNetworkSyncModalOpen(false)}
+        currentBills={bills}
+        setBills={setBills}
+        ucMappings={ucMappings}
+        ucInfoMap={ucInfoMap}
+        ucsLivre={UCS_LIVRE_MERCADO_LIVRE}
+        ucsOper={UCS_OPER}
+        supabase={supabase}
+        isSupabaseConfigured={isSupabaseConfigured}
+        mapBillDataToDb={mapBillDataToDb}
+        onSyncSuccess={(res) => {
+          showAlert(
+            "Sincronização Concluída",
+            `Foram processadas ${res.filesCount} planilhas da pasta de rede DADOS EXTRAÍDOS.\n` +
+            `Faturas atualizadas: ${res.updatedCount}\n` +
+            `Novas faturas inseridas: ${res.newCount}\n` +
+            `Faturas Modalidade Verde (Demanda Ponta = 0): ${res.greenAdjustedCount}\n` +
+            `Total de faturas no sistema: ${res.totalCount}.`
+          );
+        }}
+      />
 
       {isBillModalOpen && editingBill && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
